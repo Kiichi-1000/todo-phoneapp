@@ -22,7 +22,7 @@
       "typedRoutes": false
     },
     "extra": {
-      "supabaseUrl": "https://qqdxspdvkalbvaluxghj.supabase.co",
+      "supabaseUrl": "https://lqkzbuicdwimzcdedkvu.supabase.co",
       "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxxa3pidWljZHdpbXpjZGVka3Z1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEwNTMzMzksImV4cCI6MjA3NjYyOTMzOX0.7HLFUd1GF_DC6XMcA96OxQ9HMC9UuX4kRg16mcr5vXI"
     },
     "android": {
