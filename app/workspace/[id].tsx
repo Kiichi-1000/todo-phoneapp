@@ -5,12 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
-  ScrollView,
   TextInput,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react-native';
+import { ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { Workspace, Todo, GridArea } from '@/types/database';
 
@@ -23,7 +23,7 @@ const GRID_AREA_LABELS: Record<GridArea, string> = {
   bottom_right: '右下',
 };
 
-export default function WorkspaceScreen() {
+function WorkspaceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -60,7 +60,7 @@ export default function WorkspaceScreen() {
         .from('todos')
         .select('*')
         .eq('workspace_id', id)
-        .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
+        .order('order', { ascending: true }) as { data: Todo[] | null; error: any };
 
       if (todosError) throw todosError;
       setTodos(todosData || []);
@@ -75,12 +75,24 @@ export default function WorkspaceScreen() {
     if (!content) return;
 
     try {
+      // Get the maximum order value for this grid area
+      const areaTodos = todos.filter((t) => t.grid_area === gridArea);
+      const maxOrder = areaTodos.length > 0 
+        ? Math.max(...areaTodos.map((t) => t.order))
+        : -1;
+
       const { data, error } = await supabase
         .from('todos')
         .insert({
           workspace_id: id,
           content,
           grid_area: gridArea,
+          order: maxOrder + 1,
+          is_completed: false,
+          due_date: null,
+          position_x: null,
+          position_y: null,
+          completed_at: null,
         } as any)
         .select()
         .single() as { data: Todo | null; error: any };
@@ -138,7 +150,97 @@ export default function WorkspaceScreen() {
   };
 
   const getTodosForArea = (area: GridArea) => {
-    return todos.filter((t) => t.grid_area === area);
+    return todos.filter((t) => t.grid_area === area).sort((a, b) => a.order - b.order);
+  };
+
+  const moveTodo = async (todo: Todo, direction: 'up' | 'down') => {
+    try {
+      const areaTodos = getTodosForArea(todo.grid_area);
+      const currentIndex = areaTodos.findIndex((t) => t.id === todo.id);
+      
+      if (direction === 'up' && currentIndex === 0) return;
+      if (direction === 'down' && currentIndex === areaTodos.length - 1) return;
+      
+      const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      const targetTodo = areaTodos[newIndex];
+      
+      // Swap orders
+      const updates = [
+        { id: todo.id, order: targetTodo.order },
+        { id: targetTodo.id, order: todo.order },
+      ];
+      
+      // Update local state immediately
+      const updatedTodos = todos.map((t) => {
+        if (t.id === todo.id) return { ...t, order: targetTodo.order };
+        if (t.id === targetTodo.id) return { ...t, order: todo.order };
+        return t;
+      });
+      setTodos(updatedTodos);
+      
+      // Update database
+      const updatePromises = updates.map((update) =>
+        supabase
+          .from('todos')
+          .update({ order: update.order } as any)
+          .eq('id', update.id)
+      );
+      
+      const results = await Promise.all(updatePromises);
+      const hasError = results.some((result) => result.error);
+      
+      if (hasError) {
+        throw new Error('Failed to update todo order');
+      }
+    } catch (error) {
+      console.error('Error moving todo:', error);
+      Alert.alert('エラー', 'タスクの並び替えに失敗しました');
+      loadWorkspace();
+    }
+  };
+
+  const renderTodoItem = (item: Todo, index: number, areaTodos: Todo[]) => {
+    const canMoveUp = index > 0;
+    const canMoveDown = index < areaTodos.length - 1;
+    
+    return (
+      <View style={styles.todoItem}>
+        <TouchableOpacity
+          style={styles.checkbox}
+          onPress={() => toggleTodo(item)}>
+          {item.is_completed && <View style={styles.checkboxFilled} />}
+        </TouchableOpacity>
+        
+        <Text
+          style={[
+            styles.todoText,
+            item.is_completed && styles.todoTextCompleted,
+          ]}>
+          {item.content}
+        </Text>
+        
+        <View style={styles.orderButtons}>
+          <TouchableOpacity
+            onPress={() => moveTodo(item, 'up')}
+            disabled={!canMoveUp}
+            style={[styles.orderButton, !canMoveUp && styles.orderButtonDisabled]}>
+            <ChevronUp size={16} color={canMoveUp ? '#007AFF' : '#ccc'} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => moveTodo(item, 'down')}
+            disabled={!canMoveDown}
+            style={[styles.orderButton, !canMoveDown && styles.orderButtonDisabled]}>
+            <ChevronDown size={16} color={canMoveDown ? '#007AFF' : '#ccc'} />
+          </TouchableOpacity>
+        </View>
+        
+        <TouchableOpacity
+          onPress={() => deleteTodo(item.id)}
+          style={styles.deleteButton}>
+          <Trash2 size={16} color="#999" />
+        </TouchableOpacity>
+      </View>
+    );
   };
 
   const getProgressForArea = (area: GridArea) => {
@@ -153,7 +255,7 @@ export default function WorkspaceScreen() {
     const progress = getProgressForArea(area);
 
     return (
-      <View style={styles.gridArea}>
+      <View style={styles.gridArea} key={area}>
         <View style={styles.areaHeader}>
           <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
           <Text style={styles.areaProgress}>{progress}%</Text>
@@ -163,26 +265,10 @@ export default function WorkspaceScreen() {
           <View style={[styles.progressFill, { width: `${progress}%` }]} />
         </View>
 
-        <ScrollView style={styles.todoList}>
-          {areaTodos.map((todo) => (
-            <View key={todo.id} style={styles.todoItem}>
-              <TouchableOpacity
-                style={styles.checkbox}
-                onPress={() => toggleTodo(todo)}>
-                {todo.is_completed && <View style={styles.checkboxFilled} />}
-              </TouchableOpacity>
-              <Text
-                style={[
-                  styles.todoText,
-                  todo.is_completed && styles.todoTextCompleted,
-                ]}>
-                {todo.content}
-              </Text>
-              <TouchableOpacity
-                onPress={() => deleteTodo(todo.id)}
-                style={styles.deleteButton}>
-                <Trash2 size={16} color="#999" />
-              </TouchableOpacity>
+        <ScrollView style={styles.todoList} nestedScrollEnabled>
+          {areaTodos.map((todo, index) => (
+            <View key={todo.id}>
+              {renderTodoItem(todo, index, areaTodos)}
             </View>
           ))}
         </ScrollView>
@@ -197,6 +283,7 @@ export default function WorkspaceScreen() {
             placeholder="新しいタスク"
             placeholderTextColor="#999"
             onSubmitEditing={() => addTodo(area)}
+            returnKeyType="done"
           />
           <TouchableOpacity
             style={styles.addButton}
@@ -211,7 +298,9 @@ export default function WorkspaceScreen() {
   if (!workspace) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text>読み込み中...</Text>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>読み込み中...</Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -240,10 +329,21 @@ export default function WorkspaceScreen() {
   );
 }
 
+export default WorkspaceScreen;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f9f9f9',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666',
   },
   header: {
     flexDirection: 'row',
@@ -316,9 +416,12 @@ const styles = StyleSheet.create({
   todoItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
+    backgroundColor: '#fff',
+    minHeight: 48,
   },
   checkbox: {
     width: 20,
@@ -340,13 +443,27 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: '#000',
+    lineHeight: 20,
   },
   todoTextCompleted: {
     textDecorationLine: 'line-through',
     color: '#999',
   },
-  deleteButton: {
+  orderButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 4,
+  },
+  orderButton: {
     padding: 4,
+    marginHorizontal: 2,
+  },
+  orderButtonDisabled: {
+    opacity: 0.3,
+  },
+  deleteButton: {
+    padding: 8,
+    marginHorizontal: 4,
   },
   addTodoContainer: {
     flexDirection: 'row',
@@ -354,14 +471,16 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
     paddingTop: 8,
+    backgroundColor: '#fff',
   },
   addTodoInput: {
     flex: 1,
     fontSize: 14,
     color: '#000',
-    paddingVertical: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
   },
   addButton: {
-    padding: 4,
+    padding: 8,
   },
 });

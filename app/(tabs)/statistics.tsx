@@ -4,12 +4,12 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle2, Calendar, TrendingUp } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
-import { Todo } from '@/types/database';
+import { Todo, UserSettings } from '@/types/database';
 
 interface StatsSummary {
   todayCompleted: number;
@@ -30,14 +30,53 @@ export default function StatisticsScreen() {
     completionRate: 0,
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [settings, setSettings] = useState<UserSettings | null>(null);
 
   useEffect(() => {
-    loadStatistics();
+    loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (settings) {
+      loadStatistics();
+    }
+  }, [settings]);
+
+  const loadSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('*')
+        .limit(1)
+        .maybeSingle() as { data: UserSettings | null; error: any };
+
+      if (error) throw error;
+      setSettings(data);
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
+  };
 
   const loadStatistics = async () => {
     try {
-      const { data: todos, error } = await supabase.from('todos').select('*') as { data: Todo[] | null; error: any };
+      const currentType = settings?.default_workspace_type || 'four_grid';
+      
+      // 選択中のタイプのワークスペースのみを取得
+      const { data: workspaces, error: workspacesError } = await supabase
+        .from('workspaces')
+        .select('id')
+        .eq('type', currentType) as { data: Array<{ id: string }> | null; error: any };
+
+      if (workspacesError) throw workspacesError;
+      if (!workspaces) return;
+
+      const workspaceIds = workspaces.map(w => w.id);
+
+      // 選択中のタイプのワークスペースに紐づくToDoのみを取得
+      const { data: todos, error } = await supabase
+        .from('todos')
+        .select('*')
+        .in('workspace_id', workspaceIds) as { data: Todo[] | null; error: any };
 
       if (error) throw error;
       if (!todos) return;

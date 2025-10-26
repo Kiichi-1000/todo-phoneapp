@@ -7,6 +7,12 @@ export interface Workspace {
   title: string;
   type: WorkspaceType;
   date: string;
+  area_titles?: {
+    top_left?: string;
+    top_right?: string;
+    bottom_left?: string;
+    bottom_right?: string;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +33,7 @@ export interface Todo {
   grid_area: GridArea | null;
   position_x: number | null;
   position_y: number | null;
+  order: number;
   created_at: string;
   completed_at: string | null;
 }

@@ -22,7 +22,7 @@ const WORKSPACE_TYPES = [
   {
     type: 'individual' as WorkspaceType,
     label: 'ポストイット個別',
-    description: '自由に配置できる付箋型タスク管理（未実装）',
+    description: '自由に配置できる付箋型タスク管理',
   },
   {
     type: 'note' as WorkspaceType,
@@ -62,11 +62,6 @@ export default function SettingsScreen() {
   const updateWorkspaceType = async (type: WorkspaceType) => {
     if (!settings) return;
 
-    if (type !== 'four_grid') {
-      Alert.alert('未実装', 'この機能は現在開発中です。Phase 2で実装予定です。');
-      return;
-    }
-
     try {
       const { error } = await supabase
         .from('user_settings')
@@ -76,7 +71,7 @@ export default function SettingsScreen() {
       if (error) throw error;
 
       setSelectedType(type);
-      Alert.alert('成功', 'ワークスペースタイプを変更しました。新しい日付から適用されます。');
+      Alert.alert('成功', 'ワークスペースタイプを変更しました。今日の日付から新しいワークスペースが作成されます。');
     } catch (error) {
       console.error('Error updating workspace type:', error);
       Alert.alert('エラー', 'ワークスペースタイプの変更に失敗しました');
@@ -166,7 +161,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ワークスペース設定</Text>
           <Text style={styles.sectionDescription}>
-            新しく作成される日次ワークスペースのタイプを選択できます
+            設定変更後、新しい日付のワークスペースが選択したタイプで作成されます。既存の日付のワークスペースはそのまま残ります。
           </Text>
 
           {WORKSPACE_TYPES.map((item) => (
