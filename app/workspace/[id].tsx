@@ -34,6 +34,7 @@ function WorkspaceScreen() {
     bottom_left: '左下エリア',
     bottom_right: '右下エリア',
   });
+  const [editingTitle, setEditingTitle] = useState<GridArea | null>(null);
   const [newTodoContent, setNewTodoContent] = useState<Record<GridArea, string>>({
     top_left: '',
     top_right: '',
@@ -55,6 +56,15 @@ function WorkspaceScreen() {
 
       if (workspaceError) throw workspaceError;
       setWorkspace(workspaceData);
+
+      if (workspaceData?.area_titles) {
+        setGridTitles({
+          top_left: workspaceData.area_titles.top_left || '左上エリア',
+          top_right: workspaceData.area_titles.top_right || '右上エリア',
+          bottom_left: workspaceData.area_titles.bottom_left || '左下エリア',
+          bottom_right: workspaceData.area_titles.bottom_right || '右下エリア',
+        });
+      }
 
       const { data: todosData, error: todosError } = await supabase
         .from('todos')
@@ -250,6 +260,30 @@ function WorkspaceScreen() {
     return Math.round((completed / areaTodos.length) * 100);
   };
 
+  const updateAreaTitle = async (area: GridArea, newTitle: string) => {
+    if (!newTitle.trim()) return;
+
+    try {
+      const updatedTitles = {
+        ...gridTitles,
+        [area]: newTitle,
+      };
+
+      const { error } = await supabase
+        .from('workspaces')
+        .update({ area_titles: updatedTitles } as any)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setGridTitles(updatedTitles);
+      setEditingTitle(null);
+    } catch (error) {
+      console.error('Error updating area title:', error);
+      Alert.alert('エラー', 'エリア名の更新に失敗しました');
+    }
+  };
+
   const renderGridArea = (area: GridArea) => {
     const areaTodos = getTodosForArea(area);
     const progress = getProgressForArea(area);
@@ -257,7 +291,23 @@ function WorkspaceScreen() {
     return (
       <View style={styles.gridArea} key={area}>
         <View style={styles.areaHeader}>
-          <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
+          {editingTitle === area ? (
+            <TextInput
+              style={styles.areaTitleInput}
+              value={gridTitles[area]}
+              onChangeText={(text) =>
+                setGridTitles({ ...gridTitles, [area]: text })
+              }
+              onBlur={() => updateAreaTitle(area, gridTitles[area])}
+              onSubmitEditing={() => updateAreaTitle(area, gridTitles[area])}
+              autoFocus
+              returnKeyType="done"
+            />
+          ) : (
+            <TouchableOpacity onPress={() => setEditingTitle(area)}>
+              <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
+            </TouchableOpacity>
+          )}
           <Text style={styles.areaProgress}>{progress}%</Text>
         </View>
 
@@ -393,6 +443,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#000',
+  },
+  areaTitleInput: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000',
+    borderBottomWidth: 1,
+    borderBottomColor: '#007AFF',
+    paddingVertical: 2,
+    minWidth: 100,
   },
   areaProgress: {
     fontSize: 12,
