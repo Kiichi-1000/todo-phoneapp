@@ -12,13 +12,12 @@ import {
   Animated,
   PanResponder,
   Modal,
-  FlatList,
   Platform,
   AppState,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, Menu, ChevronUp, ChevronDown } from 'lucide-react-native';
+import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
 
@@ -290,38 +289,11 @@ export default function WorkspaceScreen() {
     });
 
   useEffect(() => {
-    const testConnection = async () => {
-      try {
-        console.log('Testing Supabase connection...');
-        const { data, error } = await supabase
-          .from('user_settings')
-          .select('count')
-          .limit(1);
-
-        console.log('Connection test result:', { data, error });
-
-        if (error) {
-          console.error('Connection test failed:', error);
-          Alert.alert(
-            '接続エラー',
-            `Supabaseへの接続に失敗しました。\nエラー: ${error.message}\nコード: ${error.code || 'N/A'}`
-          );
-        } else {
-          console.log('Connection test successful!');
-        }
-      } catch (err) {
-        console.error('Connection test exception:', err);
-        Alert.alert('接続エラー', `予期しないエラーが発生しました: ${String(err)}`);
-      }
-    };
-
     const initializeApp = async () => {
       try {
-        await testConnection();
         await loadSettings();
       } catch (error) {
         console.error('App initialization error:', error);
-        Alert.alert('初期化エラー', 'アプリの初期化に失敗しました');
       }
     };
 
@@ -348,15 +320,8 @@ export default function WorkspaceScreen() {
       return;
     }
     
-    // 前の設定タイプと異なる場合のみ強制更新
     if (previousWorkspaceType.current !== currentType) {
-      console.log('Workspace type changed from', previousWorkspaceType.current, 'to', currentType);
-      console.log('Current date:', workspaceDates[currentIndex]);
-      
-      // 前の設定タイプを更新（遅延なし）
       previousWorkspaceType.current = currentType;
-      
-      // ワークスペースを強制更新（明示的にタイプを渡す）
       loadWorkspaceByDate(workspaceDates[currentIndex], true, currentType);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -391,11 +356,7 @@ export default function WorkspaceScreen() {
 
         const currentType = newSettings.default_workspace_type;
         
-        // 設定タイプが変更されている場合
         if (previousWorkspaceType.current !== null && previousWorkspaceType.current !== currentType) {
-          console.log('Setting changed on focus, updating workspace type from', previousWorkspaceType.current, 'to', currentType);
-          
-          // 設定を更新（これによりsettingsが変わり、他のuseEffectが実行される）
           setSettings(newSettings);
           // previousWorkspaceType.currentはuseEffect内で更新される
         } else if (previousWorkspaceType.current === null) {
@@ -421,41 +382,28 @@ export default function WorkspaceScreen() {
 
   const loadSettings = async () => {
     try {
-      console.log('Loading settings...');
       const { data, error } = await supabase
         .from('user_settings')
         .select('*')
         .limit(1)
         .maybeSingle() as { data: UserSettings | null; error: any };
 
-      if (error) {
-        console.error('Error fetching settings:', error);
-        Alert.alert('エラー', `設定の読み込みに失敗しました: ${error.message}`);
-        throw error;
-      }
+      if (error) throw error;
 
       if (!data) {
-        console.log('No settings found, creating default...');
         const { data: newSettings, error: insertError } = await supabase
           .from('user_settings')
           .insert({ default_workspace_type: 'four_grid' } as any)
           .select()
           .single() as { data: UserSettings | null; error: any };
 
-        if (insertError) {
-          console.error('Error creating settings:', insertError);
-          Alert.alert('エラー', `設定の作成に失敗しました: ${insertError.message}`);
-          throw insertError;
-        }
-        console.log('Settings created:', newSettings);
+        if (insertError) throw insertError;
         setSettings(newSettings);
       } else {
-        console.log('Settings loaded:', data);
         setSettings(data);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
-      // デフォルト設定を設定してアプリがクラッシュしないようにする
       setSettings({
         id: 'default',
         default_workspace_type: 'four_grid',
@@ -467,23 +415,14 @@ export default function WorkspaceScreen() {
 
   const loadWorkspaceDates = async () => {
     try {
-      console.log('Loading workspace dates...');
       const currentType = settings?.default_workspace_type || 'four_grid';
-      console.log('Current workspace type:', currentType);
-      
-      // タイプでフィルタしない - 全てのワークスペースを取得
+
       const { data: workspaces, error } = await supabase
         .from('workspaces')
         .select('id, date, type')
         .order('date', { ascending: false }) as { data: Array<{ id: string; date: string; type: string }> | null; error: any };
 
-      if (error) {
-        console.error('Error fetching workspaces:', error);
-        Alert.alert('エラー', `ワークスペースの読み込みに失敗しました: ${error.message}`);
-        throw error;
-      }
-
-      console.log('Workspaces loaded:', workspaces);
+      if (error) throw error;
 
       const { data: workspacesWithTodos, error: todosError } = await supabase
         .from('todos')
@@ -506,8 +445,6 @@ export default function WorkspaceScreen() {
         .filter((w) => workspaceIdsWithTodos.has(w.id) && w.type === currentType)
         .map((w) => w.date);
       
-      console.log('Past dates with todos:', pastDatesWithTodos.length);
-
       // 未来の日付を生成（今日から1年先まで）
       const futureDates = [];
       for (let i = 0; i <= 365; i++) {
@@ -548,12 +485,9 @@ export default function WorkspaceScreen() {
   const loadWorkspaceByDate = async (dateString: string, forceUpdateType: boolean = false, overrideType?: string) => {
     try {
       const currentType = overrideType || settings?.default_workspace_type || 'four_grid';
-      console.log('loadWorkspaceByDate called for date:', dateString, 'forceUpdateType:', forceUpdateType, 'overrideType:', overrideType);
-      
-      // 日付が未来かどうかを判定
+
       const today = formatDate(new Date());
       const isFutureDate = dateString > today;
-      console.log('Is future date:', isFutureDate);
       
       // まず日付でワークスペースを検索（UNIQUE制約により1日1ワークスペースのみ）
       const { data: existingWorkspace, error: fetchError } = await supabase
@@ -565,11 +499,7 @@ export default function WorkspaceScreen() {
       if (fetchError) throw fetchError;
 
       if (existingWorkspace) {
-        console.log('Existing workspace found:', existingWorkspace.id, 'type:', existingWorkspace.type);
-        // 既存のワークスペースがある場合
-        // 未来の日付または強制更新の場合、現在の設定タイプに更新
         if ((isFutureDate || forceUpdateType) && existingWorkspace.type !== currentType) {
-          console.log('Updating workspace type from', existingWorkspace.type, 'to', currentType, '(future:', isFutureDate, 'force:', forceUpdateType, ')');
           // 設定変更時にタイプを強制更新
           const { data: updatedWorkspace, error: updateError } = await supabase
             .from('workspaces')
@@ -589,11 +519,8 @@ export default function WorkspaceScreen() {
               bottom_right: updatedWorkspace.area_titles?.bottom_right || '右下エリア',
             });
           }
-          // タイプが変わった場合は、タスクをリセット（タスクはタイプ固有なので）
           setTodos([]);
         } else {
-          console.log('Loading todos for existing workspace');
-          // そのまま表示
           setWorkspace(existingWorkspace);
           // エリア名を設定
           setGridTitles({
@@ -668,8 +595,6 @@ export default function WorkspaceScreen() {
 
   const loadTodos = async (workspaceId: string, workspaceType?: string) => {
     try {
-      console.log('Loading todos for workspace:', workspaceId, 'type:', workspaceType);
-      
       const { data, error } = await supabase
         .from('todos')
         .select('*')
@@ -677,25 +602,15 @@ export default function WorkspaceScreen() {
         .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
 
       if (error) throw error;
-      
-      console.log('Raw todos loaded:', data?.length || 0);
-      
-      // ワークスペースのタイプに応じてタスクをフィルタリング
+
       let filteredTodos = data || [];
-      
+
       if (workspaceType === 'four_grid') {
-        // 4分割モード：grid_areaが設定されているタスクのみ表示
         filteredTodos = filteredTodos.filter(todo => todo.grid_area !== null);
-        console.log('After filtering for four_grid:', filteredTodos.length);
       } else if (workspaceType === 'individual') {
-        // 個別モード：grid_areaがnullのタスクのみ表示
         filteredTodos = filteredTodos.filter(todo => todo.grid_area === null);
-        console.log('After filtering for individual:', filteredTodos.length);
-      } else {
-        console.log('No filtering applied, workspaceType:', workspaceType);
       }
-      
-      console.log(`Final loaded ${filteredTodos.length} todos for workspace type: ${workspaceType}`);
+
       setTodos(filteredTodos);
     } catch (error) {
       console.error('Error loading todos:', error);
@@ -787,60 +702,22 @@ export default function WorkspaceScreen() {
           [editingArea]: newAreaName,
         };
         
-        console.log('Saving area titles:', {
-          workspaceId: workspace.id,
-          editingArea,
-          newAreaName,
-          updatedAreaTitles
-        });
-        
-        // Try Method 1: Direct update
-        let { data: updateData, error } = await supabase
+        const { data: updateData, error } = await supabase
           .from('workspaces')
           .update({ area_titles: updatedAreaTitles } as any)
           .eq('id', workspace.id)
           .select();
-        
-        console.log('Direct update result:', { data: updateData, error });
-        
-        // Try Method 2: RPC function fallback
+
         if (error) {
-          console.log('Direct update failed, trying RPC function...', error);
-          const { data: rpcData, error: rpcError } = await supabase
-            .rpc('update_workspace_area_titles', {
-              workspace_id: workspace.id,
-              new_area_titles: updatedAreaTitles
-            });
-          
-          console.log('RPC function result:', { data: rpcData, error: rpcError });
-          
-          if (rpcError) {
-            console.error('All save methods failed:', {
-              directUpdateError: error,
-              rpcError: rpcError
-            });
-            // Keep local changes silently
-          } else {
-            console.log('✅ Saved successfully via RPC function:', rpcData);
-            // Update workspace object with saved data
-            setWorkspace({
-              ...workspace,
-              area_titles: rpcData
-            });
-          }
-        } else {
-          console.log('✅ Saved successfully via direct update:', updateData);
-          // Update workspace object with saved data
-          if (updateData && updateData[0]) {
-            setWorkspace({
-              ...workspace,
-              area_titles: updateData[0].area_titles
-            });
-          }
+          console.error('Error saving area titles:', error);
+        } else if (updateData && updateData[0]) {
+          setWorkspace({
+            ...workspace,
+            area_titles: updateData[0].area_titles
+          });
         }
       } catch (error) {
-        // Silently handle errors - local changes are already preserved
-        console.log('Error caught but handled silently:', error);
+        console.error('Error saving area name:', error);
       }
     }
     setEditingArea(null);
