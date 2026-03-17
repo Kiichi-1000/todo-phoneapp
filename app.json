@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "bolt-expo-nativewind",
+    "slug": "bolt-expo-nativewind",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "myapp",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "supabaseUrl": "https://lqkzbuicdwimzcdedkvu.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxxa3pidWljZHdpbXpjZGVka3Z1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEwNTMzMzksImV4cCI6MjA3NjYyOTMzOX0.7HLFUd1GF_DC6XMcA96OxQ9HMC9UuX4kRg16mcr5vXI"
+    },
+    "android": {
+      "package": "com.kiichi.x2022222.boltexponativewind"
+    }
+  }
+}
