@@ -70,7 +70,6 @@ export default function WorkspaceScreen() {
   const [editingAreaName, setEditingAreaName] = useState('');
   
   // タスク追加用の状態
-  const [addingToArea, setAddingToArea] = useState<GridArea | null>(null);
   const [isAddingPostit, setIsAddingPostit] = useState(false);
   const [newTaskText, setNewTaskText] = useState('');
   
@@ -731,24 +730,6 @@ export default function WorkspaceScreen() {
   };
 
   // タスク追加用の関数
-  const startAddingTask = (area: GridArea) => {
-    setAddingToArea(area);
-    setNewTaskText('');
-  };
-
-  const saveNewTask = async () => {
-    if (addingToArea && newTaskText.trim()) {
-      await addTodo(addingToArea, newTaskText.trim());
-    }
-    setAddingToArea(null);
-    setNewTaskText('');
-  };
-
-  const cancelAddingTask = () => {
-    setAddingToArea(null);
-    setNewTaskText('');
-  };
-
   const cancelAddingPostit = () => {
     setIsAddingPostit(false);
     setNewTaskText('');
@@ -911,6 +892,10 @@ export default function WorkspaceScreen() {
     setLongPressedTodo(null);
   };
 
+  const handleQuickAdd = async (gridArea: GridArea, content: string) => {
+    await addTodo(gridArea, content);
+  };
+
   const addTodo = async (gridArea: GridArea, content?: string) => {
     if (!workspace) return;
 
@@ -1027,12 +1012,7 @@ export default function WorkspaceScreen() {
         toggleTodo={toggleTodo}
         deleteTodo={deleteTodo}
         handleDragEnd={handleDragEnd}
-        addingToArea={addingToArea}
-        newTaskText={newTaskText}
-        setNewTaskText={setNewTaskText}
-        saveNewTask={saveNewTask}
-        cancelAddingTask={cancelAddingTask}
-        startAddingTask={startAddingTask}
+        onQuickAdd={handleQuickAdd}
       />
     );
   };

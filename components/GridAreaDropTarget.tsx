@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -31,12 +31,32 @@ interface GridAreaDropTargetProps {
   toggleTodo: (todo: Todo) => void;
   deleteTodo: (todoId: string) => void;
   handleDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
-  addingToArea: GridArea | null;
-  newTaskText: string;
-  setNewTaskText: (text: string) => void;
-  saveNewTask: () => void;
-  cancelAddingTask: () => void;
-  startAddingTask: (area: GridArea) => void;
+  onQuickAdd: (area: GridArea, content: string) => void;
+}
+
+function InlineAddInput({ area, onQuickAdd }: { area: GridArea; onQuickAdd: (area: GridArea, content: string) => void }) {
+  const [text, setText] = useState('');
+
+  const handleSubmit = () => {
+    if (text.trim()) {
+      onQuickAdd(area, text.trim());
+      setText('');
+    }
+  };
+
+  return (
+    <TextInput
+      style={styles.inlineAddInput}
+      value={text}
+      onChangeText={setText}
+      placeholder="+ タスクを追加"
+      placeholderTextColor="#bdc3c7"
+      maxLength={100}
+      onSubmitEditing={handleSubmit}
+      blurOnSubmit={false}
+      returnKeyType="done"
+    />
+  );
 }
 
 export default function GridAreaDropTarget({
@@ -59,12 +79,7 @@ export default function GridAreaDropTarget({
   toggleTodo,
   deleteTodo,
   handleDragEnd,
-  addingToArea,
-  newTaskText,
-  setNewTaskText,
-  saveNewTask,
-  cancelAddingTask,
-  startAddingTask,
+  onQuickAdd,
 }: GridAreaDropTargetProps) {
   const { dragState, hoveredArea, registerArea } = useDragDrop();
   const viewRef = useRef<View>(null);
@@ -164,44 +179,7 @@ export default function GridAreaDropTarget({
           />
         ))}
 
-        {addingToArea === area && (
-          <View style={styles.postitInputContainer}>
-            <TextInput
-              style={styles.postitInput}
-              value={newTaskText}
-              onChangeText={setNewTaskText}
-              placeholder="タスクを入力..."
-              placeholderTextColor="#bdc3c7"
-              multiline
-              autoFocus
-              maxLength={100}
-            />
-            <View style={styles.postitInputButtons}>
-              <TouchableOpacity style={styles.postitCancelButton} onPress={cancelAddingTask}>
-                <Text style={styles.postitCancelButtonText}>キャンセル</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.postitSaveButton, !newTaskText.trim() && styles.postitSaveButtonDisabled]}
-                onPress={saveNewTask}
-                disabled={!newTaskText.trim()}
-              >
-                <Text style={styles.postitSaveButtonText}>追加</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {areaTodos.length === 0 && addingToArea !== area && (
-          <TouchableOpacity style={styles.addTaskArea} onPress={() => startAddingTask(area)}>
-            <Text style={styles.addTaskHint}>タップで追加</Text>
-          </TouchableOpacity>
-        )}
-
-        {areaTodos.length > 0 && addingToArea !== area && (
-          <TouchableOpacity style={styles.addTaskAreaSubtle} onPress={() => startAddingTask(area)}>
-            <Text style={styles.addTaskHintSubtle}>+</Text>
-          </TouchableOpacity>
-        )}
+        <InlineAddInput area={area} onQuickAdd={onQuickAdd} />
       </ScrollView>
     </View>
   );
@@ -329,95 +307,15 @@ const styles = StyleSheet.create({
   },
   todoList: {
     flex: 1,
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  postitInputContainer: {
-    backgroundColor: '#fffacd',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#ffd700',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  postitInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 14,
+  inlineAddInput: {
+    fontSize: 12,
     color: '#2c3e50',
-    minHeight: 60,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    marginBottom: 8,
-  },
-  postitInputButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  postitCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitCancelButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  postitSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitSaveButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  postitSaveButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  addTaskArea: {
-    padding: 8,
-    marginTop: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 32,
-  },
-  addTaskHint: {
-    fontSize: 11,
-    color: '#bdc3c7',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    opacity: 0.7,
-  },
-  addTaskAreaSubtle: {
-    padding: 4,
-    marginTop: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 20,
-    opacity: 0.5,
-  },
-  addTaskHintSubtle: {
-    fontSize: 16,
-    color: '#bdc3c7',
-    fontWeight: '300',
-    textAlign: 'center',
-    opacity: 0.6,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(212, 175, 55, 0.3)',
+    opacity: 0.8,
   },
 });
