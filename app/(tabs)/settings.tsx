@@ -9,8 +9,9 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { Download, Trash2, Info, CheckCircle2 } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
 
 const WORKSPACE_TYPES = [
@@ -32,6 +33,7 @@ const WORKSPACE_TYPES = [
 ];
 
 export default function SettingsScreen() {
+  const { user, signOut } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
@@ -217,6 +219,29 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>アカウント</Text>
+          <View style={styles.infoCard}>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoText}>{user?.email}</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.logoutItem}
+            onPress={() => {
+              Alert.alert('確認', 'ログアウトしますか？', [
+                { text: 'キャンセル', style: 'cancel' },
+                { text: 'ログアウト', style: 'destructive', onPress: signOut },
+              ]);
+            }}
+          >
+            <View style={styles.settingLeft}>
+              <LogOut size={20} color="#ff3b30" />
+              <Text style={[styles.settingText, styles.dangerText]}>ログアウト</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>アプリ情報</Text>
 
           <View style={styles.infoCard}>
@@ -343,6 +368,14 @@ const styles = StyleSheet.create({
   },
   dangerText: {
     color: '#ff3b30',
+  },
+  logoutItem: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
   },
   infoCard: {
     backgroundColor: '#fff',

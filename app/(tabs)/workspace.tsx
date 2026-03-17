@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
 
 const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
@@ -34,6 +35,7 @@ const SWIPE_THRESHOLD = 50;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export default function WorkspaceScreen() {
+  const { user } = useAuth();
   const [workspaceDates, setWorkspaceDates] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -391,9 +393,10 @@ export default function WorkspaceScreen() {
       if (error) throw error;
 
       if (!data) {
+        if (!user) return;
         const { data: newSettings, error: insertError } = await supabase
           .from('user_settings')
-          .insert({ default_workspace_type: 'four_grid' } as any)
+          .insert({ default_workspace_type: 'four_grid', user_id: user.id } as any)
           .select()
           .single() as { data: UserSettings | null; error: any };
 
@@ -404,12 +407,6 @@ export default function WorkspaceScreen() {
       }
     } catch (error) {
       console.error('Error loading settings:', error);
-      setSettings({
-        id: 'default',
-        default_workspace_type: 'four_grid',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as UserSettings);
     }
   };
 
@@ -533,6 +530,7 @@ export default function WorkspaceScreen() {
         }
       } else {
         // 既存のワークスペースがない場合のみ、現在の設定タイプで新規作成
+        if (!user) return;
         const date = new Date(dateString);
         const { data: newWorkspace, error: createError } = await supabase
           .from('workspaces')
@@ -540,6 +538,7 @@ export default function WorkspaceScreen() {
             title: formatDateTitle(date),
             type: currentType,
             date: dateString,
+            user_id: user.id,
             area_titles: {
               top_left: '左上エリア',
               top_right: '右上エリア',
@@ -796,7 +795,7 @@ export default function WorkspaceScreen() {
   };
 
   const handleAddPostit = async () => {
-    if (!workspace || !newTaskText.trim()) return;
+    if (!workspace || !newTaskText.trim() || !user) return;
 
     try {
       const { data: newTodo, error } = await supabase
@@ -806,8 +805,9 @@ export default function WorkspaceScreen() {
           content: newTaskText.trim(),
           is_completed: false,
           grid_area: null,
-          position_x: Math.random() * 200 + 50, // ランダムな位置
+          position_x: Math.random() * 200 + 50,
           position_y: Math.random() * 200 + 50,
+          user_id: user.id,
         } as any)
         .select()
         .single() as { data: Todo | null; error: any };
@@ -954,12 +954,14 @@ export default function WorkspaceScreen() {
     if (!taskContent) return;
 
     try {
+      if (!user) return;
       const { data, error } = await supabase
         .from('todos')
         .insert({
           workspace_id: workspace.id,
           content: taskContent,
           grid_area: gridArea,
+          user_id: user.id,
         } as any)
         .select()
         .single() as { data: Todo | null; error: any };

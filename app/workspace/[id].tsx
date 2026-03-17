@@ -12,6 +12,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea } from '@/types/database';
 
 const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
@@ -26,6 +27,7 @@ const GRID_AREA_LABELS: Record<GridArea, string> = {
 function WorkspaceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
+  const { user } = useAuth();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [gridTitles, setGridTitles] = useState<Record<GridArea, string>>({
@@ -91,6 +93,7 @@ function WorkspaceScreen() {
         ? Math.max(...areaTodos.map((t) => t.order))
         : -1;
 
+      if (!user) return;
       const { data, error } = await supabase
         .from('todos')
         .insert({
@@ -103,6 +106,7 @@ function WorkspaceScreen() {
           position_x: null,
           position_y: null,
           completed_at: null,
+          user_id: user.id,
         } as any)
         .select()
         .single() as { data: Todo | null; error: any };

@@ -11,10 +11,12 @@ import {
 import { useRouter } from 'expo-router';
 import { ArrowLeft, Calendar } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType } from '@/types/database';
 
 export default function CreateWorkspaceScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -33,23 +35,21 @@ export default function CreateWorkspaceScreen() {
       return;
     }
 
-    try {
-      console.log('Creating workspace with:', { title: title.trim(), type: selectedType });
+    if (!user) return;
 
+    try {
       const { data, error } = await supabase
         .from('workspaces')
         .insert({
           title: title.trim(),
           type: selectedType,
           date: selectedDate,
+          user_id: user.id,
         } as any)
         .select()
         .single() as any;
 
-      console.log('Insert result:', { data, error });
-
       if (error) {
-        console.error('Supabase error:', error);
         Alert.alert('エラー', `ワークスペースの作成に失敗しました: ${error.message}`);
         return;
       }
@@ -59,10 +59,8 @@ export default function CreateWorkspaceScreen() {
         return;
       }
 
-      console.log('Navigating to workspace:', data.id);
       router.replace(`/workspace/${data.id}`);
     } catch (error) {
-      console.error('Error creating workspace:', error);
       Alert.alert('エラー', `ワークスペースの作成に失敗しました: ${String(error)}`);
     }
   };
