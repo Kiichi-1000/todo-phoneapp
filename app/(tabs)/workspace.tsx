@@ -21,6 +21,8 @@ import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDo
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
+import { DragDropProvider } from '@/components/DragDropContext';
+import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 
 const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 
@@ -76,9 +78,9 @@ export default function WorkspaceScreen() {
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editingTodoText, setEditingTodoText] = useState('');
   
-  // 並び替えモード用の状態
   const [reorderModeActive, setReorderModeActive] = useState(false);
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
+  const areaRefs = useRef<Record<string, View | null>>({});
 
   // アニメーション用の値
   const translateX = useRef(new Animated.Value(0)).current;
@@ -823,50 +825,29 @@ export default function WorkspaceScreen() {
     }
   };
 
-  // シンプルな並び替え機能（上矢印・下矢印ボタン）
-  const moveTodo = async (todo: Todo, direction: 'up' | 'down', area: GridArea) => {
+  const handleDragEnd = async (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => {
     try {
-      const areaTodos = getTodosForArea(area);
-      const currentIndex = areaTodos.findIndex((t) => t.id === todo.id);
-      
-      if (direction === 'up' && currentIndex === 0) return;
-      if (direction === 'down' && currentIndex === areaTodos.length - 1) return;
-      
-      const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-      const targetTodo = areaTodos[newIndex];
-      
-      // created_atをスワップ
-      const tempCreatedAt = todo.created_at;
-      const { error: error1 } = await supabase
+      if (sourceArea === targetArea) return;
+
+      const { error } = await supabase
         .from('todos')
-        .update({ created_at: targetTodo.created_at } as any)
-        .eq('id', todo.id);
-      
-      if (error1) throw error1;
-      
-      const { error: error2 } = await supabase
-        .from('todos')
-        .update({ created_at: tempCreatedAt } as any)
-        .eq('id', targetTodo.id);
-      
-      if (error2) throw error2;
-      
-      // ローカル状態を更新
-      setTodos(prevTodos => {
-        return prevTodos.map(t => {
-          if (t.id === todo.id) return { ...t, created_at: targetTodo.created_at };
-          if (t.id === targetTodo.id) return { ...t, created_at: tempCreatedAt };
-          return t;
-        });
-      });
-      
-      // ハプティックフィードバック
+        .update({ grid_area: targetArea } as any)
+        .eq('id', todoId);
+
+      if (error) throw error;
+
+      setTodos(prevTodos =>
+        prevTodos.map(t =>
+          t.id === todoId ? { ...t, grid_area: targetArea } : t
+        )
+      );
+
       if (Platform.OS === 'ios') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (error) {
       console.error('Error moving todo:', error);
-      Alert.alert('エラー', 'タスクの並び替えに失敗しました');
+      Alert.alert('エラー', 'タスクの移動に失敗しました');
     }
   };
 
@@ -876,31 +857,29 @@ export default function WorkspaceScreen() {
       const postitTodos = todos
         .filter(t => t.grid_area === null)
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      const currentIndex = postitTodos.findIndex((t) => t.id === todo.id);
-      
-      if (direction === 'up' && currentIndex === 0) return;
-      if (direction === 'down' && currentIndex === postitTodos.length - 1) return;
-      
-      const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      const idx = postitTodos.findIndex((t) => t.id === todo.id);
+
+      if (direction === 'up' && idx === 0) return;
+      if (direction === 'down' && idx === postitTodos.length - 1) return;
+
+      const newIndex = direction === 'up' ? idx - 1 : idx + 1;
       const targetTodo = postitTodos[newIndex];
-      
-      // created_atをスワップ
+
       const tempCreatedAt = todo.created_at;
       const { error: error1 } = await supabase
         .from('todos')
         .update({ created_at: targetTodo.created_at } as any)
         .eq('id', todo.id);
-      
+
       if (error1) throw error1;
-      
+
       const { error: error2 } = await supabase
         .from('todos')
         .update({ created_at: tempCreatedAt } as any)
         .eq('id', targetTodo.id);
-      
+
       if (error2) throw error2;
-      
-      // ローカル状態を更新
+
       setTodos(prevTodos => {
         return prevTodos.map(t => {
           if (t.id === todo.id) return { ...t, created_at: targetTodo.created_at };
@@ -908,8 +887,7 @@ export default function WorkspaceScreen() {
           return t;
         });
       });
-      
-      // ハプティックフィードバック
+
       if (Platform.OS === 'ios') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -919,29 +897,15 @@ export default function WorkspaceScreen() {
     }
   };
 
-  // 長押しハンドラー（4分割モード用）
-  const handleTodoLongPress = (todoId: string) => {
-    setLongPressedTodo(todoId);
-    setReorderModeActive(true);
-    
-    // ハプティックフィードバック
-    if (Platform.OS === 'ios') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-  };
-
-  // 長押しハンドラー（個別モード用）
   const handlePostitLongPress = (todoId: string) => {
     setLongPressedTodo(todoId);
     setReorderModeActive(true);
-    
-    // ハプティックフィードバック
+
     if (Platform.OS === 'ios') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
   };
 
-  // 並び替えモード終了
   const exitReorderMode = () => {
     setReorderModeActive(false);
     setLongPressedTodo(null);
@@ -1043,214 +1007,33 @@ export default function WorkspaceScreen() {
     const progress = getProgressForArea(area);
 
     return (
-      <View 
-        style={[
-          styles.gridArea,
-        ]}
-      >
-        <View style={styles.areaHeader}>
-          {editingArea === area ? (
-            <View style={styles.areaNameEditContainer}>
-              <TextInput
-                style={styles.areaNameInput}
-                value={editingAreaName}
-                onChangeText={setEditingAreaName}
-                onSubmitEditing={saveAreaName}
-                onBlur={saveAreaName}
-                autoFocus
-                maxLength={20}
-                placeholder="エリア名を入力"
-                placeholderTextColor="#999"
-              />
-              <TouchableOpacity
-                style={styles.saveAreaNameButton}
-                onPress={saveAreaName}
-              >
-                <Text style={styles.saveAreaNameButtonText}>✓</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelAreaNameButton}
-                onPress={cancelEditingAreaName}
-              >
-                <Text style={styles.cancelAreaNameButtonText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.areaTitleContainer}
-              onPress={() => startEditingAreaName(area)}
-            >
-          <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
-              <Text style={styles.editHint}>タップして編集</Text>
-            </TouchableOpacity>
-          )}
-          <Text style={styles.areaProgress}>{progress}%</Text>
-        </View>
-
-        <View style={styles.progressBar}>
-          <View style={[styles.progressFill, { width: `${progress}%` }]} />
-        </View>
-
-        {/* 移動モード中のヒント表示 */}
-        {/* ドラッグヒント（削除） */}
-
-        <ScrollView style={styles.todoList}>
-          {areaTodos.map((todo, index) => (
-            <View key={todo.id}>
-              {/* ドロップゾーン（削除） */}
-              
-              {/* タスクアイテム */}
-              {editingTodo?.id === todo.id ? (
-                // 編集モード
-                <View style={styles.todoItemEditing}>
-                  <TextInput
-                    style={styles.todoEditInput}
-                    value={editingTodoText}
-                    onChangeText={setEditingTodoText}
-                    multiline
-                    autoFocus
-                    maxLength={100}
-                  />
-                  <View style={styles.todoEditButtons}>
-                    <TouchableOpacity
-                      style={styles.todoEditSaveButton}
-                      onPress={saveEditingTodo}
-                    >
-                      <Text style={styles.todoEditSaveText}>✓</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.todoEditCancelButton}
-                      onPress={cancelEditingTodo}
-                    >
-                      <Text style={styles.todoEditCancelText}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.todoItem}>
-                  <View style={styles.todoItemContent}>
-                    <TouchableOpacity
-                      style={styles.checkbox}
-                      onPress={() => toggleTodo(todo)}
-                    >
-                      {todo.is_completed && <View style={styles.checkboxFilled} />}
-                    </TouchableOpacity>
-                      
-                    <TouchableOpacity
-                      style={styles.todoTextContainer}
-                      onPress={() => !reorderModeActive && startEditingTodo(todo)}
-                      onLongPress={() => handleTodoLongPress(todo.id)}
-                      delayLongPress={500}
-                    >
-                      <Text
-                        style={[
-                          styles.todoText,
-                          todo.is_completed && styles.todoTextCompleted,
-                        ]}
-                      >
-                        {todo.content}
-                      </Text>
-                    </TouchableOpacity>
-
-                    {reorderModeActive && longPressedTodo === todo.id && (
-                      <View style={styles.orderButtons}>
-                        <TouchableOpacity
-                          onPress={() => {
-                            moveTodo(todo, 'up', area);
-                            exitReorderMode();
-                          }}
-                          disabled={index === 0}
-                          style={[styles.orderButton, index === 0 && styles.orderButtonDisabled]}>
-                          <ChevronUp size={14} color={index === 0 ? '#ccc' : '#007AFF'} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => {
-                            moveTodo(todo, 'down', area);
-                            exitReorderMode();
-                          }}
-                          disabled={index === areaTodos.length - 1}
-                          style={[styles.orderButton, index === areaTodos.length - 1 && styles.orderButtonDisabled]}>
-                          <ChevronDown size={14} color={index === areaTodos.length - 1 ? '#ccc' : '#007AFF'} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={exitReorderMode}
-                          style={styles.cancelReorderButton}>
-                          <Text style={styles.cancelReorderButtonText}>✕</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    <TouchableOpacity
-                      onPress={() => deleteTodo(todo.id)}
-                      style={styles.deleteButton}
-                    >
-                      <Trash2 size={14} color="#e74c3c" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </View>
-          ))}
-          
-          {/* ポストイット風の入力UI */}
-          {addingToArea === area && (
-            <View style={styles.postitInputContainer}>
-              <TextInput
-                style={styles.postitInput}
-                value={newTaskText}
-                onChangeText={setNewTaskText}
-                placeholder="タスクを入力..."
-                placeholderTextColor="#bdc3c7"
-                multiline
-                autoFocus
-                maxLength={100}
-              />
-              <View style={styles.postitInputButtons}>
-                <TouchableOpacity
-                  style={styles.postitCancelButton}
-                  onPress={cancelAddingTask}
-                >
-                  <Text style={styles.postitCancelButtonText}>キャンセル</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.postitSaveButton,
-                    !newTaskText.trim() && styles.postitSaveButtonDisabled
-                  ]}
-                  onPress={saveNewTask}
-                  disabled={!newTaskText.trim()}
-                >
-                  <Text style={styles.postitSaveButtonText}>追加</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-          
-          {/* タスク追加エリア - タスクがない場合のみ表示 */}
-          {areaTodos.length === 0 && addingToArea !== area && (
-          <TouchableOpacity
-              style={styles.addTaskArea}
-              onPress={() => startAddingTask(area)}
-            >
-              <Text style={styles.addTaskHint}>
-                タップで追加
-              </Text>
-          </TouchableOpacity>
-          )}
-          
-          {/* タスクがある場合の控えめな追加エリア */}
-          {areaTodos.length > 0 && addingToArea !== area && (
-            <TouchableOpacity
-              style={styles.addTaskAreaSubtle}
-              onPress={() => startAddingTask(area)}
-            >
-              <Text style={styles.addTaskHintSubtle}>
-                +
-              </Text>
-            </TouchableOpacity>
-          )}
-        </ScrollView>
-      </View>
+      <GridAreaDropTarget
+        area={area}
+        gridTitles={gridTitles}
+        editingArea={editingArea}
+        editingAreaName={editingAreaName}
+        setEditingAreaName={setEditingAreaName}
+        saveAreaName={saveAreaName}
+        cancelEditingAreaName={cancelEditingAreaName}
+        startEditingAreaName={startEditingAreaName}
+        progress={progress}
+        areaTodos={areaTodos}
+        editingTodo={editingTodo}
+        editingTodoText={editingTodoText}
+        setEditingTodoText={setEditingTodoText}
+        saveEditingTodo={saveEditingTodo}
+        cancelEditingTodo={cancelEditingTodo}
+        startEditingTodo={startEditingTodo}
+        toggleTodo={toggleTodo}
+        deleteTodo={deleteTodo}
+        handleDragEnd={handleDragEnd}
+        addingToArea={addingToArea}
+        newTaskText={newTaskText}
+        setNewTaskText={setNewTaskText}
+        saveNewTask={saveNewTask}
+        cancelAddingTask={cancelAddingTask}
+        startAddingTask={startAddingTask}
+      />
     );
   };
 
@@ -1283,16 +1066,18 @@ export default function WorkspaceScreen() {
         {...swipePanResponder.panHandlers}
       >
         {workspace.type === 'four_grid' ? (
-          <View style={styles.grid}>
-            <View style={styles.gridRow}>
-              {renderGridArea('top_left')}
-              {renderGridArea('top_right')}
+          <DragDropProvider>
+            <View style={styles.grid}>
+              <View style={styles.gridRow}>
+                {renderGridArea('top_left')}
+                {renderGridArea('top_right')}
+              </View>
+              <View style={styles.gridRow}>
+                {renderGridArea('bottom_left')}
+                {renderGridArea('bottom_right')}
+              </View>
             </View>
-            <View style={styles.gridRow}>
-              {renderGridArea('bottom_left')}
-              {renderGridArea('bottom_right')}
-            </View>
-          </View>
+          </DragDropProvider>
         ) : workspace.type === 'individual' ? (
           <View style={styles.individualContainer}>
             {/* ポストイット表示エリア */}
@@ -1522,7 +1307,7 @@ export default function WorkspaceScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5dc', // ベージュ色のノート風背景
+    backgroundColor: '#f5f5dc',
   },
   loadingContainer: {
     flex: 1,
@@ -1568,222 +1353,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginBottom: 8,
   },
-  gridArea: {
-    flex: 1,
-    backgroundColor: '#fffacd', // ポストイットの薄い黄色
-    borderRadius: 2,
-    marginHorizontal: 4,
-    padding: 16,
-    // ポストイットの影効果
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 2,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
-    elevation: 3,
-    // ポストイットの微妙な傾き効果
-    transform: [{ rotate: '0.5deg' }],
-    borderWidth: 0.5,
-    borderColor: '#f0e68c',
-  },
-  areaHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  areaTitle: {
-    fontSize: 16,
-    fontWeight: '400',
-    color: '#2c3e50',
-    fontStyle: 'italic',
-    textDecorationLine: 'underline',
-    textDecorationStyle: 'wavy',
-    textDecorationColor: '#e74c3c',
-  },
-  areaTitleContainer: {
-    flex: 1,
-  },
-  editHint: {
-    fontSize: 10,
-    color: '#7f8c8d',
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
-  areaNameEditContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  areaNameInput: {
-    flex: 1,
-    fontSize: 14,
-    color: '#2c3e50',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    marginRight: 4,
-  },
-  saveAreaNameButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginRight: 4,
-  },
-  saveAreaNameButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  cancelAreaNameButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  cancelAreaNameButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  areaProgress: {
-    fontSize: 12,
-    color: '#666',
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#f5f5dc',
-    borderRadius: 2,
-    marginBottom: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#d4af37',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#ff6b6b',
-    borderRadius: 1,
-  },
-  todoList: {
-    flex: 1,
-    marginBottom: 8,
-  },
-  todoItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    marginBottom: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    borderRadius: 4,
-    borderLeftWidth: 3,
-    borderLeftColor: '#ff6b6b',
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderWidth: 2,
-    borderColor: '#2c3e50',
-    borderRadius: 2,
-    marginRight: 8,
-    marginTop: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-  },
-  checkboxFilled: {
-    width: 10,
-    height: 10,
-    backgroundColor: '#27ae60',
-    borderRadius: 1,
-  },
-  todoText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#2c3e50',
-    lineHeight: 18,
-    fontFamily: 'System',
-  },
-  todoTextCompleted: {
-    textDecorationLine: 'line-through',
-    color: '#7f8c8d',
-    opacity: 0.7,
-  },
-  orderButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 4,
-  },
-  orderButton: {
-    padding: 4,
-    marginHorizontal: 2,
-  },
-  orderButtonDisabled: {
-    opacity: 0.3,
-  },
-  cancelReorderButton: {
-    backgroundColor: '#e74c3c',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginLeft: 4,
-  },
-  cancelReorderButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  deleteButton: {
-    padding: 6,
-    backgroundColor: 'rgba(231, 76, 60, 0.1)',
-    borderRadius: 12,
-    marginTop: 1,
-  },
-  addTodoContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: 2,
-    borderTopColor: '#d4af37',
-    borderTopStyle: 'dashed',
-    paddingTop: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 6,
-    marginTop: 8,
-  },
-  addTodoInput: {
-    flex: 1,
-    fontSize: 13,
-    color: '#2c3e50',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    fontStyle: 'italic',
-    minHeight: 36,
-  },
-  addButton: {
-    padding: 8,
-    backgroundColor: '#27ae60',
-    borderRadius: 16,
-    marginLeft: 8,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 1,
-      height: 1,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  // モーダル用のスタイル
   modalContainer: {
     flex: 1,
     backgroundColor: '#fff',
@@ -1818,10 +1387,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-  },
-  dateList: {
-    flex: 1,
-    padding: 16,
   },
   dateItem: {
     padding: 16,
@@ -1867,7 +1432,6 @@ const styles = StyleSheet.create({
     color: '#28a745',
     fontWeight: '500',
   },
-  // カレンダー用のスタイル
   calendarHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1937,316 +1501,9 @@ const styles = StyleSheet.create({
   pastCalendarDayText: {
     color: '#999',
   },
-  // タスク追加エリア用のスタイル
-  addTaskArea: {
-    padding: 8,
-    marginTop: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 32,
-  },
-  addTaskHint: {
-    fontSize: 11,
-    color: '#bdc3c7',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    opacity: 0.7,
-  },
-  addTaskAreaSubtle: {
-    padding: 4,
-    marginTop: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 20,
-    opacity: 0.5,
-  },
-  addTaskHintSubtle: {
-    fontSize: 16,
-    color: '#bdc3c7',
-    fontWeight: '300',
-    textAlign: 'center',
-    opacity: 0.6,
-  },
-  // タスク追加モーダル用のスタイル
-  taskModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  taskModalContainer: {
-    backgroundColor: '#fffacd',
-    borderRadius: 12,
-    padding: 20,
-    width: '100%',
-    maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  taskModalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#2c3e50',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  taskModalSubtitle: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    textAlign: 'center',
-    marginBottom: 16,
-    fontStyle: 'italic',
-  },
-  taskModalInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: '#2c3e50',
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    minHeight: 80,
-    textAlignVertical: 'top',
-    marginBottom: 20,
-  },
-  taskModalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  taskModalCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    flex: 1,
-    marginRight: 8,
-  },
-  taskModalCancelButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  taskModalSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    flex: 1,
-    marginLeft: 8,
-  },
-  taskModalSaveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  // ドラッグ&ドロップ用のスタイル
-  dropZone: {
-    height: 6,
-    backgroundColor: 'transparent',
-    marginVertical: 1,
-    borderRadius: 3,
-  },
-  dropZoneVisible: {
-    backgroundColor: 'rgba(52, 152, 219, 0.3)',
-    borderWidth: 1,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-  },
-  dropZoneActive: {
-    backgroundColor: '#3498db',
-    borderRadius: 3,
-  },
-  draggingTask: {
-    opacity: 0.8,
-    transform: [{ scale: 1.1 }],
-    backgroundColor: 'rgba(52, 152, 219, 0.3)',
-    borderWidth: 2,
-    borderColor: '#3498db',
-    borderStyle: 'solid',
-    shadowColor: '#3498db',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  gridAreaDropTarget: {
-    borderWidth: 2,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-    backgroundColor: 'rgba(52, 152, 219, 0.1)',
-  },
-  gridAreaDropZone: {
-    borderWidth: 2,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-    backgroundColor: 'rgba(52, 152, 219, 0.05)',
-  },
-  todoItemPlaceholder: {
-    height: 40,
-    backgroundColor: 'rgba(52, 152, 219, 0.1)',
-    marginBottom: 4,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-  },
-  todoItemDropTarget: {
-    backgroundColor: 'rgba(52, 152, 219, 0.1)',
-    borderWidth: 2,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-  },
-  dropHintText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  floatingTodo: {
-    backgroundColor: '#fffacd',
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 20,
-    borderWidth: 2,
-    borderColor: '#3498db',
-    transform: [{ scale: 1.1 }],
-  },
-  floatingTodoContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  floatingTask: {
-    backgroundColor: '#fffacd',
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 20,
-    borderWidth: 2,
-    borderColor: '#3498db',
-    transform: [{ scale: 1.1 }],
-  },
-  floatingTaskContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  floatingCheckbox: {
-    width: 20,
-    height: 20,
-    borderWidth: 2,
-    borderColor: '#3498db',
-    borderRadius: 4,
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  floatingTaskText: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
-    flex: 1,
-  },
-  floatingDeleteButton: {
-    padding: 4,
-    backgroundColor: '#ffebee',
-    borderRadius: 4,
-    marginLeft: 8,
-  },
-  dragHintContainer: {
-    backgroundColor: 'rgba(52, 152, 219, 0.1)',
-    padding: 6,
-    marginVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  dragHintText: {
-    fontSize: 10,
-    color: '#3498db',
-    fontWeight: '600',
-    flex: 1,
-  },
-  cancelButton: {
-    backgroundColor: '#e74c3c',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginLeft: 6,
-    minWidth: 24,
-    alignItems: 'center',
-  },
-  todoItemTouchable: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    marginBottom: 4,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#3498db',
-  },
-  // 新しい並び替えスタイル
-  todoItemContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  todoTextContainer: {
-    flex: 1,
-  },
-  todoItemDragging: {
-    opacity: 0.5,
-    backgroundColor: '#f8f9fa',
-  },
-  todoItemDropTarget: {
-    backgroundColor: '#e3f2fd',
-    borderColor: '#2196f3',
-    borderWidth: 2,
-    borderStyle: 'dashed',
-  },
-  // dragHandle, dropIndicatorスタイル（削除）
-  reorderModeIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#007bff',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginTop: 4,
-  },
-  reorderModeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
   individualContainer: {
     flex: 1,
-    backgroundColor: '#f5f5f5', // ホワイトボード風の背景
+    backgroundColor: '#f5f5f5',
     position: 'relative',
   },
   individualPlaceholder: {
@@ -2254,12 +1511,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     marginBottom: 12,
-  },
-  individualHint: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 20,
   },
   postitsArea: {
     flex: 1,
@@ -2319,6 +1570,9 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
     color: '#999',
   },
+  postitTextContainer: {
+    flex: 1,
+  },
   postitOrderButtons: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2350,130 +1604,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-  postitModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  postitModalBackdrop: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  postitModalContainer: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 40,
-  },
-  postitModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  postitModalTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
-  },
-  postitModalContent: {
-    flex: 1,
-  },
-  postitModalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#f0f0f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  postitModalCloseText: {
-    fontSize: 18,
-    color: '#666',
-  },
-  postitModalInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    minHeight: 120,
-    textAlignVertical: 'top',
-    backgroundColor: '#fafafa',
-  },
-  postitModalAddButton: {
-    backgroundColor: '#3498db',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  postitModalAddButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  postitModalAddText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  // ポストイット風の入力UI用のスタイル
-  postitInputContainer: {
-    backgroundColor: '#fffacd',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#ffd700',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  postitInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 14,
-    color: '#2c3e50',
-    minHeight: 60,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    marginBottom: 8,
-  },
-  postitInputButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  postitCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitCancelButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  postitSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitSaveButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  postitSaveButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  // 個別モード用のポストイット入力カード
   postitInputCard: {
     backgroundColor: '#fffacd',
     width: '100%',
@@ -2530,55 +1660,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // タスク編集用のスタイル（4分割モード）
-  todoItemEditing: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: '#3498db',
-  },
-  todoEditInput: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 14,
-    color: '#2c3e50',
-    minHeight: 60,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    marginBottom: 8,
-  },
-  todoEditButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  todoEditSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  todoEditSaveText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  todoEditCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  todoEditCancelText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  // タスク編集用のスタイル（個別モード）
   postitEditing: {
     flex: 1,
   },
@@ -2619,35 +1700,6 @@ const styles = StyleSheet.create({
   postitEditCancelText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
-  },
-  postitTextContainer: {
-    flex: 1,
-  },
-  // 個別モード用の並び替えスタイル
-  postitDragging: {
-    opacity: 0.5,
-    backgroundColor: '#f8f9fa',
-  },
-  postitDropTarget: {
-    backgroundColor: '#e3f2fd',
-    borderColor: '#2196f3',
-    borderWidth: 2,
-    borderStyle: 'dashed',
-  },
-  postitReorderModeIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#007bff',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginTop: 8,
-  },
-  postitReorderModeText: {
-    color: '#fff',
-    fontSize: 12,
     fontWeight: '600',
   },
   cancelPostitReorderButton: {
