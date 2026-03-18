@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,10 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  Platform,
 } from 'react-native';
 import { Bell, BellOff, X, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import WheelPicker from './WheelPicker';
 
 interface ReminderPickerProps {
   visible: boolean;
@@ -28,8 +28,15 @@ const QUICK_OPTIONS = [
   { label: '明日 12:00', preset: 'tomorrow12' },
 ];
 
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const MINUTES_OPTIONS = [0, 15, 30, 45];
+const HOUR_ITEMS = Array.from({ length: 24 }, (_, i) => ({
+  label: i.toString().padStart(2, '0'),
+  value: i,
+}));
+
+const MINUTE_ITEMS = Array.from({ length: 12 }, (_, i) => ({
+  label: (i * 5).toString().padStart(2, '0'),
+  value: i * 5,
+}));
 
 function getPresetTime(preset: string): Date {
   const now = new Date();
@@ -78,8 +85,22 @@ export default function ReminderPicker({
   const [mode, setMode] = useState<'quick' | 'calendar'>('quick');
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [selectedHour, setSelectedHour] = useState(9);
-  const [selectedMinute, setSelectedMinute] = useState(0);
+  const [calendarHour, setCalendarHour] = useState(9);
+  const [calendarMinute, setCalendarMinute] = useState(0);
+
+  const now = new Date();
+  const nextHour = now.getHours() + 1 > 23 ? 23 : now.getHours() + 1;
+  const [todayHour, setTodayHour] = useState(nextHour);
+  const [todayMinute, setTodayMinute] = useState(0);
+
+  useEffect(() => {
+    if (visible) {
+      const n = new Date();
+      const nh = n.getHours() + 1 > 23 ? 23 : n.getHours() + 1;
+      setTodayHour(nh);
+      setTodayMinute(0);
+    }
+  }, [visible]);
 
   const handleQuickOption = (option: (typeof QUICK_OPTIONS)[number]) => {
     let date: Date;
@@ -94,10 +115,26 @@ export default function ReminderPicker({
     onSelect(date.toISOString());
   };
 
+  const handleTodayTimeConfirm = () => {
+    const date = new Date();
+    date.setHours(todayHour, todayMinute, 0, 0);
+    if (date <= new Date()) {
+      return;
+    }
+    onSelect(date.toISOString());
+  };
+
+  const isTodayTimeValid = () => {
+    const date = new Date();
+    date.setHours(todayHour, todayMinute, 0, 0);
+    return date > new Date();
+  };
+
   const handleCalendarConfirm = () => {
     if (!selectedDate) return;
     const date = new Date(selectedDate);
-    date.setHours(selectedHour, selectedMinute, 0, 0);
+    date.setHours(calendarHour, calendarMinute, 0, 0);
+    if (date <= new Date()) return;
     onSelect(date.toISOString());
   };
 
@@ -105,16 +142,13 @@ export default function ReminderPicker({
     onSelect(null);
   };
 
-  const daysInMonth = useMemo(() => {
+  const calendarDaysInfo = (() => {
     const year = calendarMonth.getFullYear();
     const month = calendarMonth.getMonth();
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
-    return {
-      days: lastDay.getDate(),
-      startDay: firstDay.getDay(),
-    };
-  }, [calendarMonth]);
+    return { days: lastDay.getDate(), startDay: firstDay.getDay() };
+  })();
 
   const navigateMonth = (dir: 'prev' | 'next') => {
     const d = new Date(calendarMonth);
@@ -163,20 +197,56 @@ export default function ReminderPicker({
         </View>
 
         {mode === 'quick' ? (
-          <ScrollView style={styles.quickList}>
-            {QUICK_OPTIONS.map((opt) => (
+          <ScrollView style={styles.quickContainer} showsVerticalScrollIndicator={false}>
+            <View style={styles.quickList}>
+              {QUICK_OPTIONS.map((opt) => (
+                <TouchableOpacity
+                  key={opt.label}
+                  style={styles.quickOption}
+                  onPress={() => handleQuickOption(opt)}
+                >
+                  <Bell size={16} color="#e67e22" />
+                  <Text style={styles.quickOptionText}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.todayTimeSectionDivider} />
+
+            <View style={styles.todayTimeSection}>
+              <Text style={styles.todayTimeSectionTitle}>今日の時間を指定</Text>
+              <View style={styles.wheelRow}>
+                <WheelPicker
+                  items={HOUR_ITEMS}
+                  selectedValue={todayHour}
+                  onValueChange={setTodayHour}
+                  width={80}
+                />
+                <Text style={styles.wheelColon}>:</Text>
+                <WheelPicker
+                  items={MINUTE_ITEMS}
+                  selectedValue={todayMinute}
+                  onValueChange={setTodayMinute}
+                  width={80}
+                />
+              </View>
+              <Text style={styles.todayTimePreview}>
+                今日 {todayHour.toString().padStart(2, '0')}:{todayMinute.toString().padStart(2, '0')}
+              </Text>
               <TouchableOpacity
-                key={opt.label}
-                style={styles.quickOption}
-                onPress={() => handleQuickOption(opt)}
+                style={[styles.confirmBtn, !isTodayTimeValid() && styles.confirmBtnDisabled]}
+                disabled={!isTodayTimeValid()}
+                onPress={handleTodayTimeConfirm}
               >
-                <Bell size={16} color="#e67e22" />
-                <Text style={styles.quickOptionText}>{opt.label}</Text>
+                <Text style={styles.confirmBtnText}>この時間に設定</Text>
               </TouchableOpacity>
-            ))}
+              {!isTodayTimeValid() && (
+                <Text style={styles.pastWarning}>過去の時間は設定できません</Text>
+              )}
+            </View>
           </ScrollView>
         ) : (
-          <ScrollView style={styles.calendarContainer}>
+          <ScrollView style={styles.calendarContainer} showsVerticalScrollIndicator={false}>
             <View style={styles.calendarNav}>
               <TouchableOpacity onPress={() => navigateMonth('prev')}>
                 <ChevronLeft size={20} color="#007AFF" />
@@ -194,10 +264,10 @@ export default function ReminderPicker({
             </View>
 
             <View style={styles.daysGrid}>
-              {Array.from({ length: daysInMonth.startDay }).map((_, i) => (
+              {Array.from({ length: calendarDaysInfo.startDay }).map((_, i) => (
                 <View key={`e-${i}`} style={styles.dayCell} />
               ))}
-              {Array.from({ length: daysInMonth.days }).map((_, i) => {
+              {Array.from({ length: calendarDaysInfo.days }).map((_, i) => {
                 const day = i + 1;
                 const date = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
                 const today = new Date();
@@ -225,35 +295,27 @@ export default function ReminderPicker({
             </View>
 
             <Text style={styles.timeLabel}>時刻</Text>
-            <View style={styles.timeRow}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hourScroll}>
-                {HOURS.map((h) => (
-                  <TouchableOpacity
-                    key={h}
-                    style={[styles.timePill, selectedHour === h && styles.timePillActive]}
-                    onPress={() => setSelectedHour(h)}
-                  >
-                    <Text style={[styles.timePillText, selectedHour === h && styles.timePillTextActive]}>
-                      {h.toString().padStart(2, '0')}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              <Text style={styles.timeColon}>:</Text>
-              <View style={styles.minuteRow}>
-                {MINUTES_OPTIONS.map((m) => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[styles.timePill, selectedMinute === m && styles.timePillActive]}
-                    onPress={() => setSelectedMinute(m)}
-                  >
-                    <Text style={[styles.timePillText, selectedMinute === m && styles.timePillTextActive]}>
-                      {m.toString().padStart(2, '0')}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+            <View style={styles.wheelRow}>
+              <WheelPicker
+                items={HOUR_ITEMS}
+                selectedValue={calendarHour}
+                onValueChange={setCalendarHour}
+                width={80}
+              />
+              <Text style={styles.wheelColon}>:</Text>
+              <WheelPicker
+                items={MINUTE_ITEMS}
+                selectedValue={calendarMinute}
+                onValueChange={setCalendarMinute}
+                width={80}
+              />
             </View>
+
+            {selectedDate && (
+              <Text style={styles.calendarTimePreview}>
+                {selectedDate.getMonth() + 1}月{selectedDate.getDate()}日 {calendarHour.toString().padStart(2, '0')}:{calendarMinute.toString().padStart(2, '0')}
+              </Text>
+            )}
 
             <TouchableOpacity
               style={[styles.confirmBtn, !selectedDate && styles.confirmBtnDisabled]}
@@ -351,8 +413,10 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     fontWeight: '600',
   },
-  quickList: {
+  quickContainer: {
     flex: 1,
+  },
+  quickList: {
     paddingHorizontal: 16,
     paddingTop: 12,
   },
@@ -371,6 +435,49 @@ const styles = StyleSheet.create({
   quickOptionText: {
     fontSize: 15,
     color: '#1a1a1a',
+  },
+  todayTimeSectionDivider: {
+    height: 1,
+    backgroundColor: '#eee',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  todayTimeSection: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 32,
+    alignItems: 'center',
+  },
+  todayTimeSectionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+  },
+  wheelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  wheelColon: {
+    fontSize: 28,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginHorizontal: 8,
+  },
+  todayTimePreview: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#007AFF',
+    marginBottom: 16,
+  },
+  pastWarning: {
+    fontSize: 12,
+    color: '#e74c3c',
+    marginTop: 8,
   },
   calendarContainer: {
     flex: 1,
@@ -428,48 +535,19 @@ const styles = StyleSheet.create({
     color: '#999',
   },
   timeLabel: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#1a1a1a',
     marginTop: 16,
-    marginBottom: 8,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
   },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  calendarTimePreview: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#007AFF',
+    textAlign: 'center',
     marginBottom: 16,
-  },
-  hourScroll: {
-    flex: 1,
-    maxHeight: 36,
-  },
-  timeColon: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    marginHorizontal: 6,
-  },
-  minuteRow: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  timePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#f0f0f0',
-    marginRight: 4,
-  },
-  timePillActive: {
-    backgroundColor: '#007AFF',
-  },
-  timePillText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  timePillTextActive: {
-    color: '#fff',
-    fontWeight: '600',
   },
   confirmBtn: {
     backgroundColor: '#007AFF',
@@ -477,6 +555,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     marginBottom: 24,
+    marginHorizontal: 16,
+    alignSelf: 'stretch',
   },
   confirmBtnDisabled: {
     backgroundColor: '#ccc',
