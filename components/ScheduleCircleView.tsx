@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,17 +7,20 @@ import {
   ScrollView,
   Dimensions,
 } from 'react-native';
-import Svg, { Circle, Path, G, Text as SvgText, Line, Rect } from 'react-native-svg';
+import Svg, { Circle, Path, G, Text as SvgText, Line } from 'react-native-svg';
+import { Plus } from 'lucide-react-native';
 import { Schedule } from '@/types/database';
 import { minutesToTimeString } from '@/lib/scheduleUtils';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const CHART_SIZE = Math.min(SCREEN_WIDTH - 48, 360);
+const CHART_SIZE = Math.min(SCREEN_WIDTH - 32, 380);
 const CENTER = CHART_SIZE / 2;
-const OUTER_RADIUS = CHART_SIZE / 2 - 8;
-const INNER_RADIUS = OUTER_RADIUS * 0.42;
-const SLOT_INTERVAL = 30;
-const TOTAL_SLOTS = 48;
+const OUTER_RADIUS = CHART_SIZE / 2 - 4;
+const LABEL_RADIUS = OUTER_RADIUS - 22;
+const TICK_OUTER = OUTER_RADIUS - 6;
+const TICK_INNER_MAJOR = OUTER_RADIUS - 16;
+const RING_OUTER = OUTER_RADIUS - 34;
+const RING_INNER = RING_OUTER * 0.38;
 
 interface Props {
   schedules: Schedule[];
@@ -37,16 +40,18 @@ function minutesToAngle(minutes: number): number {
   return (minutes / 1440) * 360;
 }
 
-function createWedgePath(
+function createArcPath(
   cx: number, cy: number,
   innerR: number, outerR: number,
   startAngle: number, endAngle: number
 ): string {
+  const sweep = endAngle - startAngle;
+  if (sweep <= 0) return '';
   const outerStart = polarToCartesian(cx, cy, outerR, startAngle);
   const outerEnd = polarToCartesian(cx, cy, outerR, endAngle);
   const innerStart = polarToCartesian(cx, cy, innerR, startAngle);
   const innerEnd = polarToCartesian(cx, cy, innerR, endAngle);
-  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+  const largeArc = sweep > 180 ? 1 : 0;
 
   return [
     `M ${outerStart.x} ${outerStart.y}`,
@@ -58,17 +63,25 @@ function createWedgePath(
 }
 
 export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress }: Props) {
-  const hourMarkers = useMemo(() => {
-    return Array.from({ length: 48 }, (_, i) => {
-      const minutes = i * 30;
-      const angle = minutesToAngle(minutes);
-      const isHour = i % 2 === 0;
-      const hour = Math.floor(minutes / 60);
-      const outerPoint = polarToCartesian(CENTER, CENTER, OUTER_RADIUS, angle);
-      const tickInner = polarToCartesian(CENTER, CENTER, OUTER_RADIUS - (isHour ? 8 : 4), angle);
-      const labelPoint = polarToCartesian(CENTER, CENTER, INNER_RADIUS - 12, angle);
-      const isMajor = minutes % 180 === 0;
-      return { minutes, hour, angle, outerPoint, tickInner, labelPoint, isHour, isMajor };
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const currentTimeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  const handAngle = minutesToAngle(currentMinutes);
+  const handEnd = polarToCartesian(CENTER, CENTER, RING_OUTER - 4, handAngle);
+
+  const hourLabels = useMemo(() => {
+    return Array.from({ length: 24 }, (_, i) => {
+      const angle = (i / 24) * 360;
+      const labelPos = polarToCartesian(CENTER, CENTER, LABEL_RADIUS, angle);
+      const tickO = polarToCartesian(CENTER, CENTER, TICK_OUTER, angle);
+      const tickI = polarToCartesian(CENTER, CENTER, TICK_INNER_MAJOR, angle);
+      return { hour: i, angle, labelPos, tickO, tickI };
     });
   }, []);
 
@@ -76,47 +89,33 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
     return schedules.map(s => {
       const startAngle = minutesToAngle(s.start_minutes);
       const endAngle = minutesToAngle(s.end_minutes);
+      const path = createArcPath(CENTER, CENTER, RING_INNER, RING_OUTER, startAngle, endAngle);
       const midAngle = (startAngle + endAngle) / 2;
-      const arcPath = createWedgePath(CENTER, CENTER, INNER_RADIUS, OUTER_RADIUS, startAngle, endAngle);
-      const labelPos = polarToCartesian(CENTER, CENTER, (INNER_RADIUS + OUTER_RADIUS) / 2, midAngle);
-      return { ...s, startAngle, endAngle, arcPath, labelPos };
+      const labelR = (RING_INNER + RING_OUTER) / 2;
+      const labelPos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
+      const span = endAngle - startAngle;
+      return { ...s, path, labelPos, span };
     });
   }, [schedules]);
 
   const emptySlots = useMemo(() => {
     const occupied = new Set<number>();
     for (const s of schedules) {
-      const startSlot = Math.floor(s.start_minutes / SLOT_INTERVAL);
-      const endSlot = Math.ceil(s.end_minutes / SLOT_INTERVAL);
-      for (let i = startSlot; i < endSlot; i++) {
-        occupied.add(i);
-      }
+      const startSlot = Math.floor(s.start_minutes / 60);
+      const endSlot = Math.ceil(s.end_minutes / 60);
+      for (let i = startSlot; i < endSlot; i++) occupied.add(i);
     }
-    const slots: { slotIndex: number; startMin: number; startAngle: number; endAngle: number; path: string }[] = [];
-    for (let i = 0; i < TOTAL_SLOTS; i++) {
-      if (!occupied.has(i)) {
-        const startMin = i * SLOT_INTERVAL;
-        const endMin = startMin + SLOT_INTERVAL;
-        const startAngle = minutesToAngle(startMin);
-        const endAngle = minutesToAngle(endMin);
-        const path = createWedgePath(CENTER, CENTER, INNER_RADIUS, OUTER_RADIUS, startAngle, endAngle);
-        slots.push({ slotIndex: i, startMin, startAngle, endAngle, path });
+    const slots: { hour: number; path: string }[] = [];
+    for (let h = 0; h < 24; h++) {
+      if (!occupied.has(h)) {
+        const startAngle = minutesToAngle(h * 60);
+        const endAngle = minutesToAngle((h + 1) * 60);
+        const path = createArcPath(CENTER, CENTER, RING_INNER, RING_OUTER, startAngle, endAngle);
+        slots.push({ hour: h, path });
       }
     }
     return slots;
   }, [schedules]);
-
-  const totalScheduled = useMemo(() => {
-    return schedules.reduce((sum, s) => sum + (s.end_minutes - s.start_minutes), 0);
-  }, [schedules]);
-
-  const freeMinutes = 1440 - totalScheduled;
-  const freeHours = Math.floor(freeMinutes / 60);
-  const freeMins = freeMinutes % 60;
-
-  const handleSlotPress = useCallback((startMin: number) => {
-    onEmptyPress(startMin);
-  }, [onEmptyPress]);
 
   return (
     <View style={styles.container}>
@@ -126,138 +125,151 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
             cx={CENTER}
             cy={CENTER}
             r={OUTER_RADIUS}
-            fill="#f8f9fa"
-            stroke="#e0e0e0"
-            strokeWidth={1}
+            fill="#d5d5d5"
           />
+
           <Circle
             cx={CENTER}
             cy={CENTER}
-            r={INNER_RADIUS}
+            r={RING_INNER}
             fill="#fff"
-            stroke="#e8e8e8"
-            strokeWidth={1}
           />
 
-          {hourMarkers.map(({ minutes, hour, outerPoint, tickInner, labelPoint, isHour, isMajor }) => (
-            <G key={minutes}>
-              <Line
-                x1={tickInner.x}
-                y1={tickInner.y}
-                x2={outerPoint.x}
-                y2={outerPoint.y}
-                stroke={isHour ? (isMajor ? '#aaa' : '#ccc') : '#e0e0e0'}
-                strokeWidth={isHour ? (isMajor ? 1.5 : 1) : 0.5}
-              />
-              {isMajor && (
-                <SvgText
-                  x={labelPoint.x}
-                  y={labelPoint.y}
-                  fill="#888"
-                  fontSize={11}
-                  fontWeight="600"
-                  textAnchor="middle"
-                  alignmentBaseline="central"
-                >
-                  {hour}
-                </SvgText>
-              )}
-              {isHour && !isMajor && (
-                <SvgText
-                  x={labelPoint.x}
-                  y={labelPoint.y}
-                  fill="#bbb"
-                  fontSize={9}
-                  fontWeight="400"
-                  textAnchor="middle"
-                  alignmentBaseline="central"
-                >
-                  {hour}
-                </SvgText>
-              )}
-            </G>
+          {hourLabels.map(({ hour, tickO, tickI }) => (
+            <Line
+              key={`tick-${hour}`}
+              x1={tickI.x}
+              y1={tickI.y}
+              x2={tickO.x}
+              y2={tickO.y}
+              stroke="#b0b0b0"
+              strokeWidth={1.5}
+            />
+          ))}
+
+          {hourLabels.map(({ hour, labelPos }) => (
+            <SvgText
+              key={`lbl-${hour}`}
+              x={labelPos.x}
+              y={labelPos.y + 1}
+              fill="#888"
+              fontSize={12}
+              fontWeight="500"
+              textAnchor="middle"
+              alignmentBaseline="central"
+            >
+              {hour}
+            </SvgText>
           ))}
 
           {emptySlots.map(slot => (
             <Path
-              key={`empty-${slot.slotIndex}`}
+              key={`empty-${slot.hour}`}
               d={slot.path}
               fill="transparent"
-              stroke="transparent"
-              strokeWidth={0}
-              onPress={() => handleSlotPress(slot.startMin)}
+              onPress={() => onEmptyPress(slot.hour * 60)}
             />
           ))}
 
           {segments.map(seg => (
             <Path
               key={seg.id}
-              d={seg.arcPath}
-              fill={seg.color + 'CC'}
-              stroke="#fff"
-              strokeWidth={1.5}
-              onPress={() => onSchedulePress(seg as Schedule)}
+              d={seg.path}
+              fill={seg.color}
+              stroke="#d5d5d5"
+              strokeWidth={0.5}
+              onPress={() => onSchedulePress(seg as unknown as Schedule)}
             />
           ))}
 
           {segments.map(seg => {
-            const span = seg.endAngle - seg.startAngle;
-            if (span < 10) return null;
+            if (seg.span < 12) return null;
+            const maxChars = seg.span > 30 ? 6 : 4;
+            const label = seg.title.length > maxChars ? seg.title.slice(0, maxChars - 1) + '..' : seg.title;
             return (
               <SvgText
-                key={`label-${seg.id}`}
+                key={`slbl-${seg.id}`}
                 x={seg.labelPos.x}
                 y={seg.labelPos.y}
                 fill="#fff"
-                fontSize={span > 30 ? 10 : 8}
+                fontSize={seg.span > 25 ? 11 : 9}
                 fontWeight="600"
                 textAnchor="middle"
                 alignmentBaseline="central"
-                onPress={() => onSchedulePress(seg as Schedule)}
+                onPress={() => onSchedulePress(seg as unknown as Schedule)}
               >
-                {seg.title.length > 6 ? seg.title.slice(0, 5) + '..' : seg.title}
+                {label}
               </SvgText>
             );
           })}
+
+          <Line
+            x1={CENTER}
+            y1={CENTER}
+            x2={handEnd.x}
+            y2={handEnd.y}
+            stroke="#fff"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+          />
+          <Circle
+            cx={handEnd.x}
+            cy={handEnd.y}
+            r={4}
+            fill="#fff"
+          />
         </Svg>
 
-        <View style={[styles.centerInfo, { top: CENTER - 28, left: CENTER - 44, width: 88 }]}>
-          <Text style={styles.centerFreeLabel}>空き時間</Text>
-          <Text style={styles.centerFreeTime}>
-            {freeHours}h{freeMins > 0 ? ` ${freeMins}m` : ''}
-          </Text>
-          <Text style={styles.centerHint}>タップで追加</Text>
+        <View style={styles.centerOverlay} pointerEvents="none">
+          <Text style={styles.centerTime}>{currentTimeStr}</Text>
         </View>
+      </View>
+
+      <View style={styles.bottomBar}>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => {
+            const hour = Math.floor(currentMinutes / 60);
+            onEmptyPress(hour * 60);
+          }}
+          activeOpacity={0.7}
+        >
+          <Plus size={28} color="#fff" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.legend} showsVerticalScrollIndicator={false}>
         {schedules.length === 0 ? (
           <View style={styles.emptyLegend}>
             <Text style={styles.emptyText}>予定がありません</Text>
-            <Text style={styles.emptySubText}>円グラフの空き時間をタップして追加</Text>
+            <Text style={styles.emptySubText}>+ ボタンまたは円グラフをタップして追加</Text>
           </View>
         ) : (
           [...schedules]
             .sort((a, b) => a.start_minutes - b.start_minutes)
-            .map(s => (
-              <TouchableOpacity
-                key={s.id}
-                style={styles.legendItem}
-                onPress={() => onSchedulePress(s)}
-                activeOpacity={0.6}
-              >
-                <View style={[styles.legendDot, { backgroundColor: s.color }]} />
-                <View style={styles.legendContent}>
-                  <Text style={styles.legendTitle} numberOfLines={1}>{s.title}</Text>
-                  <Text style={styles.legendTime}>
-                    {minutesToTimeString(s.start_minutes)} - {minutesToTimeString(s.end_minutes)}
-                  </Text>
-                </View>
-                <Text style={styles.legendDuration}>
-                  {Math.round((s.end_minutes - s.start_minutes) / 60 * 10) / 10}h
-                </Text>
-              </TouchableOpacity>
-            ))
+            .map(s => {
+              const durationMin = s.end_minutes - s.start_minutes;
+              const dH = Math.floor(durationMin / 60);
+              const dM = durationMin % 60;
+              const dLabel = dH > 0 && dM > 0 ? `${dH}h${dM}m` : dH > 0 ? `${dH}h` : `${dM}m`;
+              return (
+                <TouchableOpacity
+                  key={s.id}
+                  style={styles.legendItem}
+                  onPress={() => onSchedulePress(s)}
+                  activeOpacity={0.6}
+                >
+                  <View style={[styles.legendBar, { backgroundColor: s.color }]} />
+                  <View style={styles.legendContent}>
+                    <Text style={styles.legendTitle} numberOfLines={1}>{s.title}</Text>
+                    <Text style={styles.legendTime}>
+                      {minutesToTimeString(s.start_minutes)} - {minutesToTimeString(s.end_minutes)}
+                    </Text>
+                  </View>
+                  <Text style={styles.legendDuration}>{dLabel}</Text>
+                </TouchableOpacity>
+              );
+            })
         )}
       </ScrollView>
     </View>
@@ -267,32 +279,48 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#f9f9f9',
   },
   chartWrapper: {
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
     position: 'relative',
   },
-  centerInfo: {
+  centerOverlay: {
     position: 'absolute',
+    top: 12,
+    left: 0,
+    right: 0,
+    bottom: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  centerFreeLabel: {
-    fontSize: 10,
-    color: '#aaa',
-    fontWeight: '500',
+  centerTime: {
+    fontSize: 28,
+    fontWeight: '300',
+    color: '#fff',
+    letterSpacing: 2,
   },
-  centerFreeTime: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
-    marginTop: 2,
+  bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 24,
+    paddingVertical: 8,
   },
-  centerHint: {
-    fontSize: 9,
-    color: '#ccc',
-    marginTop: 4,
+  addButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#222',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
   },
   legend: {
     flex: 1,
@@ -300,7 +328,7 @@ const styles = StyleSheet.create({
   },
   emptyLegend: {
     alignItems: 'center',
-    paddingVertical: 24,
+    paddingVertical: 20,
   },
   emptyText: {
     fontSize: 15,
@@ -316,17 +344,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 12,
     marginBottom: 6,
     borderWidth: 1,
     borderColor: '#f0f0f0',
   },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  legendBar: {
+    width: 4,
+    height: 32,
+    borderRadius: 2,
     marginRight: 12,
   },
   legendContent: {
