@@ -8,7 +8,8 @@ import Animated, {
   withTiming,
   runOnJS,
 } from 'react-native-reanimated';
-import { Trash2 } from 'lucide-react-native';
+import { Trash2, Bell } from 'lucide-react-native';
+import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
 import { useDragDrop } from './DragDropContext';
 
@@ -25,6 +26,7 @@ interface DraggableTodoItemProps {
   onToggle: (todo: Todo) => void;
   onDelete: (todoId: string) => void;
   onDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
+  onReminderPress: (todo: Todo) => void;
 }
 
 export default function DraggableTodoItem({
@@ -40,6 +42,7 @@ export default function DraggableTodoItem({
   onToggle,
   onDelete,
   onDragEnd,
+  onReminderPress,
 }: DraggableTodoItemProps) {
   const { startDrag, endDrag, updateHoveredArea, getHoveredArea } = useDragDrop();
   const translateX = useSharedValue(0);
@@ -154,10 +157,23 @@ export default function DraggableTodoItem({
             </Text>
           </TouchableOpacity>
 
+          <TouchableOpacity onPress={() => onReminderPress(todo)} style={styles.reminderButton}>
+            <Bell size={12} color={todo.reminder_at ? '#e67e22' : '#bdc3c7'} />
+          </TouchableOpacity>
+
           <TouchableOpacity onPress={() => onDelete(todo.id)} style={styles.deleteButton}>
             <Trash2 size={14} color="#e74c3c" />
           </TouchableOpacity>
         </View>
+
+        {todo.reminder_at && (
+          <TouchableOpacity onPress={() => onReminderPress(todo)} style={styles.reminderBadge}>
+            <Bell size={10} color="#e67e22" />
+            <Text style={styles.reminderBadgeText}>
+              {formatReminderDisplay(todo.reminder_at)}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         <Animated.View style={[styles.dragIndicator, dragIndicatorStyle]} />
       </Animated.View>
@@ -211,6 +227,22 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
     color: '#7f8c8d',
     opacity: 0.7,
+  },
+  reminderButton: {
+    padding: 5,
+    marginRight: 2,
+    marginTop: 1,
+  },
+  reminderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 26,
+    marginTop: 2,
+  },
+  reminderBadgeText: {
+    fontSize: 10,
+    color: '#e67e22',
   },
   deleteButton: {
     padding: 6,

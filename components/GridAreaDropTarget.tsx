@@ -32,6 +32,7 @@ interface GridAreaDropTargetProps {
   deleteTodo: (todoId: string) => void;
   handleDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
   onQuickAdd: (area: GridArea, content: string) => void;
+  onReminderPress: (todo: Todo) => void;
 }
 
 function InlineAddInput({ area, onQuickAdd }: { area: GridArea; onQuickAdd: (area: GridArea, content: string) => void }) {
@@ -80,6 +81,7 @@ export default function GridAreaDropTarget({
   deleteTodo,
   handleDragEnd,
   onQuickAdd,
+  onReminderPress,
 }: GridAreaDropTargetProps) {
   const { dragState, hoveredArea, registerArea } = useDragDrop();
   const viewRef = useRef<View>(null);
@@ -176,6 +178,7 @@ export default function GridAreaDropTarget({
             onToggle={toggleTodo}
             onDelete={deleteTodo}
             onDragEnd={handleDragEnd}
+            onReminderPress={onReminderPress}
           />
         ))}
 

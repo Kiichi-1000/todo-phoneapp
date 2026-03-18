@@ -17,12 +17,13 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react-native';
+import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
 import { DragDropProvider } from '@/components/DragDropContext';
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
+import ReminderPicker from '@/components/ReminderPicker';
 
 const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 
@@ -77,6 +78,7 @@ export default function WorkspaceScreen() {
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editingTodoText, setEditingTodoText] = useState('');
   
+  const [reminderTodo, setReminderTodo] = useState<Todo | null>(null);
   const [reorderModeActive, setReorderModeActive] = useState(false);
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const areaRefs = useRef<Record<string, View | null>>({});
@@ -896,6 +898,31 @@ export default function WorkspaceScreen() {
     await addTodo(gridArea, content);
   };
 
+  const openReminderPicker = (todo: Todo) => {
+    setReminderTodo(todo);
+  };
+
+  const handleSetReminder = async (reminderAt: string | null) => {
+    if (!reminderTodo) return;
+    try {
+      const { error } = await supabase
+        .from('todos')
+        .update({ reminder_at: reminderAt } as any)
+        .eq('id', reminderTodo.id);
+
+      if (error) throw error;
+
+      setTodos(prev =>
+        prev.map(t =>
+          t.id === reminderTodo.id ? { ...t, reminder_at: reminderAt } : t
+        )
+      );
+    } catch (error) {
+      console.error('Error setting reminder:', error);
+    }
+    setReminderTodo(null);
+  };
+
   const addTodo = async (gridArea: GridArea, content?: string) => {
     if (!workspace) return;
 
@@ -1013,6 +1040,7 @@ export default function WorkspaceScreen() {
         deleteTodo={deleteTodo}
         handleDragEnd={handleDragEnd}
         onQuickAdd={handleQuickAdd}
+        onReminderPress={openReminderPicker}
       />
     );
   };
@@ -1106,62 +1134,89 @@ export default function WorkspaceScreen() {
                         </View>
                       ) : (
                         <View style={styles.postit}>
-                          <TouchableOpacity
-                            style={styles.postitCheckbox}
-                            onPress={() => toggleTodo(todo)}
-                          >
-                            {todo.is_completed && <View style={styles.postitCheckboxFilled} />}
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.postitTextContainer}
-                            onPress={() => !reorderModeActive && startEditingTodo(todo)}
-                            onLongPress={() => handlePostitLongPress(todo.id)}
-                            delayLongPress={500}
-                          >
-                            <Text
-                              style={[
-                                styles.postitText,
-                                todo.is_completed && styles.postitTextCompleted,
-                              ]}
+                          <View style={styles.postitRow}>
+                            <TouchableOpacity
+                              style={styles.postitCheckbox}
+                              onPress={() => toggleTodo(todo)}
                             >
-                              {todo.content}
-                            </Text>
-                          </TouchableOpacity>
-                          
-                          {reorderModeActive && longPressedTodo === todo.id && (
-                            <View style={styles.postitOrderButtons}>
-                              <TouchableOpacity
-                                onPress={() => {
-                                  movePostit(todo, 'up');
-                                  exitReorderMode();
-                                }}
-                                disabled={index === 0}
-                                style={[styles.postitOrderButton, index === 0 && styles.postitOrderButtonDisabled]}>
-                                <ChevronUp size={12} color={index === 0 ? '#ccc' : '#007AFF'} />
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => {
-                                  movePostit(todo, 'down');
-                                  exitReorderMode();
-                                }}
-                                disabled={index === sortedPostits.length - 1}
-                                style={[styles.postitOrderButton, index === sortedPostits.length - 1 && styles.postitOrderButtonDisabled]}>
-                                <ChevronDown size={12} color={index === sortedPostits.length - 1 ? '#ccc' : '#007AFF'} />
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={exitReorderMode}
-                                style={styles.cancelPostitReorderButton}>
-                                <Text style={styles.cancelPostitReorderButtonText}>✕</Text>
-                              </TouchableOpacity>
+                              {todo.is_completed && <View style={styles.postitCheckboxFilled} />}
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.postitTextContainer}
+                              onPress={() => !reorderModeActive && startEditingTodo(todo)}
+                              onLongPress={() => handlePostitLongPress(todo.id)}
+                              delayLongPress={500}
+                            >
+                              <Text
+                                style={[
+                                  styles.postitText,
+                                  todo.is_completed && styles.postitTextCompleted,
+                                ]}
+                              >
+                                {todo.content}
+                              </Text>
+                            </TouchableOpacity>
+
+                            {reorderModeActive && longPressedTodo === todo.id && (
+                              <View style={styles.postitOrderButtons}>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    movePostit(todo, 'up');
+                                    exitReorderMode();
+                                  }}
+                                  disabled={index === 0}
+                                  style={[styles.postitOrderButton, index === 0 && styles.postitOrderButtonDisabled]}>
+                                  <ChevronUp size={12} color={index === 0 ? '#ccc' : '#007AFF'} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    movePostit(todo, 'down');
+                                    exitReorderMode();
+                                  }}
+                                  disabled={index === sortedPostits.length - 1}
+                                  style={[styles.postitOrderButton, index === sortedPostits.length - 1 && styles.postitOrderButtonDisabled]}>
+                                  <ChevronDown size={12} color={index === sortedPostits.length - 1 ? '#ccc' : '#007AFF'} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={exitReorderMode}
+                                  style={styles.cancelPostitReorderButton}>
+                                  <Text style={styles.cancelPostitReorderButtonText}>x</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+
+                            <TouchableOpacity
+                              onPress={() => openReminderPicker(todo)}
+                              style={styles.postitReminderButton}
+                            >
+                              <Bell size={12} color={todo.reminder_at ? '#e67e22' : '#bdc3c7'} />
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              onPress={() => deleteTodo(todo.id)}
+                              style={styles.postitDeleteButton}
+                            >
+                              <Trash2 size={12} color="#e74c3c" />
+                            </TouchableOpacity>
+                          </View>
+                          {todo.reminder_at && (
+                            <View style={styles.postitReminderBadge}>
+                              <Bell size={10} color="#e67e22" />
+                              <Text style={styles.postitReminderBadgeText}>
+                                {(() => {
+                                  const d = new Date(todo.reminder_at);
+                                  const h = d.getHours().toString().padStart(2, '0');
+                                  const m = d.getMinutes().toString().padStart(2, '0');
+                                  const now = new Date();
+                                  if (d.toDateString() === now.toDateString()) return `今日 ${h}:${m}`;
+                                  const tmr = new Date(now);
+                                  tmr.setDate(tmr.getDate() + 1);
+                                  if (d.toDateString() === tmr.toDateString()) return `明日 ${h}:${m}`;
+                                  return `${d.getMonth() + 1}/${d.getDate()} ${h}:${m}`;
+                                })()}
+                              </Text>
                             </View>
                           )}
-                          
-                          <TouchableOpacity
-                            onPress={() => deleteTodo(todo.id)}
-                            style={styles.postitDeleteButton}
-                          >
-                            <Trash2 size={12} color="#e74c3c" />
-                          </TouchableOpacity>
                         </View>
                       )}
                     </View>
@@ -1223,6 +1278,13 @@ export default function WorkspaceScreen() {
           </View>
         )}
       </Animated.View>
+
+      <ReminderPicker
+        visible={reminderTodo !== null}
+        currentReminder={reminderTodo?.reminder_at ?? null}
+        onSelect={handleSetReminder}
+        onClose={() => setReminderTodo(null)}
+      />
 
       {/* 日付選択モーダル */}
       <Modal
@@ -1521,9 +1583,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
+    marginBottom: 12,
+  },
+  postitRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
   },
   postitCheckbox: {
     width: 16,
@@ -1564,6 +1628,21 @@ const styles = StyleSheet.create({
   },
   postitOrderButtonDisabled: {
     opacity: 0.3,
+  },
+  postitReminderButton: {
+    padding: 4,
+    marginRight: 4,
+  },
+  postitReminderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 24,
+    marginTop: 4,
+  },
+  postitReminderBadgeText: {
+    fontSize: 11,
+    color: '#e67e22',
   },
   postitDeleteButton: {
     padding: 4,
