@@ -10,9 +10,8 @@ import { Plus } from 'lucide-react-native';
 import { Schedule } from '@/types/database';
 import { minutesToTimeString } from '@/lib/scheduleUtils';
 
-const ROW_HEIGHT = 48;
-const INTERVAL = 10;
-const HOUR_LABELS = Array.from({ length: 25 }, (_, i) => i);
+const HOUR_HEIGHT = 64;
+const HOURS = Array.from({ length: 25 }, (_, i) => i);
 
 interface Props {
   schedules: Schedule[];
@@ -23,20 +22,56 @@ interface Props {
 export default function ScheduleListView({ schedules, onSlotPress, onSchedulePress }: Props) {
   const scrollRef = useRef<ScrollView>(null);
 
-  const scheduleMap = useMemo(() => {
-    const map = new Map<number, Schedule[]>();
-    for (const s of schedules) {
-      const startSlot = Math.floor(s.start_minutes / INTERVAL);
-      const endSlot = Math.ceil(s.end_minutes / INTERVAL);
-      for (let i = startSlot; i < endSlot; i++) {
-        if (!map.has(i)) map.set(i, []);
-        map.get(i)!.push(s);
+  const positionedSchedules = useMemo(() => {
+    const sorted = [...schedules].sort((a, b) => a.start_minutes - b.start_minutes);
+
+    const columns: Schedule[][] = [];
+    const colAssignment = new Map<string, number>();
+
+    for (const s of sorted) {
+      let placed = false;
+      for (let c = 0; c < columns.length; c++) {
+        const lastInCol = columns[c][columns[c].length - 1];
+        if (lastInCol.end_minutes <= s.start_minutes) {
+          columns[c].push(s);
+          colAssignment.set(s.id, c);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        columns.push([s]);
+        colAssignment.set(s.id, columns.length - 1);
       }
     }
-    return map;
+
+    const totalCols = Math.max(columns.length, 1);
+
+    return sorted.map(s => {
+      const col = colAssignment.get(s.id) || 0;
+      const top = (s.start_minutes / 60) * HOUR_HEIGHT;
+      const height = Math.max(((s.end_minutes - s.start_minutes) / 60) * HOUR_HEIGHT, 24);
+      const widthPercent = 100 / totalCols;
+      const leftPercent = col * widthPercent;
+      return { schedule: s, top, height, widthPercent, leftPercent };
+    });
   }, [schedules]);
 
-  const renderedIds = new Set<string>();
+  const occupiedHours = useMemo(() => {
+    const set = new Set<number>();
+    for (const s of schedules) {
+      const startH = Math.floor(s.start_minutes / 60);
+      const endH = Math.ceil(s.end_minutes / 60);
+      for (let h = startH; h < endH; h++) set.add(h);
+    }
+    return set;
+  }, [schedules]);
+
+  const currentHourLine = useMemo(() => {
+    const now = new Date();
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    return (minutes / 60) * HOUR_HEIGHT;
+  }, []);
 
   return (
     <ScrollView
@@ -45,87 +80,80 @@ export default function ScheduleListView({ schedules, onSlotPress, onSchedulePre
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      {HOUR_LABELS.map(hour => {
-        const slots = hour < 24 ? Array.from({ length: 6 }, (_, i) => hour * 6 + i) : [];
-        const isLastHour = hour === 24;
-
-        return (
-          <View key={hour} style={styles.hourBlock}>
-            <View style={styles.timeColumn}>
-              <Text style={styles.hourLabel}>{hour}:00</Text>
+      <View style={styles.timeline}>
+        <View style={styles.timeLabels}>
+          {HOURS.map(hour => (
+            <View key={hour} style={[styles.timeLabelRow, { height: hour < 24 ? HOUR_HEIGHT : 0 }]}>
+              <Text style={styles.timeText}>
+                {hour.toString().padStart(2, '0')}:00
+              </Text>
             </View>
-            <View style={styles.slotColumn}>
-              {isLastHour ? (
-                <View style={styles.hourDivider} />
-              ) : (
-                slots.map((slotIdx) => {
-                  const startMin = slotIdx * INTERVAL;
-                  const isHourStart = slotIdx % 6 === 0;
-                  const isHalfHour = slotIdx % 3 === 0 && !isHourStart;
-                  const itemsHere = scheduleMap.get(slotIdx) || [];
-                  const primaryItem = itemsHere.find(s => !renderedIds.has(s.id));
+          ))}
+        </View>
 
-                  if (primaryItem) {
-                    renderedIds.add(primaryItem.id);
-                    const spanSlots = Math.ceil((primaryItem.end_minutes - primaryItem.start_minutes) / INTERVAL);
-                    const blockHeight = spanSlots * ROW_HEIGHT - 2;
-
-                    return (
-                      <View key={slotIdx} style={[styles.slotRow, { height: ROW_HEIGHT }]}>
-                        <View style={[styles.slotDivider, isHourStart && styles.hourSlotDivider, isHalfHour && styles.halfHourDivider]} />
-                        <TouchableOpacity
-                          style={[
-                            styles.scheduleBlock,
-                            {
-                              backgroundColor: primaryItem.color + '20',
-                              borderLeftColor: primaryItem.color,
-                              height: blockHeight,
-                              zIndex: 10,
-                            },
-                          ]}
-                          onPress={() => onSchedulePress(primaryItem)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.scheduleTitle, { color: primaryItem.color }]} numberOfLines={1}>
-                            {primaryItem.title}
-                          </Text>
-                          <Text style={[styles.scheduleTime, { color: primaryItem.color }]}>
-                            {minutesToTimeString(primaryItem.start_minutes)} - {minutesToTimeString(primaryItem.end_minutes)}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  }
-
-                  const isOccupied = itemsHere.length > 0;
-
-                  return (
-                    <TouchableOpacity
-                      key={slotIdx}
-                      style={[styles.slotRow, { height: ROW_HEIGHT }, !isOccupied && styles.emptySlotRow]}
-                      onPress={() => !isOccupied && onSlotPress(startMin)}
-                      activeOpacity={isOccupied ? 1 : 0.5}
-                    >
-                      <View style={[styles.slotDivider, isHourStart && styles.hourSlotDivider, isHalfHour && styles.halfHourDivider]} />
-                      {!isOccupied && isHourStart && (
-                        <View style={styles.addRow}>
-                          <Plus size={14} color="#bbb" />
-                          <Text style={styles.addHintText}>タップして追加</Text>
-                        </View>
-                      )}
-                      {!isOccupied && isHalfHour && (
-                        <View style={styles.halfHourLabel}>
-                          <Text style={styles.halfHourText}>{hour}:30</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
+        <View style={styles.gridArea}>
+          {HOURS.map(hour => (
+            <View key={hour} style={{ height: hour < 24 ? HOUR_HEIGHT : 0 }}>
+              <View style={styles.hourLine} />
+              {hour < 24 && (
+                <View style={styles.halfHourLine} />
               )}
             </View>
+          ))}
+
+          <View style={[styles.nowLine, { top: currentHourLine }]}>
+            <View style={styles.nowDot} />
+            <View style={styles.nowLineBar} />
           </View>
-        );
-      })}
+
+          {HOURS.filter(h => h < 24 && !occupiedHours.has(h)).map(hour => (
+            <TouchableOpacity
+              key={`slot-${hour}`}
+              style={[
+                styles.emptySlot,
+                { top: hour * HOUR_HEIGHT, height: HOUR_HEIGHT },
+              ]}
+              onPress={() => onSlotPress(hour * 60)}
+              activeOpacity={0.4}
+            >
+              <View style={styles.addIndicator}>
+                <Plus size={12} color="#ccc" />
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          {positionedSchedules.map(({ schedule: s, top, height, widthPercent, leftPercent }) => (
+            <TouchableOpacity
+              key={s.id}
+              style={[
+                styles.eventCard,
+                {
+                  top,
+                  height,
+                  left: `${leftPercent + 0.5}%` as any,
+                  width: `${widthPercent - 1}%` as any,
+                  backgroundColor: s.color + '18',
+                  borderLeftColor: s.color,
+                },
+              ]}
+              onPress={() => onSchedulePress(s)}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[styles.eventTitle, { color: s.color }]}
+                numberOfLines={height < 40 ? 1 : 2}
+              >
+                {s.title}
+              </Text>
+              {height >= 36 && (
+                <Text style={[styles.eventTime, { color: s.color }]}>
+                  {minutesToTimeString(s.start_minutes)} - {minutesToTimeString(s.end_minutes)}
+                </Text>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
     </ScrollView>
   );
 }
@@ -133,100 +161,101 @@ export default function ScheduleListView({ schedules, onSlotPress, onSchedulePre
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#fff',
   },
   content: {
-    paddingBottom: 40,
+    paddingBottom: 48,
   },
-  hourBlock: {
+  timeline: {
     flexDirection: 'row',
   },
-  timeColumn: {
-    width: 52,
-    alignItems: 'flex-end',
-    paddingRight: 10,
+  timeLabels: {
+    width: 56,
+    paddingTop: 0,
   },
-  hourLabel: {
+  timeLabelRow: {
+    justifyContent: 'flex-start',
+    paddingRight: 8,
+    alignItems: 'flex-end',
+  },
+  timeText: {
     fontSize: 11,
-    color: '#999',
     fontWeight: '500',
+    color: '#aaa',
     marginTop: -7,
   },
-  slotColumn: {
+  gridArea: {
     flex: 1,
-    borderLeftWidth: 1,
-    borderLeftColor: '#e5e5e5',
-  },
-  slotRow: {
-    justifyContent: 'center',
-    paddingLeft: 8,
     position: 'relative',
+    borderLeftWidth: 1,
+    borderLeftColor: '#eaeaea',
   },
-  emptySlotRow: {
-    backgroundColor: 'transparent',
-  },
-  slotDivider: {
+  hourLine: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#eaeaea',
   },
-  hourSlotDivider: {
-    backgroundColor: '#e0e0e0',
+  halfHourLine: {
+    position: 'absolute',
+    top: HOUR_HEIGHT / 2,
+    left: 0,
+    right: 0,
     height: 1,
+    backgroundColor: '#f4f4f4',
   },
-  halfHourDivider: {
-    backgroundColor: '#ebebeb',
-    height: 1,
-  },
-  hourDivider: {
-    height: 1,
-    backgroundColor: '#e0e0e0',
-  },
-  addRow: {
+  nowLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    opacity: 0.6,
-    paddingVertical: 4,
+    zIndex: 50,
   },
-  addHintText: {
-    fontSize: 12,
-    color: '#bbb',
-    fontWeight: '400',
+  nowDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#E8654A',
+    marginLeft: -4,
   },
-  halfHourLabel: {
+  nowLineBar: {
+    flex: 1,
+    height: 1.5,
+    backgroundColor: '#E8654A',
+  },
+  emptySlot: {
     position: 'absolute',
-    left: -52,
-    top: -7,
-    width: 42,
+    left: 0,
+    right: 0,
+    justifyContent: 'center',
     alignItems: 'flex-end',
-    paddingRight: 2,
+    paddingRight: 12,
+    zIndex: 1,
   },
-  halfHourText: {
-    fontSize: 10,
-    color: '#c0c0c0',
-    fontWeight: '400',
+  addIndicator: {
+    opacity: 0,
   },
-  scheduleBlock: {
+  eventCard: {
     position: 'absolute',
-    left: 4,
-    right: 8,
-    top: 1,
     borderLeftWidth: 3,
     borderRadius: 6,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 4,
+    zIndex: 10,
     overflow: 'hidden',
   },
-  scheduleTitle: {
+  eventTitle: {
     fontSize: 13,
     fontWeight: '600',
+    lineHeight: 17,
   },
-  scheduleTime: {
+  eventTime: {
     fontSize: 11,
-    marginTop: 2,
-    opacity: 0.8,
+    fontWeight: '400',
+    opacity: 0.75,
+    marginTop: 1,
   },
 });

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,13 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
-import { X, Trash2 } from 'lucide-react-native';
+import { X, Trash2, Clock } from 'lucide-react-native';
 import { Schedule } from '@/types/database';
 import { SCHEDULE_COLORS, minutesToTimeString } from '@/lib/scheduleUtils';
+import WheelPicker from '@/components/WheelPicker';
 
 interface Props {
   visible: boolean;
@@ -20,6 +23,12 @@ interface Props {
   onClose: () => void;
   isNew: boolean;
 }
+
+const HOURS = Array.from({ length: 25 }, (_, i) => ({ label: `${i}`, value: i }));
+const MINUTES = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => ({
+  label: m.toString().padStart(2, '0'),
+  value: m,
+}));
 
 export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete, onClose, isNew }: Props) {
   const [title, setTitle] = useState('');
@@ -42,98 +51,135 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
     }
   }, [schedule]);
 
+  const startTotal = startHour * 60 + startMin;
+  const endTotal = endHour * 60 + endMin;
+  const duration = endTotal > startTotal ? endTotal - startTotal : 0;
+  const durationLabel = useMemo(() => {
+    if (duration <= 0) return '---';
+    const h = Math.floor(duration / 60);
+    const m = duration % 60;
+    if (h > 0 && m > 0) return `${h}時間${m}分`;
+    if (h > 0) return `${h}時間`;
+    return `${m}分`;
+  }, [duration]);
+
   const handleSave = () => {
-    const start = startHour * 60 + startMin;
+    let start = startHour * 60 + startMin;
     let end = endHour * 60 + endMin;
-    if (end <= start) {
-      end = start + 10;
-    }
+    if (end <= start) end = start + 30;
     if (end > 1440) end = 1440;
     onSave({ title: title || '(無題)', start_minutes: start, end_minutes: end, color });
   };
 
-  const renderTimePicker = (
-    label: string,
-    hour: number,
-    min: number,
-    setHour: (h: number) => void,
-    setMinute: (m: number) => void
-  ) => (
-    <View style={styles.timePickerSection}>
-      <Text style={styles.timeLabel}>{label}</Text>
-      <View style={styles.timeRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeScroll}>
-          {Array.from({ length: 25 }, (_, i) => i).map(h => (
-            <TouchableOpacity
-              key={h}
-              style={[styles.timePill, hour === h && styles.timePillActive]}
-              onPress={() => setHour(h)}
-            >
-              <Text style={[styles.timePillText, hour === h && styles.timePillTextActive]}>
-                {h}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        <Text style={styles.timeSeparator}>:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeScroll}>
-          {[0, 10, 20, 30, 40, 50].map(m => (
-            <TouchableOpacity
-              key={m}
-              style={[styles.timePill, min === m && styles.timePillActive]}
-              onPress={() => setMinute(m)}
-            >
-              <Text style={[styles.timePillText, min === m && styles.timePillTextActive]}>
-                {m.toString().padStart(2, '0')}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    </View>
-  );
+  const hasError = endTotal <= startTotal;
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
-      <View style={styles.overlay}>
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
         <View style={styles.container}>
+          <View style={styles.handle} />
+
           <View style={styles.header}>
             <Text style={styles.headerTitle}>{isNew ? '予定を追加' : '予定を編集'}</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <X size={22} color="#666" />
+              <X size={20} color="#999" />
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.body}>
-            <Text style={styles.fieldLabel}>タイトル</Text>
+          <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
             <TextInput
-              style={styles.input}
+              style={styles.titleInput}
               value={title}
               onChangeText={setTitle}
-              placeholder="予定のタイトル"
-              placeholderTextColor="#aaa"
+              placeholder="タイトルを入力"
+              placeholderTextColor="#c0c0c0"
               maxLength={50}
+              autoFocus={isNew}
             />
 
-            {renderTimePicker('開始時間', startHour, startMin, setStartHour, setStartMin)}
-            {renderTimePicker('終了時間', endHour, endMin, setEndHour, setEndMin)}
+            <View style={styles.timeSection}>
+              <View style={styles.timeBlock}>
+                <Text style={styles.timeBlockLabel}>開始</Text>
+                <View style={styles.wheelRow}>
+                  <WheelPicker
+                    items={HOURS}
+                    selectedValue={startHour}
+                    onValueChange={setStartHour}
+                    width={64}
+                  />
+                  <Text style={styles.colonText}>:</Text>
+                  <WheelPicker
+                    items={MINUTES}
+                    selectedValue={startMin}
+                    onValueChange={setStartMin}
+                    width={64}
+                  />
+                </View>
+              </View>
 
-            <View style={styles.previewRow}>
-              <Text style={styles.fieldLabel}>プレビュー</Text>
-              <Text style={styles.previewText}>
-                {minutesToTimeString(startHour * 60 + startMin)} - {minutesToTimeString(endHour * 60 + endMin)}
-              </Text>
+              <View style={styles.timeDivider}>
+                <View style={styles.timeDividerLine} />
+                <View style={styles.durationBadge}>
+                  <Clock size={12} color="#888" />
+                  <Text style={[styles.durationText, hasError && styles.durationTextError]}>
+                    {hasError ? '無効' : durationLabel}
+                  </Text>
+                </View>
+                <View style={styles.timeDividerLine} />
+              </View>
+
+              <View style={styles.timeBlock}>
+                <Text style={styles.timeBlockLabel}>終了</Text>
+                <View style={styles.wheelRow}>
+                  <WheelPicker
+                    items={HOURS}
+                    selectedValue={endHour}
+                    onValueChange={setEndHour}
+                    width={64}
+                  />
+                  <Text style={styles.colonText}>:</Text>
+                  <WheelPicker
+                    items={MINUTES}
+                    selectedValue={endMin}
+                    onValueChange={setEndMin}
+                    width={64}
+                  />
+                </View>
+              </View>
             </View>
 
-            <Text style={styles.fieldLabel}>カラー</Text>
+            <Text style={styles.sectionLabel}>カラー</Text>
             <View style={styles.colorRow}>
               {SCHEDULE_COLORS.map(c => (
                 <TouchableOpacity
                   key={c}
-                  style={[styles.colorDot, { backgroundColor: c }, color === c && styles.colorDotActive]}
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: c },
+                    color === c && styles.colorDotActive,
+                    color === c && { borderColor: c },
+                  ]}
                   onPress={() => setColor(c)}
-                />
+                >
+                  {color === c && <View style={styles.colorCheck} />}
+                </TouchableOpacity>
               ))}
+            </View>
+
+            <View style={styles.previewCard}>
+              <View style={[styles.previewBar, { backgroundColor: color }]} />
+              <View style={styles.previewContent}>
+                <Text style={styles.previewTitle} numberOfLines={1}>
+                  {title || '(無題)'}
+                </Text>
+                <Text style={styles.previewTime}>
+                  {minutesToTimeString(startTotal)} - {minutesToTimeString(endTotal)}
+                </Text>
+              </View>
             </View>
           </ScrollView>
 
@@ -141,19 +187,22 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
             {!isNew && onDelete && (
               <TouchableOpacity style={styles.deleteBtn} onPress={onDelete}>
                 <Trash2 size={18} color="#ff3b30" />
-                <Text style={styles.deleteBtnText}>削除</Text>
               </TouchableOpacity>
             )}
             <View style={{ flex: 1 }} />
             <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
               <Text style={styles.cancelBtnText}>キャンセル</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-              <Text style={styles.saveBtnText}>保存</Text>
+            <TouchableOpacity
+              style={[styles.saveBtn, hasError && styles.saveBtnDisabled]}
+              onPress={handleSave}
+              disabled={hasError}
+            >
+              <Text style={styles.saveBtnText}>{isNew ? '追加' : '保存'}</Text>
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -161,151 +210,212 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   container: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '85%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ddd',
+    alignSelf: 'center',
+    marginTop: 10,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000',
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111',
   },
   closeBtn: {
-    padding: 4,
+    padding: 6,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 16,
   },
   body: {
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 8,
   },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-    marginTop: 16,
-  },
-  input: {
+  titleInput: {
+    fontSize: 18,
+    color: '#111',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 16,
-    color: '#000',
-    backgroundColor: '#fafafa',
-  },
-  timePickerSection: {
-    marginTop: 8,
-  },
-  timeLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-    marginTop: 12,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  timeScroll: {
-    flex: 1,
-    maxHeight: 40,
-  },
-  timePill: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
-    marginRight: 6,
-  },
-  timePillActive: {
-    backgroundColor: '#222',
-  },
-  timePillText: {
-    fontSize: 14,
-    color: '#333',
+    borderColor: '#eee',
     fontWeight: '500',
   },
-  timePillTextActive: {
-    color: '#fff',
-  },
-  timeSeparator: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginHorizontal: 6,
-    color: '#333',
-  },
-  previewRow: {
+  timeSection: {
+    marginTop: 24,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
+    justifyContent: 'center',
   },
-  previewText: {
-    fontSize: 16,
+  timeBlock: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  timeBlockLabel: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#4A90D9',
+    color: '#888',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  wheelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colonText: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#333',
+    marginHorizontal: 2,
+  },
+  timeDivider: {
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingTop: 24,
+  },
+  timeDividerLine: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#e0e0e0',
+  },
+  durationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    marginVertical: 6,
+  },
+  durationText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#888',
+  },
+  durationTextError: {
+    color: '#ff3b30',
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#888',
+    marginTop: 28,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   colorRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 12,
   },
   colorDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   colorDotActive: {
     borderWidth: 3,
     borderColor: '#000',
   },
+  colorCheck: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+  },
+  previewCard: {
+    flexDirection: 'row',
+    marginTop: 24,
+    marginBottom: 8,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  previewBar: {
+    width: 4,
+  },
+  previewContent: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  previewTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#222',
+  },
+  previewTime: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 4,
+  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: '#f0f0f0',
   },
   deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
     padding: 10,
-  },
-  deleteBtnText: {
-    color: '#ff3b30',
-    fontSize: 15,
-    fontWeight: '500',
+    backgroundColor: '#fff0f0',
+    borderRadius: 12,
   },
   cancelBtn: {
     paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
     marginRight: 8,
   },
   cancelBtnText: {
     fontSize: 15,
-    color: '#666',
+    color: '#888',
     fontWeight: '500',
   },
   saveBtn: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: '#222',
+  },
+  saveBtnDisabled: {
+    backgroundColor: '#ccc',
   },
   saveBtnText: {
     fontSize: 15,
