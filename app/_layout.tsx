@@ -1,16 +1,43 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import 'react-native-url-polyfill/auto';
+import {
+  requestNotificationPermissions,
+  addNotificationReceivedListener,
+  addNotificationResponseListener,
+} from '@/lib/notifications';
 
 function RootNavigator() {
   const { session, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const notificationListenerRef = useRef<any>(null);
+  const responseListenerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    requestNotificationPermissions();
+
+    notificationListenerRef.current = addNotificationReceivedListener(() => {});
+    responseListenerRef.current = addNotificationResponseListener(() => {
+      router.push('/(tabs)/workspace');
+    });
+
+    return () => {
+      if (notificationListenerRef.current) {
+        notificationListenerRef.current.remove();
+      }
+      if (responseListenerRef.current) {
+        responseListenerRef.current.remove();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (loading) return;

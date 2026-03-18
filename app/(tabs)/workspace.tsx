@@ -24,6 +24,7 @@ import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
 import { DragDropProvider } from '@/components/DragDropContext';
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
+import { scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
 
 const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 
@@ -905,16 +906,32 @@ export default function WorkspaceScreen() {
   const handleSetReminder = async (reminderAt: string | null) => {
     if (!reminderTodo) return;
     try {
+      if (reminderTodo.notification_id) {
+        await cancelReminderNotification(reminderTodo.notification_id);
+      }
+
+      let notificationId: string | null = null;
+
+      if (reminderAt) {
+        notificationId = await scheduleReminderNotification(
+          reminderTodo.id,
+          reminderTodo.content,
+          new Date(reminderAt)
+        );
+      }
+
       const { error } = await supabase
         .from('todos')
-        .update({ reminder_at: reminderAt } as any)
+        .update({ reminder_at: reminderAt, notification_id: notificationId } as any)
         .eq('id', reminderTodo.id);
 
       if (error) throw error;
 
       setTodos(prev =>
         prev.map(t =>
-          t.id === reminderTodo.id ? { ...t, reminder_at: reminderAt } : t
+          t.id === reminderTodo.id
+            ? { ...t, reminder_at: reminderAt, notification_id: notificationId }
+            : t
         )
       );
     } catch (error) {
@@ -985,6 +1002,11 @@ export default function WorkspaceScreen() {
 
   const deleteTodo = async (todoId: string) => {
     try {
+      const todoToDelete = todos.find(t => t.id === todoId);
+      if (todoToDelete?.notification_id) {
+        await cancelReminderNotification(todoToDelete.notification_id);
+      }
+
       const { error } = await supabase.from('todos').delete().eq('id', todoId);
 
       if (error) throw error;

@@ -37,6 +37,7 @@ export interface Todo {
   created_at: string;
   completed_at: string | null;
   reminder_at: string | null;
+  notification_id: string | null;
 }
 
 export interface Reminder {
