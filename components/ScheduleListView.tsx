@@ -12,7 +12,6 @@ import { minutesToTimeString } from '@/lib/scheduleUtils';
 
 const ROW_HEIGHT = 48;
 const INTERVAL = 10;
-const TOTAL_SLOTS = 144;
 const HOUR_LABELS = Array.from({ length: 25 }, (_, i) => i);
 
 interface Props {
@@ -61,6 +60,8 @@ export default function ScheduleListView({ schedules, onSlotPress, onSchedulePre
               ) : (
                 slots.map((slotIdx) => {
                   const startMin = slotIdx * INTERVAL;
+                  const isHourStart = slotIdx % 6 === 0;
+                  const isHalfHour = slotIdx % 3 === 0 && !isHourStart;
                   const itemsHere = scheduleMap.get(slotIdx) || [];
                   const primaryItem = itemsHere.find(s => !renderedIds.has(s.id));
 
@@ -71,7 +72,7 @@ export default function ScheduleListView({ schedules, onSlotPress, onSchedulePre
 
                     return (
                       <View key={slotIdx} style={[styles.slotRow, { height: ROW_HEIGHT }]}>
-                        <View style={styles.slotDivider} />
+                        <View style={[styles.slotDivider, isHourStart && styles.hourSlotDivider, isHalfHour && styles.halfHourDivider]} />
                         <TouchableOpacity
                           style={[
                             styles.scheduleBlock,
@@ -101,14 +102,20 @@ export default function ScheduleListView({ schedules, onSlotPress, onSchedulePre
                   return (
                     <TouchableOpacity
                       key={slotIdx}
-                      style={[styles.slotRow, { height: ROW_HEIGHT }]}
+                      style={[styles.slotRow, { height: ROW_HEIGHT }, !isOccupied && styles.emptySlotRow]}
                       onPress={() => !isOccupied && onSlotPress(startMin)}
-                      activeOpacity={isOccupied ? 1 : 0.6}
+                      activeOpacity={isOccupied ? 1 : 0.5}
                     >
-                      <View style={styles.slotDivider} />
-                      {!isOccupied && slotIdx % 6 === 0 && (
-                        <View style={styles.addHint}>
-                          <Plus size={12} color="#ccc" />
+                      <View style={[styles.slotDivider, isHourStart && styles.hourSlotDivider, isHalfHour && styles.halfHourDivider]} />
+                      {!isOccupied && isHourStart && (
+                        <View style={styles.addRow}>
+                          <Plus size={14} color="#bbb" />
+                          <Text style={styles.addHintText}>タップして追加</Text>
+                        </View>
+                      )}
+                      {!isOccupied && isHalfHour && (
+                        <View style={styles.halfHourLabel}>
+                          <Text style={styles.halfHourText}>{hour}:30</Text>
                         </View>
                       )}
                     </TouchableOpacity>
@@ -154,23 +161,53 @@ const styles = StyleSheet.create({
     paddingLeft: 8,
     position: 'relative',
   },
+  emptySlotRow: {
+    backgroundColor: 'transparent',
+  },
   slotDivider: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: '#f5f5f5',
+  },
+  hourSlotDivider: {
+    backgroundColor: '#e0e0e0',
+    height: 1,
+  },
+  halfHourDivider: {
+    backgroundColor: '#ebebeb',
+    height: 1,
   },
   hourDivider: {
     height: 1,
-    backgroundColor: '#e5e5e5',
+    backgroundColor: '#e0e0e0',
   },
-  addHint: {
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    opacity: 0.6,
+    paddingVertical: 4,
+  },
+  addHintText: {
+    fontSize: 12,
+    color: '#bbb',
+    fontWeight: '400',
+  },
+  halfHourLabel: {
     position: 'absolute',
-    right: 12,
-    top: 4,
-    opacity: 0.5,
+    left: -52,
+    top: -7,
+    width: 42,
+    alignItems: 'flex-end',
+    paddingRight: 2,
+  },
+  halfHourText: {
+    fontSize: 10,
+    color: '#c0c0c0',
+    fontWeight: '400',
   },
   scheduleBlock: {
     position: 'absolute',
