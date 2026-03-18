@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform } from 'react-native';
+import { useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, Modal } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -8,7 +8,8 @@ import Animated, {
   withTiming,
   runOnJS,
 } from 'react-native-reanimated';
-import { Trash2, Bell } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { Bell, Trash2 } from 'lucide-react-native';
 import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
 import { useDragDrop } from './DragDropContext';
@@ -27,6 +28,7 @@ interface DraggableTodoItemProps {
   onDelete: (todoId: string) => void;
   onDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
   onReminderPress: (todo: Todo) => void;
+  onClearReminder: (todo: Todo) => void;
 }
 
 export default function DraggableTodoItem({
@@ -43,6 +45,7 @@ export default function DraggableTodoItem({
   onDelete,
   onDragEnd,
   onReminderPress,
+  onClearReminder,
 }: DraggableTodoItemProps) {
   const { startDrag, endDrag, updateHoveredArea, getHoveredArea } = useDragDrop();
   const translateX = useSharedValue(0);
@@ -51,6 +54,9 @@ export default function DraggableTodoItem({
   const scale = useSharedValue(1);
   const zIndex = useSharedValue(0);
   const opacity = useSharedValue(1);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const itemRef = useRef<View>(null);
 
   const startDragJS = (todoId: string, sourceArea: GridArea, idx: number) => {
     startDrag(todoId, sourceArea, idx);
@@ -65,6 +71,20 @@ export default function DraggableTodoItem({
     endDrag();
     if (targetArea) {
       onDragEnd(todo.id, area, targetArea, absY);
+    }
+  };
+
+  const showMenu = () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    if (itemRef.current) {
+      itemRef.current.measureInWindow((x, y, width, height) => {
+        setMenuPosition({ x, y: y + height });
+        setMenuVisible(true);
+      });
+    } else {
+      setMenuVisible(true);
     }
   };
 
@@ -141,43 +161,94 @@ export default function DraggableTodoItem({
   }
 
   return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[styles.todoItem, animatedStyle]}>
-        <View style={styles.todoItemContent}>
-          <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
-            {todo.is_completed && <View style={styles.checkboxFilled} />}
-          </TouchableOpacity>
+    <>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={[styles.todoItem, animatedStyle]}>
+          <View ref={itemRef} style={styles.todoItemInner}>
+            <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
+              {todo.is_completed && <View style={styles.checkboxFilled} />}
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.todoTextContainer}
-            onPress={() => onStartEdit(todo)}
-          >
-            <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
-              {todo.content}
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.todoTextContainer}
+              onPress={() => onStartEdit(todo)}
+              onLongPress={showMenu}
+              delayLongPress={400}
+            >
+              <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
+                {todo.content}
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => onReminderPress(todo)} style={styles.reminderButton}>
-            <Bell size={12} color={todo.reminder_at ? '#e67e22' : '#bdc3c7'} />
-          </TouchableOpacity>
+            {todo.reminder_at && (
+              <Bell size={10} color="#e67e22" style={styles.reminderDot} />
+            )}
+          </View>
 
-          <TouchableOpacity onPress={() => onDelete(todo.id)} style={styles.deleteButton}>
-            <Trash2 size={14} color="#e74c3c" />
-          </TouchableOpacity>
-        </View>
+          {todo.reminder_at && (
+            <View style={styles.reminderBadge}>
+              <Bell size={9} color="#e67e22" />
+              <Text style={styles.reminderBadgeText}>
+                {formatReminderDisplay(todo.reminder_at)}
+              </Text>
+            </View>
+          )}
 
-        {todo.reminder_at && (
-          <TouchableOpacity onPress={() => onReminderPress(todo)} style={styles.reminderBadge}>
-            <Bell size={10} color="#e67e22" />
-            <Text style={styles.reminderBadgeText}>
-              {formatReminderDisplay(todo.reminder_at)}
-            </Text>
-          </TouchableOpacity>
-        )}
+          <Animated.View style={[styles.dragIndicator, dragIndicatorStyle]} />
+        </Animated.View>
+      </GestureDetector>
 
-        <Animated.View style={[styles.dragIndicator, dragIndicatorStyle]} />
-      </Animated.View>
-    </GestureDetector>
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View style={[styles.menu, { top: menuPosition.y, left: menuPosition.x }]}>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                onReminderPress(todo);
+              }}
+            >
+              <Bell size={15} color="#e67e22" />
+              <Text style={styles.menuItemText}>
+                {todo.reminder_at ? 'リマインダーを変更' : 'リマインダーを設定'}
+              </Text>
+            </TouchableOpacity>
+            {todo.reminder_at && (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuVisible(false);
+                  onClearReminder(todo);
+                }}
+              >
+                <Bell size={15} color="#999" />
+                <Text style={[styles.menuItemText, { color: '#999' }]}>リマインダーを削除</Text>
+              </TouchableOpacity>
+            )}
+            <View style={styles.menuDivider} />
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                onDelete(todo.id);
+              }}
+            >
+              <Trash2 size={15} color="#e74c3c" />
+              <Text style={[styles.menuItemText, styles.menuItemDanger]}>タスクを削除</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
 }
 
@@ -191,7 +262,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#ff6b6b',
   },
-  todoItemContent: {
+  todoItemInner: {
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -228,10 +299,8 @@ const styles = StyleSheet.create({
     color: '#7f8c8d',
     opacity: 0.7,
   },
-  reminderButton: {
-    padding: 5,
-    marginRight: 2,
-    marginTop: 1,
+  reminderDot: {
+    marginLeft: 4,
   },
   reminderBadge: {
     flexDirection: 'row',
@@ -243,12 +312,6 @@ const styles = StyleSheet.create({
   reminderBadgeText: {
     fontSize: 10,
     color: '#e67e22',
-  },
-  deleteButton: {
-    padding: 6,
-    backgroundColor: 'rgba(231, 76, 60, 0.1)',
-    borderRadius: 12,
-    marginTop: 1,
   },
   dragIndicator: {
     backgroundColor: '#3498db',
@@ -303,5 +366,42 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  menu: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 6,
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  menuItemText: {
+    fontSize: 14,
+    color: '#2c3e50',
+    fontWeight: '500',
+  },
+  menuItemDanger: {
+    color: '#e74c3c',
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginHorizontal: 12,
+    marginVertical: 2,
   },
 });

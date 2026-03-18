@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Trash2, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from 'lucide-react-native';
+import { Plus, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, Trash2 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
@@ -82,6 +82,8 @@ export default function WorkspaceScreen() {
   const [reminderTodo, setReminderTodo] = useState<Todo | null>(null);
   const [reorderModeActive, setReorderModeActive] = useState(false);
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
+  const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
+  const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
   const areaRefs = useRef<Record<string, View | null>>({});
 
   // アニメーション用の値
@@ -903,6 +905,23 @@ export default function WorkspaceScreen() {
     setReminderTodo(todo);
   };
 
+  const clearReminder = async (todo: Todo) => {
+    try {
+      if (todo.notification_id) {
+        await cancelReminderNotification(todo.notification_id);
+      }
+      const { error } = await supabase
+        .from('todos')
+        .update({ reminder_at: null, notification_id: null } as any)
+        .eq('id', todo.id);
+      if (!error) {
+        setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, reminder_at: null, notification_id: null } : t));
+      }
+    } catch (error) {
+      console.error('Error clearing reminder:', error);
+    }
+  };
+
   const handleSetReminder = async (reminderAt: string | null) => {
     if (!reminderTodo) return;
     try {
@@ -1063,6 +1082,7 @@ export default function WorkspaceScreen() {
         handleDragEnd={handleDragEnd}
         onQuickAdd={handleQuickAdd}
         onReminderPress={openReminderPicker}
+        onClearReminder={clearReminder}
       />
     );
   };
@@ -1166,8 +1186,15 @@ export default function WorkspaceScreen() {
                             <TouchableOpacity
                               style={styles.postitTextContainer}
                               onPress={() => !reorderModeActive && startEditingTodo(todo)}
-                              onLongPress={() => handlePostitLongPress(todo.id)}
-                              delayLongPress={500}
+                              onLongPress={(e) => {
+                                handlePostitLongPress(todo.id);
+                                setPostitMenuTodo(todo);
+                                setPostitMenuPosition({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
+                                if (Platform.OS !== 'web') {
+                                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                }
+                              }}
+                              delayLongPress={400}
                             >
                               <Text
                                 style={[
@@ -1179,51 +1206,13 @@ export default function WorkspaceScreen() {
                               </Text>
                             </TouchableOpacity>
 
-                            {reorderModeActive && longPressedTodo === todo.id && (
-                              <View style={styles.postitOrderButtons}>
-                                <TouchableOpacity
-                                  onPress={() => {
-                                    movePostit(todo, 'up');
-                                    exitReorderMode();
-                                  }}
-                                  disabled={index === 0}
-                                  style={[styles.postitOrderButton, index === 0 && styles.postitOrderButtonDisabled]}>
-                                  <ChevronUp size={12} color={index === 0 ? '#ccc' : '#007AFF'} />
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  onPress={() => {
-                                    movePostit(todo, 'down');
-                                    exitReorderMode();
-                                  }}
-                                  disabled={index === sortedPostits.length - 1}
-                                  style={[styles.postitOrderButton, index === sortedPostits.length - 1 && styles.postitOrderButtonDisabled]}>
-                                  <ChevronDown size={12} color={index === sortedPostits.length - 1 ? '#ccc' : '#007AFF'} />
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  onPress={exitReorderMode}
-                                  style={styles.cancelPostitReorderButton}>
-                                  <Text style={styles.cancelPostitReorderButtonText}>x</Text>
-                                </TouchableOpacity>
-                              </View>
+                            {todo.reminder_at && (
+                              <Bell size={10} color="#e67e22" style={{ marginLeft: 4 }} />
                             )}
-
-                            <TouchableOpacity
-                              onPress={() => openReminderPicker(todo)}
-                              style={styles.postitReminderButton}
-                            >
-                              <Bell size={12} color={todo.reminder_at ? '#e67e22' : '#bdc3c7'} />
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              onPress={() => deleteTodo(todo.id)}
-                              style={styles.postitDeleteButton}
-                            >
-                              <Trash2 size={12} color="#e74c3c" />
-                            </TouchableOpacity>
                           </View>
                           {todo.reminder_at && (
                             <View style={styles.postitReminderBadge}>
-                              <Bell size={10} color="#e67e22" />
+                              <Bell size={9} color="#e67e22" />
                               <Text style={styles.postitReminderBadgeText}>
                                 {(() => {
                                   const d = new Date(todo.reminder_at);
@@ -1307,6 +1296,106 @@ export default function WorkspaceScreen() {
         onSelect={handleSetReminder}
         onClose={() => setReminderTodo(null)}
       />
+
+      <Modal
+        visible={postitMenuTodo !== null && !reorderModeActive}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setPostitMenuTodo(null); exitReorderMode(); }}
+      >
+        <TouchableOpacity
+          style={styles.postitMenuOverlay}
+          activeOpacity={1}
+          onPress={() => { setPostitMenuTodo(null); exitReorderMode(); }}
+        >
+          {postitMenuTodo && (
+            <View style={[styles.postitMenu, { top: postitMenuPosition.y, left: postitMenuPosition.x }]}>
+              <TouchableOpacity
+                style={styles.postitMenuItem}
+                onPress={() => {
+                  const t = postitMenuTodo;
+                  setPostitMenuTodo(null);
+                  exitReorderMode();
+                  openReminderPicker(t);
+                }}
+              >
+                <Bell size={15} color="#e67e22" />
+                <Text style={styles.postitMenuItemText}>
+                  {postitMenuTodo.reminder_at ? 'リマインダーを変更' : 'リマインダーを設定'}
+                </Text>
+              </TouchableOpacity>
+              {postitMenuTodo.reminder_at && (
+                <TouchableOpacity
+                  style={styles.postitMenuItem}
+                  onPress={async () => {
+                    const t = postitMenuTodo;
+                    setPostitMenuTodo(null);
+                    exitReorderMode();
+                    if (t.notification_id) {
+                      await cancelReminderNotification(t.notification_id);
+                    }
+                    const { error } = await supabase
+                      .from('todos')
+                      .update({ reminder_at: null, notification_id: null } as any)
+                      .eq('id', t.id);
+                    if (!error) {
+                      setTodos(prev => prev.map(td => td.id === t.id ? { ...td, reminder_at: null, notification_id: null } : td));
+                    }
+                  }}
+                >
+                  <Bell size={15} color="#999" />
+                  <Text style={[styles.postitMenuItemText, { color: '#999' }]}>リマインダーを削除</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.postitMenuItem}
+                onPress={() => {
+                  const sortedPostits = todos
+                    .filter(t => t.grid_area === null)
+                    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                  const idx = sortedPostits.findIndex(t => t.id === postitMenuTodo!.id);
+                  const t = postitMenuTodo;
+                  setPostitMenuTodo(null);
+                  exitReorderMode();
+                  if (idx > 0) movePostit(t, 'up');
+                }}
+              >
+                <ChevronUp size={15} color="#007AFF" />
+                <Text style={[styles.postitMenuItemText, { color: '#007AFF' }]}>上に移動</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.postitMenuItem}
+                onPress={() => {
+                  const sortedPostits = todos
+                    .filter(t => t.grid_area === null)
+                    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                  const idx = sortedPostits.findIndex(t => t.id === postitMenuTodo!.id);
+                  const t = postitMenuTodo;
+                  setPostitMenuTodo(null);
+                  exitReorderMode();
+                  if (idx < sortedPostits.length - 1) movePostit(t, 'down');
+                }}
+              >
+                <ChevronDown size={15} color="#007AFF" />
+                <Text style={[styles.postitMenuItemText, { color: '#007AFF' }]}>下に移動</Text>
+              </TouchableOpacity>
+              <View style={styles.postitMenuDivider} />
+              <TouchableOpacity
+                style={styles.postitMenuItem}
+                onPress={() => {
+                  const id = postitMenuTodo.id;
+                  setPostitMenuTodo(null);
+                  exitReorderMode();
+                  deleteTodo(id);
+                }}
+              >
+                <Trash2 size={15} color="#e74c3c" />
+                <Text style={[styles.postitMenuItemText, { color: '#e74c3c' }]}>タスクを削除</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </TouchableOpacity>
+      </Modal>
 
       {/* 日付選択モーダル */}
       <Modal
@@ -1793,5 +1882,39 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',
+  },
+  postitMenuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  postitMenu: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 6,
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  postitMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  postitMenuItemText: {
+    fontSize: 14,
+    color: '#2c3e50',
+    fontWeight: '500',
+  },
+  postitMenuDivider: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginHorizontal: 12,
+    marginVertical: 2,
   },
 });
