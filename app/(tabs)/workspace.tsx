@@ -266,35 +266,16 @@ export default function WorkspaceScreen() {
     onMoveShouldSetPanResponder: (evt, gestureState) => {
       return Math.abs(gestureState.dx) > 10;
     },
-    onPanResponderGrant: () => {
-      if (!isAnimating.current) {
-        translateX.setOffset(translateX._value);
-        translateX.setValue(0);
-      }
-    },
-    onPanResponderMove: (evt, gestureState) => {
-      if (!isAnimating.current) {
-        translateX.setValue(gestureState.dx);
-      }
-    },
     onPanResponderRelease: (evt, gestureState) => {
       if (isAnimating.current) return;
-      
-      translateX.flattenOffset();
-      
+
       if (gestureState.dx > SWIPE_THRESHOLD) {
         goToPreviousPage();
       } else if (gestureState.dx < -SWIPE_THRESHOLD) {
         goToNextPage();
-      } else {
-        // スワイプが不十分な場合は元の位置に戻す
-        Animated.spring(translateX, {
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
       }
     },
-    });
+  });
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -828,7 +809,7 @@ export default function WorkspaceScreen() {
         )
       );
 
-      if (Platform.OS === 'ios') {
+      if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (error) {
@@ -874,7 +855,7 @@ export default function WorkspaceScreen() {
         });
       });
 
-      if (Platform.OS === 'ios') {
+      if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (error) {
@@ -887,7 +868,7 @@ export default function WorkspaceScreen() {
     setLongPressedTodo(todoId);
     setReorderModeActive(true);
 
-    if (Platform.OS === 'ios') {
+    if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
   };
