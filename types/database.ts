@@ -20,6 +20,21 @@ export interface Workspace {
 export interface UserSettings {
   id: string;
   default_workspace_type: WorkspaceType;
+  todo_schedule_sync: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Schedule {
+  id: string;
+  user_id: string;
+  date: string;
+  start_minutes: number;
+  end_minutes: number;
+  title: string;
+  color: string;
+  is_from_todo: boolean;
+  source_todo_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -106,6 +121,23 @@ export interface Database {
           {
             foreignKeyName: 'reminders_todo_id_fkey';
             columns: ['todo_id'];
+            referencedRelation: 'todos';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      schedules: {
+        Row: Schedule;
+        Insert: Omit<Schedule, 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<Schedule, 'id' | 'created_at' | 'updated_at'>>;
+        Relationships: [
+          {
+            foreignKeyName: 'schedules_source_todo_id_fkey';
+            columns: ['source_todo_id'];
             referencedRelation: 'todos';
             referencedColumns: ['id'];
           }

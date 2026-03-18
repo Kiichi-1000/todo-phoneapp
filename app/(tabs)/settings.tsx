@@ -8,8 +8,9 @@ import {
   ScrollView,
   Alert,
   Platform,
+  Switch,
 } from 'react-native';
-import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
@@ -37,6 +38,7 @@ export default function SettingsScreen() {
   const [isExporting, setIsExporting] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
+  const [todoSyncEnabled, setTodoSyncEnabled] = useState(true);
 
   useEffect(() => {
     loadSettings();
@@ -55,9 +57,25 @@ export default function SettingsScreen() {
       if (data) {
         setSettings(data);
         setSelectedType(data.default_workspace_type);
+        setTodoSyncEnabled(data.todo_schedule_sync ?? true);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
+    }
+  };
+
+  const toggleTodoSync = async (value: boolean) => {
+    if (!settings) return;
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .update({ todo_schedule_sync: value } as any)
+        .eq('id', settings.id);
+      if (error) throw error;
+      setTodoSyncEnabled(value);
+    } catch (error) {
+      console.error('Error updating sync setting:', error);
+      Alert.alert('エラー', '設定の更新に失敗しました');
     }
   };
 
@@ -191,6 +209,27 @@ export default function SettingsScreen() {
               </View>
             </TouchableOpacity>
           ))}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>スケジュール設定</Text>
+          <View style={styles.syncCard}>
+            <View style={styles.syncLeft}>
+              <CalendarSync size={20} color="#333" />
+              <View style={styles.syncTextWrap}>
+                <Text style={styles.syncLabel}>ToDo リマインダー同期</Text>
+                <Text style={styles.syncDescription}>
+                  リマインダー付きToDoをスケジュールに自動反映
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={todoSyncEnabled}
+              onValueChange={toggleTodoSync}
+              trackColor={{ false: '#ddd', true: '#222' }}
+              thumbColor="#fff"
+            />
+          </View>
         </View>
 
         <View style={styles.section}>
@@ -418,5 +457,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     lineHeight: 20,
+  },
+  syncCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  syncLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  syncTextWrap: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  syncLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 2,
+  },
+  syncDescription: {
+    fontSize: 13,
+    color: '#888',
   },
 });
