@@ -80,7 +80,6 @@ export default function WorkspaceScreen() {
   const [editingTodoText, setEditingTodoText] = useState('');
   
   const [reminderTodo, setReminderTodo] = useState<Todo | null>(null);
-  const [reorderModeActive, setReorderModeActive] = useState(false);
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
   const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
@@ -866,16 +865,10 @@ export default function WorkspaceScreen() {
 
   const handlePostitLongPress = (todoId: string) => {
     setLongPressedTodo(todoId);
-    setReorderModeActive(true);
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-  };
-
-  const exitReorderMode = () => {
-    setReorderModeActive(false);
-    setLongPressedTodo(null);
   };
 
   const handleQuickAdd = async (gridArea: GridArea, content: string) => {
@@ -1166,7 +1159,7 @@ export default function WorkspaceScreen() {
                             </TouchableOpacity>
                             <TouchableOpacity
                               style={styles.postitTextContainer}
-                              onPress={() => !reorderModeActive && startEditingTodo(todo)}
+                              onPress={() => startEditingTodo(todo)}
                               onLongPress={(e) => {
                                 handlePostitLongPress(todo.id);
                                 setPostitMenuTodo(todo);
@@ -1279,15 +1272,15 @@ export default function WorkspaceScreen() {
       />
 
       <Modal
-        visible={postitMenuTodo !== null && !reorderModeActive}
+        visible={postitMenuTodo !== null}
         transparent
         animationType="fade"
-        onRequestClose={() => { setPostitMenuTodo(null); exitReorderMode(); }}
+        onRequestClose={() => { setPostitMenuTodo(null); setLongPressedTodo(null); }}
       >
         <TouchableOpacity
           style={styles.postitMenuOverlay}
           activeOpacity={1}
-          onPress={() => { setPostitMenuTodo(null); exitReorderMode(); }}
+          onPress={() => { setPostitMenuTodo(null); setLongPressedTodo(null); }}
         >
           {postitMenuTodo && (
             <View style={[styles.postitMenu, { top: postitMenuPosition.y, left: postitMenuPosition.x }]}>
@@ -1296,7 +1289,7 @@ export default function WorkspaceScreen() {
                 onPress={() => {
                   const t = postitMenuTodo;
                   setPostitMenuTodo(null);
-                  exitReorderMode();
+                  setLongPressedTodo(null);
                   openReminderPicker(t);
                 }}
               >
@@ -1311,7 +1304,7 @@ export default function WorkspaceScreen() {
                   onPress={async () => {
                     const t = postitMenuTodo;
                     setPostitMenuTodo(null);
-                    exitReorderMode();
+                    setLongPressedTodo(null);
                     if (t.notification_id) {
                       await cancelReminderNotification(t.notification_id);
                     }
@@ -1337,7 +1330,7 @@ export default function WorkspaceScreen() {
                   const idx = sortedPostits.findIndex(t => t.id === postitMenuTodo!.id);
                   const t = postitMenuTodo;
                   setPostitMenuTodo(null);
-                  exitReorderMode();
+                  setLongPressedTodo(null);
                   if (idx > 0) movePostit(t, 'up');
                 }}
               >
@@ -1353,7 +1346,7 @@ export default function WorkspaceScreen() {
                   const idx = sortedPostits.findIndex(t => t.id === postitMenuTodo!.id);
                   const t = postitMenuTodo;
                   setPostitMenuTodo(null);
-                  exitReorderMode();
+                  setLongPressedTodo(null);
                   if (idx < sortedPostits.length - 1) movePostit(t, 'down');
                 }}
               >
@@ -1366,7 +1359,7 @@ export default function WorkspaceScreen() {
                 onPress={() => {
                   const id = postitMenuTodo.id;
                   setPostitMenuTodo(null);
-                  exitReorderMode();
+                  setLongPressedTodo(null);
                   deleteTodo(id);
                 }}
               >
