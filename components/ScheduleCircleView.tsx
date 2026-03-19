@@ -93,7 +93,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
     return schedules.map(s => {
       const startAngle = minutesToAngle(s.start_minutes);
       const endAngle = minutesToAngle(s.end_minutes);
-      const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS - 12, startAngle, endAngle);
+      const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS, startAngle, endAngle);
       const durationMin = s.end_minutes - s.start_minutes;
       const hourCount = Math.ceil(durationMin / 60);
       const hourDividers: { angle: number }[] = [];
@@ -114,7 +114,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
         const slotDur = slotEnd - slotStart;
         const midMin = slotStart + slotDur / 2;
         const midAngle = minutesToAngle(midMin);
-        const labelR = (OUTER_RADIUS - 12) * 0.55;
+        const labelR = OUTER_RADIUS * 0.5;
         const pos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
         const h = Math.floor(slotDur / 60);
         const m = slotDur % 60;
@@ -128,7 +128,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
           const slotDur = s.end_minutes - lastSlotStart;
           const midMin = lastSlotStart + slotDur / 2;
           const midAngle = minutesToAngle(midMin);
-          const labelR = (OUTER_RADIUS - 12) * 0.55;
+          const labelR = OUTER_RADIUS * 0.5;
           const pos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
           const m = slotDur;
           hourLabelsInSegment.push({ pos, label: `0:${m.toString().padStart(2, '0')}` });
@@ -151,7 +151,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
       if (!occupied.has(h)) {
         const startAngle = minutesToAngle(h * 60);
         const endAngle = minutesToAngle((h + 1) * 60);
-        const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS - 12, startAngle, endAngle);
+        const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS, startAngle, endAngle);
         slots.push({ hour: h, path });
       }
     }
@@ -192,7 +192,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
                 onPress={() => onSchedulePress(seg as unknown as Schedule)}
               />
               {seg.hourDividers.map((div, i) => {
-                const lineEnd = polarToCartesian(CENTER, CENTER, OUTER_RADIUS - 12, div.angle);
+                const lineEnd = polarToCartesian(CENTER, CENTER, OUTER_RADIUS, div.angle);
                 return (
                   <Line
                     key={`div-${seg.id}-${i}`}
@@ -231,32 +231,40 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
             </G>
           ))}
 
-          {hourLabels.map(({ hour, tickO, tickI }) => (
-            <Line
-              key={`tick-${hour}`}
-              x1={tickI.x}
-              y1={tickI.y}
-              x2={tickO.x}
-              y2={tickO.y}
-              stroke="#b0b0b0"
-              strokeWidth={1.5}
-            />
-          ))}
+          {hourLabels.map(({ hour, tickO, tickI }) => {
+            const hourMin = hour * 60;
+            const isOnSchedule = schedules.some(s => s.start_minutes <= hourMin && s.end_minutes > hourMin);
+            return (
+              <Line
+                key={`tick-${hour}`}
+                x1={tickI.x}
+                y1={tickI.y}
+                x2={tickO.x}
+                y2={tickO.y}
+                stroke={isOnSchedule ? 'rgba(255,255,255,0.6)' : '#b0b0b0'}
+                strokeWidth={1.5}
+              />
+            );
+          })}
 
-          {hourLabels.map(({ hour, labelPos }) => (
-            <SvgText
-              key={`lbl-${hour}`}
-              x={labelPos.x}
-              y={labelPos.y + 1}
-              fill="#888"
-              fontSize={11}
-              fontWeight="500"
-              textAnchor="middle"
-              alignmentBaseline="central"
-            >
-              {hour}
-            </SvgText>
-          ))}
+          {hourLabels.map(({ hour, labelPos }) => {
+            const hourMin = hour * 60;
+            const isOnSchedule = schedules.some(s => s.start_minutes <= hourMin && s.end_minutes > hourMin);
+            return (
+              <SvgText
+                key={`lbl-${hour}`}
+                x={labelPos.x}
+                y={labelPos.y + 1}
+                fill={isOnSchedule ? 'rgba(255,255,255,0.85)' : '#888'}
+                fontSize={11}
+                fontWeight="500"
+                textAnchor="middle"
+                alignmentBaseline="central"
+              >
+                {hour}
+              </SvgText>
+            );
+          })}
 
           <Line
             x1={CENTER}
