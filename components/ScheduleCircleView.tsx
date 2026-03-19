@@ -16,11 +16,9 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_SIZE = Math.min(SCREEN_WIDTH - 32, 380);
 const CENTER = CHART_SIZE / 2;
 const OUTER_RADIUS = CHART_SIZE / 2 - 4;
-const LABEL_RADIUS = OUTER_RADIUS - 22;
-const TICK_OUTER = OUTER_RADIUS - 6;
-const TICK_INNER_MAJOR = OUTER_RADIUS - 16;
-const RING_OUTER = OUTER_RADIUS - 34;
-const RING_INNER = RING_OUTER * 0.38;
+const LABEL_RADIUS = OUTER_RADIUS + 1;
+const TICK_OUTER = OUTER_RADIUS;
+const TICK_INNER = OUTER_RADIUS - 10;
 
 interface Props {
   schedules: Schedule[];
@@ -40,65 +38,108 @@ function minutesToAngle(minutes: number): number {
   return (minutes / 1440) * 360;
 }
 
-function createArcPath(
+function createPieSlicePath(
   cx: number, cy: number,
-  innerR: number, outerR: number,
+  radius: number,
   startAngle: number, endAngle: number
 ): string {
-  const sweep = endAngle - startAngle;
+  let sweep = endAngle - startAngle;
   if (sweep <= 0) return '';
-  const outerStart = polarToCartesian(cx, cy, outerR, startAngle);
-  const outerEnd = polarToCartesian(cx, cy, outerR, endAngle);
-  const innerStart = polarToCartesian(cx, cy, innerR, startAngle);
-  const innerEnd = polarToCartesian(cx, cy, innerR, endAngle);
+  if (sweep >= 360) sweep = 359.99;
+  const start = polarToCartesian(cx, cy, radius, startAngle);
+  const end = polarToCartesian(cx, cy, radius, endAngle);
   const largeArc = sweep > 180 ? 1 : 0;
 
   return [
-    `M ${outerStart.x} ${outerStart.y}`,
-    `A ${outerR} ${outerR} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
-    `L ${innerEnd.x} ${innerEnd.y}`,
-    `A ${innerR} ${innerR} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    `M ${cx} ${cy}`,
+    `L ${start.x} ${start.y}`,
+    `A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`,
     'Z',
   ].join(' ');
 }
 
 export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress }: Props) {
   const [now, setNow] = useState(new Date());
+  const [tappedHour, setTappedHour] = useState<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (tappedHour !== null) {
+      const timeout = setTimeout(() => setTappedHour(null), 600);
+      return () => clearTimeout(timeout);
+    }
+  }, [tappedHour]);
+
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentTimeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   const handAngle = minutesToAngle(currentMinutes);
-  const handEnd = polarToCartesian(CENTER, CENTER, RING_OUTER - 4, handAngle);
+  const handEnd = polarToCartesian(CENTER, CENTER, OUTER_RADIUS - 30, handAngle);
 
   const hourLabels = useMemo(() => {
     return Array.from({ length: 24 }, (_, i) => {
       const angle = (i / 24) * 360;
-      const labelPos = polarToCartesian(CENTER, CENTER, LABEL_RADIUS, angle);
+      const labelPos = polarToCartesian(CENTER, CENTER, LABEL_RADIUS - 22, angle);
       const tickO = polarToCartesian(CENTER, CENTER, TICK_OUTER, angle);
-      const tickI = polarToCartesian(CENTER, CENTER, TICK_INNER_MAJOR, angle);
+      const tickI = polarToCartesian(CENTER, CENTER, TICK_INNER, angle);
       return { hour: i, angle, labelPos, tickO, tickI };
     });
   }, []);
 
-  const segments = useMemo(() => {
+  const scheduleSegments = useMemo(() => {
     return schedules.map(s => {
       const startAngle = minutesToAngle(s.start_minutes);
       const endAngle = minutesToAngle(s.end_minutes);
-      const path = createArcPath(CENTER, CENTER, RING_INNER, RING_OUTER, startAngle, endAngle);
-      const midAngle = (startAngle + endAngle) / 2;
-      const labelR = (RING_INNER + RING_OUTER) / 2;
-      const labelPos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
-      const span = endAngle - startAngle;
-      return { ...s, path, labelPos, span };
+      const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS - 12, startAngle, endAngle);
+      const durationMin = s.end_minutes - s.start_minutes;
+      const hourCount = Math.ceil(durationMin / 60);
+      const hourDividers: { angle: number }[] = [];
+      for (let i = 1; i < hourCount; i++) {
+        const divMin = s.start_minutes + i * 60;
+        if (divMin < s.end_minutes) {
+          hourDividers.push({ angle: minutesToAngle(divMin) });
+        }
+      }
+
+      const hourLabelsInSegment: { pos: { x: number; y: number }; label: string }[] = [];
+      const segHours = Math.max(1, Math.floor(durationMin / 60));
+      const remainder = durationMin % 60;
+
+      for (let i = 0; i < segHours; i++) {
+        const slotStart = s.start_minutes + i * 60;
+        const slotEnd = Math.min(slotStart + 60, s.end_minutes);
+        const slotDur = slotEnd - slotStart;
+        const midMin = slotStart + slotDur / 2;
+        const midAngle = minutesToAngle(midMin);
+        const labelR = (OUTER_RADIUS - 12) * 0.55;
+        const pos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
+        const h = Math.floor(slotDur / 60);
+        const m = slotDur % 60;
+        const label = h > 0 ? `${h}:${m.toString().padStart(2, '0')}` : `0:${m.toString().padStart(2, '0')}`;
+        hourLabelsInSegment.push({ pos, label });
+      }
+
+      if (remainder > 0 && segHours > 0) {
+        const lastSlotStart = s.start_minutes + segHours * 60;
+        if (lastSlotStart < s.end_minutes) {
+          const slotDur = s.end_minutes - lastSlotStart;
+          const midMin = lastSlotStart + slotDur / 2;
+          const midAngle = minutesToAngle(midMin);
+          const labelR = (OUTER_RADIUS - 12) * 0.55;
+          const pos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
+          const m = slotDur;
+          hourLabelsInSegment.push({ pos, label: `0:${m.toString().padStart(2, '0')}` });
+        }
+      }
+
+      return { ...s, path, startAngle, endAngle, hourDividers, hourLabelsInSegment, durationMin };
     });
   }, [schedules]);
 
-  const emptySlots = useMemo(() => {
+  const emptyHourSlots = useMemo(() => {
     const occupied = new Set<number>();
     for (const s of schedules) {
       const startSlot = Math.floor(s.start_minutes / 60);
@@ -110,12 +151,17 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
       if (!occupied.has(h)) {
         const startAngle = minutesToAngle(h * 60);
         const endAngle = minutesToAngle((h + 1) * 60);
-        const path = createArcPath(CENTER, CENTER, RING_INNER, RING_OUTER, startAngle, endAngle);
+        const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS - 12, startAngle, endAngle);
         slots.push({ hour: h, path });
       }
     }
     return slots;
   }, [schedules]);
+
+  const handleHourTap = (hour: number) => {
+    setTappedHour(hour);
+    onEmptyPress(hour * 60);
+  };
 
   return (
     <View style={styles.container}>
@@ -125,15 +171,65 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
             cx={CENTER}
             cy={CENTER}
             r={OUTER_RADIUS}
-            fill="#d5d5d5"
+            fill="#a8a8a8"
           />
 
-          <Circle
-            cx={CENTER}
-            cy={CENTER}
-            r={RING_INNER}
-            fill="#fff"
-          />
+          {emptyHourSlots.map(slot => (
+            <Path
+              key={`empty-${slot.hour}`}
+              d={slot.path}
+              fill={tappedHour === slot.hour ? '#8a8a8a' : 'transparent'}
+              onPress={() => handleHourTap(slot.hour)}
+            />
+          ))}
+
+          {scheduleSegments.map(seg => (
+            <G key={seg.id}>
+              <Path
+                d={seg.path}
+                fill={seg.color}
+                opacity={0.7}
+                onPress={() => onSchedulePress(seg as unknown as Schedule)}
+              />
+              {seg.hourDividers.map((div, i) => {
+                const lineEnd = polarToCartesian(CENTER, CENTER, OUTER_RADIUS - 12, div.angle);
+                return (
+                  <Line
+                    key={`div-${seg.id}-${i}`}
+                    x1={CENTER}
+                    y1={CENTER}
+                    x2={lineEnd.x}
+                    y2={lineEnd.y}
+                    stroke="#fff"
+                    strokeWidth={1}
+                    opacity={0.6}
+                  />
+                );
+              })}
+              {seg.hourLabelsInSegment.map((hl, i) => {
+                const angleDeg = minutesToAngle(
+                  i === 0
+                    ? seg.startAngle / 360 * 1440 + (Math.min(60, seg.durationMin)) / 2
+                    : 0
+                );
+                return (
+                  <SvgText
+                    key={`hlbl-${seg.id}-${i}`}
+                    x={hl.pos.x}
+                    y={hl.pos.y}
+                    fill="#fff"
+                    fontSize={11}
+                    fontWeight="500"
+                    textAnchor="middle"
+                    alignmentBaseline="central"
+                    opacity={0.9}
+                  >
+                    {hl.label}
+                  </SvgText>
+                );
+              })}
+            </G>
+          ))}
 
           {hourLabels.map(({ hour, tickO, tickI }) => (
             <Line
@@ -153,7 +249,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
               x={labelPos.x}
               y={labelPos.y + 1}
               fill="#888"
-              fontSize={12}
+              fontSize={11}
               fontWeight="500"
               textAnchor="middle"
               alignmentBaseline="central"
@@ -161,47 +257,6 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
               {hour}
             </SvgText>
           ))}
-
-          {emptySlots.map(slot => (
-            <Path
-              key={`empty-${slot.hour}`}
-              d={slot.path}
-              fill="transparent"
-              onPress={() => onEmptyPress(slot.hour * 60)}
-            />
-          ))}
-
-          {segments.map(seg => (
-            <Path
-              key={seg.id}
-              d={seg.path}
-              fill={seg.color}
-              stroke="#d5d5d5"
-              strokeWidth={0.5}
-              onPress={() => onSchedulePress(seg as unknown as Schedule)}
-            />
-          ))}
-
-          {segments.map(seg => {
-            if (seg.span < 12) return null;
-            const maxChars = seg.span > 30 ? 6 : 4;
-            const label = seg.title.length > maxChars ? seg.title.slice(0, maxChars - 1) + '..' : seg.title;
-            return (
-              <SvgText
-                key={`slbl-${seg.id}`}
-                x={seg.labelPos.x}
-                y={seg.labelPos.y}
-                fill="#fff"
-                fontSize={seg.span > 25 ? 11 : 9}
-                fontWeight="600"
-                textAnchor="middle"
-                alignmentBaseline="central"
-                onPress={() => onSchedulePress(seg as unknown as Schedule)}
-              >
-                {label}
-              </SvgText>
-            );
-          })}
 
           <Line
             x1={CENTER}
@@ -215,7 +270,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
           <Circle
             cx={handEnd.x}
             cy={handEnd.y}
-            r={4}
+            r={3}
             fill="#fff"
           />
         </Svg>
