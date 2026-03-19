@@ -28,8 +28,8 @@
       "typedRoutes": false
     },
     "extra": {
-      "supabaseUrl": "https://lqkzbuicdwimzcdedkvu.supabase.co",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxxa3pidWljZHdpbXpjZGVka3Z1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEwNTMzMzksImV4cCI6MjA3NjYyOTMzOX0.7HLFUd1GF_DC6XMcA96OxQ9HMC9UuX4kRg16mcr5vXI"
+      "supabaseUrl": "https://hdgpklybfilnftcmgctk.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkZ3BrbHliZmlsbmZ0Y21nY3RrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NjI4OTUsImV4cCI6MjA4OTMzODg5NX0.Sz3bUC6ZhOOOeQeakhApn_a67NDhFteHctyHMpd9uUc"
     },
     "android": {
       "package": "com.kiichi.x2022222.boltexponativewind"
