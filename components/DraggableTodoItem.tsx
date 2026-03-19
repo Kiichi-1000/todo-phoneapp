@@ -1,18 +1,8 @@
 import { useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, Modal } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  runOnJS,
-} from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import { Bell, Trash2 } from 'lucide-react-native';
 import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
-import { useDragDrop } from './DragDropContext';
 
 interface DraggableTodoItemProps {
   todo: Todo;
@@ -47,37 +37,11 @@ export default function DraggableTodoItem({
   onReminderPress,
   onClearReminder,
 }: DraggableTodoItemProps) {
-  const { startDrag, endDrag, updateHoveredArea, getHoveredArea } = useDragDrop();
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const isDragging = useSharedValue(false);
-  const scale = useSharedValue(1);
-  const zIndex = useSharedValue(0);
-  const opacity = useSharedValue(1);
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const itemRef = useRef<View>(null);
 
-  const startDragJS = (todoId: string, sourceArea: GridArea, idx: number) => {
-    startDrag(todoId, sourceArea, idx);
-  };
-
-  const updateHoverJS = (absX: number, absY: number) => {
-    updateHoveredArea(absX, absY);
-  };
-
-  const endDragJS = (absX: number, absY: number) => {
-    const targetArea = getHoveredArea(absX, absY);
-    endDrag();
-    if (targetArea) {
-      onDragEnd(todo.id, area, targetArea, absY);
-    }
-  };
-
   const showMenu = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
     if (itemRef.current) {
       itemRef.current.measureInWindow((x, y, width, height) => {
         setMenuPosition({ x, y: y + height });
@@ -87,55 +51,6 @@ export default function DraggableTodoItem({
       setMenuVisible(true);
     }
   };
-
-  const panGesture = Gesture.Pan()
-    .activateAfterLongPress(300)
-    .onStart(() => {
-      isDragging.value = true;
-      scale.value = withSpring(1.05);
-      zIndex.value = 1000;
-      opacity.value = 0.9;
-      runOnJS(startDragJS)(todo.id, area, index);
-    })
-    .onUpdate((event) => {
-      translateX.value = event.translationX;
-      translateY.value = event.translationY;
-      runOnJS(updateHoverJS)(event.absoluteX, event.absoluteY);
-    })
-    .onEnd((event) => {
-      const absX = event.absoluteX;
-      const absY = event.absoluteY;
-      translateX.value = withSpring(0);
-      translateY.value = withSpring(0);
-      scale.value = withSpring(1);
-      isDragging.value = false;
-      zIndex.value = 0;
-      opacity.value = withTiming(1);
-      runOnJS(endDragJS)(absX, absY);
-    })
-    .onFinalize(() => {
-      translateX.value = withSpring(0);
-      translateY.value = withSpring(0);
-      scale.value = withSpring(1);
-      isDragging.value = false;
-      zIndex.value = 0;
-      opacity.value = withTiming(1);
-    });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-    zIndex: zIndex.value,
-    opacity: opacity.value,
-  }));
-
-  const dragIndicatorStyle = useAnimatedStyle(() => ({
-    opacity: isDragging.value ? 1 : 0,
-    height: isDragging.value ? 3 : 0,
-  }));
 
   if (isEditing) {
     return (
@@ -162,41 +77,37 @@ export default function DraggableTodoItem({
 
   return (
     <>
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.todoItem, animatedStyle]}>
-          <View ref={itemRef} style={styles.todoItemInner}>
-            <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
-              {todo.is_completed && <View style={styles.checkboxFilled} />}
-            </TouchableOpacity>
+      <View style={styles.todoItem}>
+        <View ref={itemRef} style={styles.todoItemInner}>
+          <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
+            {todo.is_completed && <View style={styles.checkboxFilled} />}
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.todoTextContainer}
-              onPress={() => onStartEdit(todo)}
-              onLongPress={showMenu}
-              delayLongPress={400}
-            >
-              <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
-                {todo.content}
-              </Text>
-            </TouchableOpacity>
-
-            {todo.reminder_at && (
-              <Bell size={10} color="#e67e22" style={styles.reminderDot} />
-            )}
-          </View>
+          <TouchableOpacity
+            style={styles.todoTextContainer}
+            onPress={() => onStartEdit(todo)}
+            onLongPress={showMenu}
+            delayLongPress={400}
+          >
+            <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
+              {todo.content}
+            </Text>
+          </TouchableOpacity>
 
           {todo.reminder_at && (
-            <View style={styles.reminderBadge}>
-              <Bell size={9} color="#e67e22" />
-              <Text style={styles.reminderBadgeText}>
-                {formatReminderDisplay(todo.reminder_at)}
-              </Text>
-            </View>
+            <Bell size={10} color="#e67e22" style={styles.reminderDot} />
           )}
+        </View>
 
-          <Animated.View style={[styles.dragIndicator, dragIndicatorStyle]} />
-        </Animated.View>
-      </GestureDetector>
+        {todo.reminder_at && (
+          <View style={styles.reminderBadge}>
+            <Bell size={9} color="#e67e22" />
+            <Text style={styles.reminderBadgeText}>
+              {formatReminderDisplay(todo.reminder_at)}
+            </Text>
+          </View>
+        )}
+      </View>
 
       <Modal
         visible={menuVisible}
@@ -312,13 +223,6 @@ const styles = StyleSheet.create({
   reminderBadgeText: {
     fontSize: 10,
     color: '#e67e22',
-  },
-  dragIndicator: {
-    backgroundColor: '#3498db',
-    borderRadius: 2,
-    marginTop: 2,
-    alignSelf: 'center',
-    width: '60%',
   },
   todoItemEditing: {
     backgroundColor: '#fff',

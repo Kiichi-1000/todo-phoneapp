@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Database } from '@/types/database';
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 
 const supabaseUrl =
@@ -13,8 +12,11 @@ const supabaseAnonKey =
   Constants.expoConfig?.extra?.supabaseAnonKey ||
   '';
 
-const storage = Platform.OS === 'web'
-  ? {
+const memoryStorage: Record<string, string> = {};
+
+function getStorage() {
+  if (Platform.OS === 'web') {
+    return {
       getItem: (key: string) => {
         try {
           return window.localStorage.getItem(key);
@@ -32,12 +34,26 @@ const storage = Platform.OS === 'web'
           window.localStorage.removeItem(key);
         } catch {}
       },
+    };
+  }
+
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    if (AsyncStorage) {
+      return AsyncStorage;
     }
-  : AsyncStorage;
+  } catch {}
+
+  return {
+    getItem: (key: string) => memoryStorage[key] ?? null,
+    setItem: (key: string, value: string) => { memoryStorage[key] = value; },
+    removeItem: (key: string) => { delete memoryStorage[key]; },
+  };
+}
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: storage as any,
+    storage: getStorage() as any,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

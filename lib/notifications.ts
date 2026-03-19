@@ -1,8 +1,23 @@
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
 
-if (Platform.OS !== 'web') {
-  Notifications.setNotificationHandler({
+let Notifications: typeof import('expo-notifications') | null = null;
+
+async function getNotifications() {
+  if (Notifications) return Notifications;
+  if (Platform.OS === 'web') return null;
+  try {
+    Notifications = require('expo-notifications');
+    return Notifications;
+  } catch {
+    return null;
+  }
+}
+
+(async () => {
+  if (Platform.OS === 'web') return;
+  const mod = await getNotifications();
+  if (!mod) return;
+  mod.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
       shouldPlaySound: true,
@@ -11,16 +26,19 @@ if (Platform.OS !== 'web') {
       shouldShowList: true,
     }),
   });
-}
+})();
 
 export async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  const mod = await getNotifications();
+  if (!mod) return false;
+
+  const { status: existingStatus } = await mod.getPermissionsAsync();
   let finalStatus = existingStatus;
 
   if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
+    const { status } = await mod.requestPermissionsAsync();
     finalStatus = status;
   }
 
@@ -29,9 +47,9 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   }
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('reminders', {
+    await mod.setNotificationChannelAsync('reminders', {
       name: 'リマインダー',
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: mod.AndroidImportance.HIGH,
       sound: 'default',
       vibrationPattern: [0, 250, 250, 250],
     });
@@ -47,6 +65,9 @@ export async function scheduleReminderNotification(
 ): Promise<string | null> {
   if (Platform.OS === 'web') return null;
 
+  const mod = await getNotifications();
+  if (!mod) return null;
+
   const hasPermission = await requestNotificationPermissions();
   if (!hasPermission) return null;
 
@@ -55,7 +76,7 @@ export async function scheduleReminderNotification(
 
   if (secondsUntil <= 0) return null;
 
-  const notificationId = await Notifications.scheduleNotificationAsync({
+  const notificationId = await mod.scheduleNotificationAsync({
     content: {
       title: 'タスクリマインダー',
       body: content,
@@ -64,7 +85,7 @@ export async function scheduleReminderNotification(
       ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
     },
     trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      type: mod.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds: secondsUntil,
       repeats: false,
     },
@@ -76,21 +97,36 @@ export async function scheduleReminderNotification(
 export async function cancelReminderNotification(notificationId: string): Promise<void> {
   if (Platform.OS === 'web') return;
 
+  const mod = await getNotifications();
+  if (!mod) return;
+
   try {
-    await Notifications.cancelScheduledNotificationAsync(notificationId);
+    await mod.cancelScheduledNotificationAsync(notificationId);
   } catch (error) {
     console.error('Error cancelling notification:', error);
   }
 }
 
 export function addNotificationResponseListener(
-  callback: (response: Notifications.NotificationResponse) => void
+  callback: (response: any) => void
 ) {
-  return Notifications.addNotificationResponseReceivedListener(callback);
+  if (Platform.OS === 'web') return { remove: () => {} };
+  try {
+    const mod = require('expo-notifications');
+    return mod.addNotificationResponseReceivedListener(callback);
+  } catch {
+    return { remove: () => {} };
+  }
 }
 
 export function addNotificationReceivedListener(
-  callback: (notification: Notifications.Notification) => void
+  callback: (notification: any) => void
 ) {
-  return Notifications.addNotificationReceivedListener(callback);
+  if (Platform.OS === 'web') return { remove: () => {} };
+  try {
+    const mod = require('expo-notifications');
+    return mod.addNotificationReceivedListener(callback);
+  } catch {
+    return { remove: () => {} };
+  }
 }
