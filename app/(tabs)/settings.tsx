@@ -79,6 +79,13 @@ export default function SettingsScreen() {
     }
   };
 
+  const showTodoSyncInfo = () => {
+    Alert.alert(
+      'ToDoリマインダー同期',
+      'リマインダー付きのToDoをスケジュール画面へ自動反映します。\n\nオフにすると、新規同期は行われません。既に登録済みのスケジュールはそのまま残ります。'
+    );
+  };
+
   const updateWorkspaceType = async (type: WorkspaceType) => {
     if (!settings) return;
 
@@ -217,18 +224,29 @@ export default function SettingsScreen() {
             <View style={styles.syncLeft}>
               <CalendarSync size={20} color="#333" />
               <View style={styles.syncTextWrap}>
-                <Text style={styles.syncLabel}>ToDo リマインダー同期</Text>
-                <Text style={styles.syncDescription}>
-                  リマインダー付きToDoをスケジュールに自動反映
-                </Text>
+                <View style={styles.syncLabelRow}>
+                  <Text style={styles.syncLabel} numberOfLines={1}>
+                    ToDo リマインダー同期
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.syncInfoBtn}
+                    onPress={showTodoSyncInfo}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Info size={16} color="#777" />
+                  </TouchableOpacity>
+                  <View style={styles.syncInlineSwitch}>
+                    <Switch
+                      value={todoSyncEnabled}
+                      onValueChange={toggleTodoSync}
+                      trackColor={{ false: '#ddd', true: '#222' }}
+                      thumbColor="#fff"
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    />
+                  </View>
+                </View>
               </View>
             </View>
-            <Switch
-              value={todoSyncEnabled}
-              onValueChange={toggleTodoSync}
-              trackColor={{ false: '#ddd', true: '#222' }}
-              thumbColor="#fff"
-            />
           </View>
         </View>
 
@@ -466,26 +484,41 @@ const styles = StyleSheet.create({
     borderColor: '#e5e5e5',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
   },
   syncLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: 12,
+    minWidth: 0,
+    marginRight: 8,
   },
   syncTextWrap: {
-    marginLeft: 12,
+    marginLeft: 10,
     flex: 1,
+    minWidth: 0,
+  },
+  syncLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
   },
   syncLabel: {
     fontSize: 15,
     fontWeight: '600',
     color: '#000',
-    marginBottom: 2,
+    flexShrink: 1,
   },
-  syncDescription: {
-    fontSize: 13,
-    color: '#888',
+  syncInfoBtn: {
+    marginLeft: 6,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  syncInlineSwitch: {
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
   },
 });

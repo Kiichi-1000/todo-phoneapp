@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ interface Props {
   schedules: Schedule[];
   onEmptyPress: (startMinutes: number) => void;
   onSchedulePress: (schedule: Schedule) => void;
+  isToday?: boolean;
 }
 
 function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
@@ -58,9 +59,11 @@ function createPieSlicePath(
   ].join(' ');
 }
 
-export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress }: Props) {
+export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress, isToday = false }: Props) {
   const [now, setNow] = useState(new Date());
   const [tappedHour, setTappedHour] = useState<number | null>(null);
+  const legendScrollRef = useRef<ScrollView>(null);
+  const legendItemOffsetsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
@@ -95,47 +98,14 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
       const endAngle = minutesToAngle(s.end_minutes);
       const path = createPieSlicePath(CENTER, CENTER, OUTER_RADIUS, startAngle, endAngle);
       const durationMin = s.end_minutes - s.start_minutes;
-      const hourCount = Math.ceil(durationMin / 60);
-      const hourDividers: { angle: number }[] = [];
-      for (let i = 1; i < hourCount; i++) {
-        const divMin = s.start_minutes + i * 60;
-        if (divMin < s.end_minutes) {
-          hourDividers.push({ angle: minutesToAngle(divMin) });
-        }
-      }
+      const midMin = s.start_minutes + durationMin / 2;
+      const midAngle = minutesToAngle(midMin);
+      const labelPos = polarToCartesian(CENTER, CENTER, OUTER_RADIUS * 0.5, midAngle);
+      const dH = Math.floor(durationMin / 60);
+      const dM = durationMin % 60;
+      const durationLabel = dH > 0 && dM > 0 ? `${dH}h${dM}m` : dH > 0 ? `${dH}h` : `${dM}m`;
 
-      const hourLabelsInSegment: { pos: { x: number; y: number }; label: string }[] = [];
-      const segHours = Math.max(1, Math.floor(durationMin / 60));
-      const remainder = durationMin % 60;
-
-      for (let i = 0; i < segHours; i++) {
-        const slotStart = s.start_minutes + i * 60;
-        const slotEnd = Math.min(slotStart + 60, s.end_minutes);
-        const slotDur = slotEnd - slotStart;
-        const midMin = slotStart + slotDur / 2;
-        const midAngle = minutesToAngle(midMin);
-        const labelR = OUTER_RADIUS * 0.5;
-        const pos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
-        const h = Math.floor(slotDur / 60);
-        const m = slotDur % 60;
-        const label = h > 0 ? `${h}:${m.toString().padStart(2, '0')}` : `0:${m.toString().padStart(2, '0')}`;
-        hourLabelsInSegment.push({ pos, label });
-      }
-
-      if (remainder > 0 && segHours > 0) {
-        const lastSlotStart = s.start_minutes + segHours * 60;
-        if (lastSlotStart < s.end_minutes) {
-          const slotDur = s.end_minutes - lastSlotStart;
-          const midMin = lastSlotStart + slotDur / 2;
-          const midAngle = minutesToAngle(midMin);
-          const labelR = OUTER_RADIUS * 0.5;
-          const pos = polarToCartesian(CENTER, CENTER, labelR, midAngle);
-          const m = slotDur;
-          hourLabelsInSegment.push({ pos, label: `0:${m.toString().padStart(2, '0')}` });
-        }
-      }
-
-      return { ...s, path, startAngle, endAngle, hourDividers, hourLabelsInSegment, durationMin };
+      return { ...s, path, labelPos, durationLabel };
     });
   }, [schedules]);
 
@@ -157,6 +127,28 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
     }
     return slots;
   }, [schedules]);
+
+  const orderedLegendSchedules = useMemo(() => {
+    if (!schedules.length) return [];
+    return [...schedules].sort((a, b) => a.start_minutes - b.start_minutes);
+  }, [schedules]);
+
+  const nearestFutureOrCurrentId = useMemo(() => {
+    if (!isToday || orderedLegendSchedules.length === 0) return null;
+    const target = orderedLegendSchedules.find(s => s.end_minutes >= currentMinutes);
+    return target?.id ?? null;
+  }, [isToday, orderedLegendSchedules, currentMinutes]);
+
+  const scrollLegendToTarget = useCallback(() => {
+    if (!isToday || !nearestFutureOrCurrentId) return;
+    const y = legendItemOffsetsRef.current[nearestFutureOrCurrentId];
+    if (typeof y !== 'number') return;
+    legendScrollRef.current?.scrollTo({ y: Math.max(y - 4, 0), animated: false });
+  }, [isToday, nearestFutureOrCurrentId]);
+
+  useEffect(() => {
+    scrollLegendToTarget();
+  }, [scrollLegendToTarget]);
 
   const handleHourTap = (hour: number) => {
     setTappedHour(hour);
@@ -191,43 +183,18 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
                 opacity={0.7}
                 onPress={() => onSchedulePress(seg as unknown as Schedule)}
               />
-              {seg.hourDividers.map((div, i) => {
-                const lineEnd = polarToCartesian(CENTER, CENTER, OUTER_RADIUS, div.angle);
-                return (
-                  <Line
-                    key={`div-${seg.id}-${i}`}
-                    x1={CENTER}
-                    y1={CENTER}
-                    x2={lineEnd.x}
-                    y2={lineEnd.y}
-                    stroke="#fff"
-                    strokeWidth={1}
-                    opacity={0.6}
-                  />
-                );
-              })}
-              {seg.hourLabelsInSegment.map((hl, i) => {
-                const angleDeg = minutesToAngle(
-                  i === 0
-                    ? seg.startAngle / 360 * 1440 + (Math.min(60, seg.durationMin)) / 2
-                    : 0
-                );
-                return (
-                  <SvgText
-                    key={`hlbl-${seg.id}-${i}`}
-                    x={hl.pos.x}
-                    y={hl.pos.y}
-                    fill="#fff"
-                    fontSize={11}
-                    fontWeight="500"
-                    textAnchor="middle"
-                    alignmentBaseline="central"
-                    opacity={0.9}
-                  >
-                    {hl.label}
-                  </SvgText>
-                );
-              })}
+              <SvgText
+                x={seg.labelPos.x}
+                y={seg.labelPos.y}
+                fill="#fff"
+                fontSize={11}
+                fontWeight="500"
+                textAnchor="middle"
+                alignmentBaseline="central"
+                opacity={0.9}
+              >
+                {seg.durationLabel}
+              </SvgText>
             </G>
           ))}
 
@@ -301,15 +268,19 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.legend} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={legendScrollRef}
+        style={styles.legend}
+        showsVerticalScrollIndicator={false}
+        onContentSizeChange={scrollLegendToTarget}
+      >
         {schedules.length === 0 ? (
           <View style={styles.emptyLegend}>
             <Text style={styles.emptyText}>予定がありません</Text>
             <Text style={styles.emptySubText}>+ ボタンまたは円グラフをタップして追加</Text>
           </View>
         ) : (
-          [...schedules]
-            .sort((a, b) => a.start_minutes - b.start_minutes)
+          orderedLegendSchedules
             .map(s => {
               const durationMin = s.end_minutes - s.start_minutes;
               const dH = Math.floor(durationMin / 60);
@@ -321,6 +292,9 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
                   style={styles.legendItem}
                   onPress={() => onSchedulePress(s)}
                   activeOpacity={0.6}
+                  onLayout={(event) => {
+                    legendItemOffsetsRef.current[s.id] = event.nativeEvent.layout.y;
+                  }}
                 >
                   <View style={[styles.legendBar, { backgroundColor: s.color }]} />
                   <View style={styles.legendContent}>

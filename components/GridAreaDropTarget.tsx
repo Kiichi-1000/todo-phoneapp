@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
+  Keyboard,
 } from 'react-native';
 import { Todo, GridArea } from '@/types/database';
 import { useDragDrop } from './DragDropContext';
@@ -44,6 +45,7 @@ function InlineAddInput({ area, onQuickAdd }: { area: GridArea; onQuickAdd: (are
       onQuickAdd(area, text.trim());
       setText('');
     }
+    Keyboard.dismiss();
   };
 
   return (
@@ -55,7 +57,7 @@ function InlineAddInput({ area, onQuickAdd }: { area: GridArea; onQuickAdd: (are
       placeholderTextColor="#bdc3c7"
       maxLength={100}
       onSubmitEditing={handleSubmit}
-      blurOnSubmit={false}
+      blurOnSubmit
       returnKeyType="done"
     />
   );
@@ -164,7 +166,12 @@ export default function GridAreaDropTarget({
         </View>
       )}
 
-      <ScrollView style={styles.todoList} scrollEnabled={dragState === null}>
+      <ScrollView
+        style={styles.todoList}
+        scrollEnabled={dragState === null}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {areaTodos.map((todo, index) => (
           <DraggableTodoItem
             key={todo.id}

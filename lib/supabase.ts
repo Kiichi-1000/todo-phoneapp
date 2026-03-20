@@ -17,19 +17,19 @@ const memoryStorage: Record<string, string> = {};
 function getStorage() {
   if (Platform.OS === 'web') {
     return {
-      getItem: (key: string) => {
+      getItem: async (key: string) => {
         try {
           return window.localStorage.getItem(key);
         } catch {
           return null;
         }
       },
-      setItem: (key: string, value: string) => {
+      setItem: async (key: string, value: string) => {
         try {
           window.localStorage.setItem(key, value);
         } catch {}
       },
-      removeItem: (key: string) => {
+      removeItem: async (key: string) => {
         try {
           window.localStorage.removeItem(key);
         } catch {}
@@ -38,16 +38,42 @@ function getStorage() {
   }
 
   try {
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const AsyncStorage = require('@react-native-async-storage/async-storage')?.default;
     if (AsyncStorage) {
-      return AsyncStorage;
+      return {
+        getItem: async (key: string) => {
+          try {
+            return await AsyncStorage.getItem(key);
+          } catch {
+            return memoryStorage[key] ?? null;
+          }
+        },
+        setItem: async (key: string, value: string) => {
+          try {
+            await AsyncStorage.setItem(key, value);
+          } catch {
+            memoryStorage[key] = value;
+          }
+        },
+        removeItem: async (key: string) => {
+          try {
+            await AsyncStorage.removeItem(key);
+          } catch {
+            delete memoryStorage[key];
+          }
+        },
+      };
     }
   } catch {}
 
   return {
-    getItem: (key: string) => memoryStorage[key] ?? null,
-    setItem: (key: string, value: string) => { memoryStorage[key] = value; },
-    removeItem: (key: string) => { delete memoryStorage[key]; },
+    getItem: async (key: string) => memoryStorage[key] ?? null,
+    setItem: async (key: string, value: string) => {
+      memoryStorage[key] = value;
+    },
+    removeItem: async (key: string) => {
+      delete memoryStorage[key];
+    },
   };
 }
 

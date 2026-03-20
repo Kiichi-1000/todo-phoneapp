@@ -1,45 +1,89 @@
 import { Platform } from 'react-native';
+import { NativeModulesProxy } from 'expo-modules-core';
 
 let Notifications: typeof import('expo-notifications') | null = null;
+let notificationModuleChecked = false;
+let notificationHandlerInitialized = false;
+const notificationsEnabled = false;
+
+function hasNativeNotificationSupport() {
+  if (!notificationsEnabled) return false;
+  if (Platform.OS === 'web') return false;
+  const modules = NativeModulesProxy as Record<string, unknown>;
+  return Boolean(modules?.ExpoPushTokenManager);
+}
 
 async function getNotifications() {
+  if (notificationModuleChecked) return Notifications;
   if (Notifications) return Notifications;
-  if (Platform.OS === 'web') return null;
+  if (Platform.OS === 'web' || !hasNativeNotificationSupport()) {
+    notificationModuleChecked = true;
+    return null;
+  }
+
   try {
-    Notifications = require('expo-notifications');
+    const mod = require('expo-notifications') as typeof import('expo-notifications');
+
+    try {
+      await mod.getPermissionsAsync();
+    } catch {
+      Notifications = null;
+      notificationModuleChecked = true;
+      return null;
+    }
+
+    Notifications = mod;
+    notificationModuleChecked = true;
     return Notifications;
   } catch {
+    Notifications = null;
+    notificationModuleChecked = true;
     return null;
   }
 }
 
-(async () => {
-  if (Platform.OS === 'web') return;
+async function ensureNotificationHandlerInitialized() {
+  if (notificationHandlerInitialized || Platform.OS === 'web') return;
+
   const mod = await getNotifications();
   if (!mod) return;
-  mod.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }),
-  });
-})();
+
+  try {
+    mod.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+    notificationHandlerInitialized = true;
+  } catch {
+    notificationHandlerInitialized = false;
+  }
+}
 
 export async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
+  await ensureNotificationHandlerInitialized();
+
   const mod = await getNotifications();
   if (!mod) return false;
 
-  const { status: existingStatus } = await mod.getPermissionsAsync();
-  let finalStatus = existingStatus;
+  let finalStatus: import('expo-notifications').NotificationPermissionsStatus['status'];
 
-  if (existingStatus !== 'granted') {
-    const { status } = await mod.requestPermissionsAsync();
-    finalStatus = status;
+  try {
+    const { status: existingStatus } = await mod.getPermissionsAsync();
+    finalStatus = existingStatus;
+
+    if (existingStatus !== 'granted') {
+      const { status } = await mod.requestPermissionsAsync();
+      finalStatus = status;
+    }
+  } catch {
+    return false;
   }
 
   if (finalStatus !== 'granted') {
@@ -47,12 +91,16 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   }
 
   if (Platform.OS === 'android') {
-    await mod.setNotificationChannelAsync('reminders', {
-      name: 'リマインダー',
-      importance: mod.AndroidImportance.HIGH,
-      sound: 'default',
-      vibrationPattern: [0, 250, 250, 250],
-    });
+    try {
+      await mod.setNotificationChannelAsync('reminders', {
+        name: 'リマインダー',
+        importance: mod.AndroidImportance.HIGH,
+        sound: 'default',
+        vibrationPattern: [0, 250, 250, 250],
+      });
+    } catch {
+      return false;
+    }
   }
 
   return true;
@@ -65,6 +113,8 @@ export async function scheduleReminderNotification(
 ): Promise<string | null> {
   if (Platform.OS === 'web') return null;
 
+  await ensureNotificationHandlerInitialized();
+
   const mod = await getNotifications();
   if (!mod) return null;
 
@@ -76,22 +126,26 @@ export async function scheduleReminderNotification(
 
   if (secondsUntil <= 0) return null;
 
-  const notificationId = await mod.scheduleNotificationAsync({
-    content: {
-      title: 'タスクリマインダー',
-      body: content,
-      data: { todoId },
-      sound: 'default',
-      ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
-    },
-    trigger: {
-      type: mod.SchedulableTriggerInputTypes.TIME_INTERVAL,
-      seconds: secondsUntil,
-      repeats: false,
-    },
-  });
+  try {
+    const notificationId = await mod.scheduleNotificationAsync({
+      content: {
+        title: 'タスクリマインダー',
+        body: content,
+        data: { todoId },
+        sound: 'default',
+        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+      },
+      trigger: {
+        type: mod.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: secondsUntil,
+        repeats: false,
+      },
+    });
 
-  return notificationId;
+    return notificationId;
+  } catch {
+    return null;
+  }
 }
 
 export async function cancelReminderNotification(notificationId: string): Promise<void> {
@@ -110,7 +164,9 @@ export async function cancelReminderNotification(notificationId: string): Promis
 export function addNotificationResponseListener(
   callback: (response: any) => void
 ) {
-  if (Platform.OS === 'web') return { remove: () => {} };
+  if (Platform.OS === 'web' || !hasNativeNotificationSupport()) {
+    return { remove: () => {} };
+  }
   try {
     const mod = require('expo-notifications');
     return mod.addNotificationResponseReceivedListener(callback);
@@ -122,7 +178,9 @@ export function addNotificationResponseListener(
 export function addNotificationReceivedListener(
   callback: (notification: any) => void
 ) {
-  if (Platform.OS === 'web') return { remove: () => {} };
+  if (Platform.OS === 'web' || !hasNativeNotificationSupport()) {
+    return { remove: () => {} };
+  }
   try {
     const mod = require('expo-notifications');
     return mod.addNotificationReceivedListener(callback);

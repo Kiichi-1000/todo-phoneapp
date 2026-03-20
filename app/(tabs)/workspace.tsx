@@ -1105,7 +1105,12 @@ export default function WorkspaceScreen() {
         ) : workspace.type === 'individual' ? (
           <View style={styles.individualContainer}>
             {/* ポストイット表示エリア */}
-            <ScrollView style={styles.postitsArea} contentContainerStyle={styles.postitsContent}>
+            <ScrollView
+              style={styles.postitsArea}
+              contentContainerStyle={styles.postitsContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            >
               {todos.length === 0 && !isAddingPostit ? (
                 <View style={styles.emptyPostitsContainer}>
                   <Text style={styles.emptyPostitsText}>

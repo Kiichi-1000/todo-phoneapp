@@ -355,6 +355,7 @@ export default function ScheduleScreen() {
             schedules={schedules}
             onEmptyPress={handleSlotPress}
             onSchedulePress={handleSchedulePress}
+            isToday={isToday}
           />
         )}
       </Animated.View>

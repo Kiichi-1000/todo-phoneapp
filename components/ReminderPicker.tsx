@@ -198,21 +198,6 @@ export default function ReminderPicker({
 
         {mode === 'quick' ? (
           <ScrollView style={styles.quickContainer} showsVerticalScrollIndicator={false}>
-            <View style={styles.quickList}>
-              {QUICK_OPTIONS.map((opt) => (
-                <TouchableOpacity
-                  key={opt.label}
-                  style={styles.quickOption}
-                  onPress={() => handleQuickOption(opt)}
-                >
-                  <Bell size={16} color="#e67e22" />
-                  <Text style={styles.quickOptionText}>{opt.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={styles.todayTimeSectionDivider} />
-
             <View style={styles.todayTimeSection}>
               <Text style={styles.todayTimeSectionTitle}>今日の時間を指定</Text>
               <View style={styles.wheelRow}>
@@ -243,6 +228,21 @@ export default function ReminderPicker({
               {!isTodayTimeValid() && (
                 <Text style={styles.pastWarning}>過去の時間は設定できません</Text>
               )}
+            </View>
+
+            <View style={styles.todayTimeSectionDivider} />
+
+            <View style={styles.quickList}>
+              {QUICK_OPTIONS.map((opt) => (
+                <TouchableOpacity
+                  key={opt.label}
+                  style={styles.quickOption}
+                  onPress={() => handleQuickOption(opt)}
+                >
+                  <Bell size={16} color="#e67e22" />
+                  <Text style={styles.quickOptionText}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </ScrollView>
         ) : (

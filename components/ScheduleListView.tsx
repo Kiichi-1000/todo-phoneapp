@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -73,12 +73,19 @@ export default function ScheduleListView({ schedules, onSlotPress, onSchedulePre
     return (minutes / 60) * HOUR_HEIGHT;
   }, []);
 
+  const scrollToNowLine = useCallback(() => {
+    const targetY = Math.max(currentHourLine, 0);
+    scrollRef.current?.scrollTo({ y: targetY, animated: false });
+  }, [currentHourLine]);
+
   return (
     <ScrollView
       ref={scrollRef}
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
+      onLayout={scrollToNowLine}
+      onContentSizeChange={scrollToNowLine}
     >
       <View style={styles.timeline}>
         <View style={styles.timeLabels}>
