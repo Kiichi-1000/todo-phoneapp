@@ -470,24 +470,27 @@ export default function RoutineScreen() {
 
   const deleteTemplateItem = async (item: RoutineTemplateItem) => {
     if (!templateId) return;
-    Alert.alert('削除', `「${item.title || '無題'}」を削除しますか？`, [
-      { text: 'キャンセル', style: 'cancel' },
-      {
-        text: '削除',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const { error } = await supabase.from('routine_template_items').delete().eq('id', item.id);
-            if (error) throw error;
-            await touchTemplateUpdated(templateId);
-            await loadRoutine();
-          } catch (e) {
-            console.error('deleteTemplateItem:', e);
-            Alert.alert('エラー', '削除に失敗しました');
-          }
-        },
-      },
-    ]);
+    const label = item.title || '無題';
+    const doDelete = async () => {
+      try {
+        const { error } = await supabase.from('routine_template_items').delete().eq('id', item.id);
+        if (error) throw error;
+        await touchTemplateUpdated(templateId);
+        await loadRoutine();
+      } catch (e) {
+        console.error('deleteTemplateItem:', e);
+      }
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(`「${label}」を削除しますか？`)) {
+        await doDelete();
+      }
+    } else {
+      Alert.alert('削除', `「${label}」を削除しますか？`, [
+        { text: 'キャンセル', style: 'cancel' },
+        { text: '削除', style: 'destructive', onPress: doDelete },
+      ]);
+    }
   };
 
   const moveTemplateItem = async (item: RoutineTemplateItem, dir: -1 | 1) => {
