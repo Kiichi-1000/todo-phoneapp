@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -34,6 +35,8 @@ import {
   Settings,
   ChevronUp,
   ChevronDown,
+  Check,
+  CircleCheck as CheckCircle,
 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -55,6 +58,12 @@ const SLOT_ICONS: Record<RoutineSlot, any> = {
   morning: Sunrise,
   daytime: Sun,
   evening: Moon,
+};
+
+const SLOT_COLORS: Record<RoutineSlot, { bg: string; accent: string; light: string }> = {
+  morning: { bg: '#FFF8F0', accent: '#E8954A', light: '#FDEBD0' },
+  daytime: { bg: '#F0F8FF', accent: '#3B82F6', light: '#DBEAFE' },
+  evening: { bg: '#F5F0FF', accent: '#7C5CFC', light: '#EDE9FE' },
 };
 
 function generateDates(): string[] {
@@ -79,11 +88,6 @@ function getTodayIndex(dates: string[]): number {
   return idx >= 0 ? idx : 365;
 }
 
-function itemDisplayLabel(item: RoutineTemplateItem): string {
-  const s = item.short_label?.trim();
-  return s || item.title;
-}
-
 function isRoutineTableMissingError(error: any): boolean {
   const message = String(error?.message || '');
   const code = String(error?.code || '');
@@ -104,7 +108,8 @@ export default function RoutineScreen() {
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [templateModalVisible, setTemplateModalVisible] = useState(false);
   const [newItemTitle, setNewItemTitle] = useState('');
-  const [editingItem, setEditingItem] = useState<RoutineTemplateItem | null>(null);
+  const [templateEditingId, setTemplateEditingId] = useState<string | null>(null);
+  const [templateEditText, setTemplateEditText] = useState('');
 
   const translateX = useSharedValue(0);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -241,10 +246,6 @@ export default function RoutineScreen() {
       console.error('loadRoutine:', e);
       if (isRoutineTableMissingError(e)) {
         setRoutineTablesMissing(true);
-        Alert.alert(
-          'データベース',
-          'ルーティン用テーブルがまだありません。Supabase に最新マイグレーションを適用してください。'
-        );
       }
       setItems([]);
       setCompletedItemIds(new Set());
@@ -269,6 +270,42 @@ export default function RoutineScreen() {
     }
     return map;
   }, [items]);
+
+  const allItemsBySlot = useMemo(() => {
+    const map: Record<RoutineSlot, RoutineTemplateItem[]> = {
+      morning: [],
+      daytime: [],
+      evening: [],
+    };
+    for (const it of items) {
+      map[it.slot].push(it);
+    }
+    return map;
+  }, [items]);
+
+  const slotProgress = useMemo(() => {
+    const progress: Record<RoutineSlot, { done: number; total: number }> = {
+      morning: { done: 0, total: 0 },
+      daytime: { done: 0, total: 0 },
+      evening: { done: 0, total: 0 },
+    };
+    for (const slot of SLOTS) {
+      const slotItems = activeItemsBySlot[slot];
+      progress[slot].total = slotItems.length;
+      progress[slot].done = slotItems.filter((i) => completedItemIds.has(i.id)).length;
+    }
+    return progress;
+  }, [activeItemsBySlot, completedItemIds]);
+
+  const totalProgress = useMemo(() => {
+    let done = 0;
+    let total = 0;
+    for (const slot of SLOTS) {
+      done += slotProgress[slot].done;
+      total += slotProgress[slot].total;
+    }
+    return { done, total };
+  }, [slotProgress]);
 
   const toggleCompletion = async (itemId: string) => {
     if (!user || !currentDate) return;
@@ -299,7 +336,6 @@ export default function RoutineScreen() {
       }
     } catch (e) {
       console.error('toggleCompletion:', e);
-      Alert.alert('エラー', 'チェックの更新に失敗しました');
       loadRoutine();
     }
   };
@@ -318,101 +354,123 @@ export default function RoutineScreen() {
 
   const openAddModal = () => {
     setNewItemTitle('');
-    setEditingItem(null);
-    setAddModalVisible(true);
-  };
-
-  const openTemplateModal = () => {
-    setTemplateModalVisible(true);
-  };
-
-  const closeTemplateModal = () => {
-    setTemplateModalVisible(false);
-    loadRoutine();
-  };
-
-  const openEditModal = (item: RoutineTemplateItem) => {
-    setNewItemTitle(item.title);
-    setEditingItem(item);
     setAddModalVisible(true);
   };
 
   const closeAddModal = () => {
     setAddModalVisible(false);
     setNewItemTitle('');
-    setEditingItem(null);
   };
 
-  const saveItem = async () => {
+  const saveNewTodayTask = async () => {
     const title = newItemTitle.trim();
     if (!title || !templateId) return;
 
     try {
-      if (editingItem) {
-        const { error } = await (supabase.from('routine_template_items') as any)
-          .update({ title })
-          .eq('id', editingItem.id);
-        if (error) throw error;
-      } else {
-        const slotItems = items.filter((i) => i.slot === currentSlot);
-        const maxOrder = slotItems.length ? Math.max(...slotItems.map((i) => i.sort_order)) : -1;
-        const { error } = await supabase.from('routine_template_items').insert({
+      const slotItems = items.filter((i) => i.slot === currentSlot);
+      const maxOrder = slotItems.length ? Math.max(...slotItems.map((i) => i.sort_order)) : -1;
+      const { data: newItem, error } = (await supabase
+        .from('routine_template_items')
+        .insert({
           template_id: templateId,
           slot: currentSlot,
           sort_order: maxOrder + 1,
           title,
           is_active: false,
+        } as any)
+        .select('*')
+        .single()) as { data: RoutineTemplateItem | null; error: Error | null };
+      if (error) throw error;
+
+      if (newItem) {
+        const { error: compError } = await supabase.from('routine_completions').insert({
+          user_id: user!.id,
+          item_id: newItem.id,
+          date: currentDate,
+          completed_at: new Date().toISOString(),
         } as any);
-        if (error) throw error;
-
-        const { data: newItem } = (await supabase
-          .from('routine_template_items')
-          .select('*')
-          .eq('template_id', templateId)
-          .eq('title', title)
-          .maybeSingle()) as { data: RoutineTemplateItem | null };
-
-        if (newItem) {
-          const { error: compError } = await supabase.from('routine_completions').insert({
-            user_id: user!.id,
-            item_id: newItem.id,
-            date: currentDate,
-            completed_at: new Date().toISOString(),
-          } as any);
-          if (compError) console.error('completion insert:', compError);
-        }
+        if (compError) console.error('completion insert:', compError);
       }
+
       await touchTemplateUpdated(templateId);
       await loadRoutine();
       closeAddModal();
     } catch (e) {
-      console.error('saveItem:', e);
+      console.error('saveNewTodayTask:', e);
       Alert.alert('エラー', '保存に失敗しました');
     }
+  };
+
+  const openTemplateModal = () => {
+    setTemplateEditingId(null);
+    setTemplateEditText('');
+    setTemplateModalVisible(true);
+  };
+
+  const closeTemplateModal = () => {
+    setTemplateModalVisible(false);
+    setTemplateEditingId(null);
+    setTemplateEditText('');
+    loadRoutine();
   };
 
   const addItemToTemplate = async (slot: RoutineSlot) => {
     if (!templateId) return;
     const slotItems = items.filter((i) => i.slot === slot);
     const maxOrder = slotItems.length ? Math.max(...slotItems.map((i) => i.sort_order)) : -1;
-    const { error } = await supabase.from('routine_template_items').insert({
-      template_id: templateId,
-      slot,
-      sort_order: maxOrder + 1,
-      title: '新しい習慣',
-      is_active: true,
-    } as any);
+    const { data: newItem, error } = (await supabase
+      .from('routine_template_items')
+      .insert({
+        template_id: templateId,
+        slot,
+        sort_order: maxOrder + 1,
+        title: '',
+        is_active: true,
+      } as any)
+      .select('*')
+      .single()) as { data: RoutineTemplateItem | null; error: Error | null };
     if (error) {
       Alert.alert('エラー', '項目の追加に失敗しました');
       return;
     }
     await touchTemplateUpdated(templateId);
     await loadRoutine();
+    if (newItem) {
+      setTemplateEditingId(newItem.id);
+      setTemplateEditText('');
+    }
+  };
+
+  const saveTemplateItemTitle = async (itemId: string, title: string) => {
+    if (!templateId) return;
+    const trimmed = title.trim();
+    if (!trimmed) {
+      await supabase.from('routine_template_items').delete().eq('id', itemId);
+      await touchTemplateUpdated(templateId);
+      await loadRoutine();
+      setTemplateEditingId(null);
+      setTemplateEditText('');
+      return;
+    }
+    const { error } = await (supabase.from('routine_template_items') as any)
+      .update({ title: trimmed })
+      .eq('id', itemId);
+    if (error) {
+      Alert.alert('エラー', '保存に失敗しました');
+      loadRoutine();
+      return;
+    }
+    await touchTemplateUpdated(templateId);
+    setItems((prev) =>
+      prev.map((i) => (i.id === itemId ? { ...i, title: trimmed } : i))
+    );
+    setTemplateEditingId(null);
+    setTemplateEditText('');
   };
 
   const deleteTemplateItem = async (item: RoutineTemplateItem) => {
     if (!templateId) return;
-    Alert.alert('削除', '「' + item.title + '」をテンプレートから削除しますか？', [
+    Alert.alert('削除', `「${item.title || '無題'}」を削除しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
       {
         text: '削除',
@@ -444,57 +502,29 @@ export default function RoutineScreen() {
     const { error: e1 } = await (supabase.from('routine_template_items') as any)
       .update({ sort_order: b })
       .eq('id', item.id);
-    if (e1) {
-      Alert.alert('エラー', '並び替えに失敗しました');
-      return;
-    }
+    if (e1) return;
     const { error: e2 } = await (supabase.from('routine_template_items') as any)
       .update({ sort_order: a })
       .eq('id', other.id);
     if (e2) {
       await (supabase.from('routine_template_items') as any).update({ sort_order: a }).eq('id', item.id);
-      Alert.alert('エラー', '並び替えに失敗しました');
       return;
     }
     await touchTemplateUpdated(templateId);
     await loadRoutine();
   };
 
-  const saveTemplateItemTitle = async (itemId: string, title: string) => {
+  const toggleTemplateActive = async (item: RoutineTemplateItem) => {
     if (!templateId) return;
     const { error } = await (supabase.from('routine_template_items') as any)
-      .update({ title })
-      .eq('id', itemId);
+      .update({ is_active: !item.is_active })
+      .eq('id', item.id);
     if (error) {
-      Alert.alert('エラー', '保存に失敗しました');
-      loadRoutine();
+      Alert.alert('エラー', '更新に失敗しました');
       return;
     }
     await touchTemplateUpdated(templateId);
-    setItems((prev) =>
-      prev.map((i) => (i.id === itemId ? { ...i, title, updated_at: new Date().toISOString() } : i))
-    );
-  };
-
-  const removeItemFromToday = async (item: RoutineTemplateItem) => {
-    if (!user || !currentDate) return;
-    try {
-      const { error } = await supabase
-        .from('routine_completions')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('item_id', item.id)
-        .eq('date', currentDate);
-      if (error) throw error;
-      setCompletedItemIds((prev) => {
-        const next = new Set(prev);
-        next.delete(item.id);
-        return next;
-      });
-    } catch (e) {
-      console.error('removeItemFromToday:', e);
-      Alert.alert('エラー', '削除に失敗しました');
-    }
+    await loadRoutine();
   };
 
   if (authLoading) {
@@ -517,43 +547,22 @@ export default function RoutineScreen() {
     );
   }
 
-  const allItemsBySlot = useMemo(() => {
-    const map: Record<RoutineSlot, RoutineTemplateItem[]> = {
-      morning: [],
-      daytime: [],
-      evening: [],
-    };
-    for (const it of items) {
-      map[it.slot].push(it);
-    }
-    return map;
-  }, [items]);
-
-  const todayItemsBySlot = useMemo(() => {
-    const map: Record<RoutineSlot, RoutineTemplateItem[]> = {
-      morning: [],
-      daytime: [],
-      evening: [],
-    };
-    for (const it of items) {
-      if (completedItemIds.has(it.id)) {
-        map[it.slot].push(it);
-      }
-    }
-    return map;
-  }, [items, completedItemIds]);
-
-  const currentSlotItems = todayItemsBySlot[currentSlot];
+  const currentSlotItems = activeItemsBySlot[currentSlot];
+  const slotColor = SLOT_COLORS[currentSlot];
+  const prog = slotProgress[currentSlot];
+  const pct = prog.total > 0 ? Math.round((prog.done / prog.total) * 100) : 0;
+  const totalPct = totalProgress.total > 0 ? Math.round((totalProgress.done / totalProgress.total) * 100) : 0;
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.headerTitle}>ルーティン</Text>
-          <TouchableOpacity onPress={openTemplateModal} style={styles.templateBtn}>
-            <Settings size={22} color="#222" />
+          <TouchableOpacity onPress={openTemplateModal} style={styles.templateBtn} activeOpacity={0.7}>
+            <Settings size={20} color="#555" />
           </TouchableOpacity>
         </View>
+
         <View style={styles.dateNav}>
           <TouchableOpacity onPress={goToPrevDate} style={styles.navBtn}>
             <ChevronLeft size={22} color="#333" />
@@ -561,7 +570,7 @@ export default function RoutineScreen() {
           <TouchableOpacity onPress={() => setCalendarVisible(true)} style={styles.dateDisplay}>
             <Text style={styles.dateText}>{formatDateDisplay(currentDate)}</Text>
             {isToday && <Text style={styles.todayBadge}>TODAY</Text>}
-            <Calendar size={16} color="#888" style={{ marginLeft: 6 }} />
+            <Calendar size={14} color="#888" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
           <TouchableOpacity onPress={goToNextDate} style={styles.navBtn}>
             <ChevronRight size={22} color="#333" />
@@ -573,18 +582,38 @@ export default function RoutineScreen() {
           )}
         </View>
 
+        {totalProgress.total > 0 && (
+          <View style={styles.progressRow}>
+            <View style={styles.progressBarBg}>
+              <View style={[styles.progressBarFill, { width: `${totalPct}%` }]} />
+            </View>
+            <Text style={styles.progressText}>
+              {totalProgress.done}/{totalProgress.total}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.tabBar}>
           {SLOTS.map((slot) => {
             const Icon = SLOT_ICONS[slot];
             const isActive = slot === currentSlot;
+            const color = SLOT_COLORS[slot];
+            const sp = slotProgress[slot];
             return (
               <TouchableOpacity
                 key={slot}
-                style={[styles.tab, isActive && styles.tabActive]}
+                style={[styles.tab, isActive && { borderBottomColor: color.accent }]}
                 onPress={() => setCurrentSlot(slot)}
               >
-                <Icon size={20} color={isActive ? '#222' : '#999'} />
-                <Text style={[styles.tabText, isActive && styles.tabTextActive]}>{SLOT_LABELS[slot]}</Text>
+                <Icon size={18} color={isActive ? color.accent : '#aaa'} />
+                <Text style={[styles.tabText, isActive && { color: color.accent, fontWeight: '700' }]}>
+                  {SLOT_LABELS[slot]}
+                </Text>
+                {sp.total > 0 && (
+                  <Text style={[styles.tabCount, isActive && { color: color.accent }]}>
+                    {sp.done}/{sp.total}
+                  </Text>
+                )}
               </TouchableOpacity>
             );
           })}
@@ -600,51 +629,62 @@ export default function RoutineScreen() {
           ) : routineTablesMissing ? (
             <View style={styles.emptyWrap}>
               <ListChecks size={48} color="#ccc" />
-              <Text style={styles.emptyTitle}>ルーティン機能を準備中です</Text>
+              <Text style={styles.emptyTitle}>ルーティン機能を準備中</Text>
               <Text style={styles.emptySub}>
-                Supabase にルーティン用の最新マイグレーションを適用してください。
+                データベースの準備が必要です。管理者にお問い合わせください。
               </Text>
+            </View>
+          ) : currentSlotItems.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <View style={[styles.emptyIconWrap, { backgroundColor: slotColor.light }]}>
+                {(() => {
+                  const Icon = SLOT_ICONS[currentSlot];
+                  return <Icon size={32} color={slotColor.accent} />;
+                })()}
+              </View>
+              <Text style={styles.emptyTitle}>{SLOT_LABELS[currentSlot]}の習慣がありません</Text>
+              <Text style={styles.emptySub}>
+                右上の設定アイコンからテンプレートを作成すると{'\n'}毎日の習慣として表示されます
+              </Text>
+              <TouchableOpacity style={styles.emptyActionBtn} onPress={openTemplateModal}>
+                <Settings size={16} color="#fff" />
+                <Text style={styles.emptyActionText}>テンプレートを作成</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-              {currentSlotItems.length === 0 ? (
-                <View style={styles.emptySlot}>
-                  <Text style={styles.emptySlotText}>
-                    {SLOT_LABELS[currentSlot]}の習慣を追加してみましょう
-                  </Text>
-                </View>
-              ) : (
-                currentSlotItems.map((item) => {
-                  const checked = completedItemIds.has(item.id);
-                  return (
-                    <View key={item.id} style={styles.card}>
-                      <TouchableOpacity
-                        style={styles.cardMain}
-                        onPress={() => toggleCompletion(item.id)}
-                        activeOpacity={0.7}
-                      >
-                        <View style={[styles.checkbox, checked && styles.checkboxOn]}>
-                          {checked && <Text style={styles.checkMark}>✓</Text>}
-                        </View>
-                        <Text style={[styles.cardText, checked && styles.cardTextDone]} numberOfLines={3}>
-                          {itemDisplayLabel(item)}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.deleteBtn} onPress={() => removeItemFromToday(item)}>
-                        <Trash2 size={16} color="#E8654A" />
-                      </TouchableOpacity>
+              {currentSlotItems.map((item) => {
+                const checked = completedItemIds.has(item.id);
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.card, checked && styles.cardDone]}
+                    onPress={() => toggleCompletion(item.id)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.checkbox, checked && { backgroundColor: slotColor.accent, borderColor: slotColor.accent }]}>
+                      {checked && <Check size={14} color="#fff" strokeWidth={3} />}
                     </View>
-                  );
-                })
-              )}
+                    <Text
+                      style={[styles.cardText, checked && styles.cardTextDone]}
+                      numberOfLines={2}
+                    >
+                      {item.short_label?.trim() || item.title}
+                    </Text>
+                    {checked && (
+                      <CheckCircle size={18} color={slotColor.accent} style={{ marginLeft: 8 }} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           )}
         </Animated.View>
       </GestureDetector>
 
       {!routineTablesMissing && (
-        <TouchableOpacity style={styles.fab} onPress={openAddModal}>
-          <Plus size={28} color="#fff" />
+        <TouchableOpacity style={styles.fab} onPress={openAddModal} activeOpacity={0.8}>
+          <Plus size={26} color="#fff" />
         </TouchableOpacity>
       )}
 
@@ -655,28 +695,31 @@ export default function RoutineScreen() {
         onClose={() => setCalendarVisible(false)}
       />
 
-      <Modal
-        visible={addModalVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={closeAddModal}
-      >
-        <View style={styles.modalOverlay}>
+      <Modal visible={addModalVisible} animationType="fade" transparent onRequestClose={closeAddModal}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.addModalContent}>
             <View style={styles.addModalHeader}>
-              <Text style={styles.addModalTitle}>今日のタスクを追加</Text>
+              <Text style={styles.addModalTitle}>今日だけのタスクを追加</Text>
               <TouchableOpacity onPress={closeAddModal} style={styles.closeBtn}>
-                <X size={24} color="#666" />
+                <X size={22} color="#999" />
               </TouchableOpacity>
             </View>
+            <Text style={styles.addModalSub}>
+              {SLOT_LABELS[currentSlot]}のスロットに追加されます。テンプレートには含まれません。
+            </Text>
             <TextInput
               style={styles.addInput}
-              placeholder="タスクの内容を入力..."
+              placeholder="タスクの内容..."
+              placeholderTextColor="#bbb"
               value={newItemTitle}
               onChangeText={setNewItemTitle}
               autoFocus
-              multiline
               maxLength={100}
+              returnKeyType="done"
+              onSubmitEditing={saveNewTodayTask}
             />
             <View style={styles.addModalActions}>
               <TouchableOpacity style={styles.cancelBtn} onPress={closeAddModal}>
@@ -684,14 +727,14 @@ export default function RoutineScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.saveBtn, !newItemTitle.trim() && styles.saveBtnDisabled]}
-                onPress={saveItem}
+                onPress={saveNewTodayTask}
                 disabled={!newItemTitle.trim()}
               >
                 <Text style={styles.saveBtnText}>追加</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -700,68 +743,111 @@ export default function RoutineScreen() {
         presentationStyle="pageSheet"
         onRequestClose={closeTemplateModal}
       >
-        <SafeAreaView style={styles.templateModalRoot}>
-          <View style={styles.templateModalHeader}>
-            <Text style={styles.templateModalTitle}>ルーティーンテンプレート</Text>
-            <TouchableOpacity onPress={closeTemplateModal} style={styles.templateModalClose}>
-              <Text style={styles.templateModalCloseText}>完了</Text>
+        <SafeAreaView style={styles.tmRoot}>
+          <View style={styles.tmHeader}>
+            <Text style={styles.tmTitle}>テンプレート編集</Text>
+            <TouchableOpacity onPress={closeTemplateModal} style={styles.tmDoneBtn}>
+              <Text style={styles.tmDoneText}>完了</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView style={styles.templateScroll} keyboardShouldPersistTaps="handled">
-            {SLOTS.map((slot) => (
-              <View key={slot} style={styles.templateSection}>
-                <View style={styles.templateSectionHead}>
-                  <View style={styles.templateSectionTitleRow}>
-                    {(() => {
-                      const Icon = SLOT_ICONS[slot];
-                      return <Icon size={20} color="#111" />;
-                    })()}
-                    <Text style={styles.templateSectionTitle}>{SLOT_LABELS[slot]}</Text>
+          <Text style={styles.tmDesc}>
+            ここで登録した習慣が毎日のチェックリストとして表示されます。
+          </Text>
+          <ScrollView style={styles.tmScroll} keyboardShouldPersistTaps="handled">
+            {SLOTS.map((slot) => {
+              const color = SLOT_COLORS[slot];
+              const Icon = SLOT_ICONS[slot];
+              const slotItems = allItemsBySlot[slot].sort((a, b) => a.sort_order - b.sort_order);
+              return (
+                <View key={slot} style={styles.tmSection}>
+                  <View style={[styles.tmSectionHead, { backgroundColor: color.light }]}>
+                    <View style={styles.tmSectionTitleRow}>
+                      <Icon size={18} color={color.accent} />
+                      <Text style={[styles.tmSectionTitle, { color: color.accent }]}>
+                        {SLOT_LABELS[slot]}
+                      </Text>
+                      <Text style={styles.tmSectionCount}>{slotItems.filter((i) => i.is_active).length}件</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.tmAddBtn, { backgroundColor: color.accent }]}
+                      onPress={() => addItemToTemplate(slot)}
+                    >
+                      <Plus size={16} color="#fff" />
+                      <Text style={styles.tmAddBtnText}>追加</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity style={styles.addSmallBtn} onPress={() => addItemToTemplate(slot)}>
-                    <Plus size={18} color="#fff" />
-                    <Text style={styles.addSmallBtnText}>追加</Text>
-                  </TouchableOpacity>
+                  {slotItems.map((item, idx) => {
+                    const isEditing = templateEditingId === item.id;
+                    return (
+                      <View
+                        key={item.id}
+                        style={[styles.tmRow, !item.is_active && styles.tmRowInactive]}
+                      >
+                        <TouchableOpacity
+                          style={[styles.tmActiveToggle, item.is_active && { backgroundColor: color.accent, borderColor: color.accent }]}
+                          onPress={() => toggleTemplateActive(item)}
+                        >
+                          {item.is_active && <Check size={12} color="#fff" strokeWidth={3} />}
+                        </TouchableOpacity>
+                        <View style={styles.tmRowContent}>
+                          {isEditing ? (
+                            <TextInput
+                              style={styles.tmEditInput}
+                              value={templateEditText}
+                              onChangeText={setTemplateEditText}
+                              placeholder="習慣名を入力..."
+                              placeholderTextColor="#bbb"
+                              autoFocus
+                              maxLength={100}
+                              returnKeyType="done"
+                              onSubmitEditing={() => saveTemplateItemTitle(item.id, templateEditText)}
+                              onBlur={() => saveTemplateItemTitle(item.id, templateEditText)}
+                            />
+                          ) : (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setTemplateEditingId(item.id);
+                                setTemplateEditText(item.title);
+                              }}
+                              style={styles.tmTitleTouch}
+                            >
+                              <Text style={[styles.tmItemTitle, !item.is_active && styles.tmItemTitleInactive]}>
+                                {item.title || '(タップして名前を入力)'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        <View style={styles.tmRowActions}>
+                          <TouchableOpacity
+                            onPress={() => moveTemplateItem(item, -1)}
+                            disabled={idx === 0}
+                            style={styles.tmIconBtn}
+                          >
+                            <ChevronUp size={18} color={idx === 0 ? '#ddd' : '#888'} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => moveTemplateItem(item, 1)}
+                            disabled={idx === slotItems.length - 1}
+                            style={styles.tmIconBtn}
+                          >
+                            <ChevronDown size={18} color={idx === slotItems.length - 1 ? '#ddd' : '#888'} />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => deleteTemplateItem(item)} style={styles.tmIconBtn}>
+                            <Trash2 size={16} color="#E8654A" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+                  {slotItems.length === 0 && (
+                    <View style={styles.tmEmptySlot}>
+                      <Text style={styles.tmEmptyText}>習慣がまだありません</Text>
+                    </View>
+                  )}
                 </View>
-                {allItemsBySlot[slot].map((item, idx, arr) => (
-                  <View key={`${item.id}-${item.updated_at}`} style={styles.templateRow}>
-                    <View style={styles.templateRowMain}>
-                      <TextInput
-                        style={styles.templateInput}
-                        defaultValue={item.title}
-                        placeholder="習慣名"
-                        onEndEditing={(e) => {
-                          const t = e.nativeEvent.text.trim();
-                          if (t && t !== item.title) saveTemplateItemTitle(item.id, t);
-                        }}
-                      />
-                    </View>
-                    <View style={styles.templateRowActions}>
-                      <TouchableOpacity
-                        onPress={() => moveTemplateItem(item, -1)}
-                        disabled={idx === 0}
-                        style={[styles.iconBtn, idx === 0 && styles.iconBtnDisabled]}
-                      >
-                        <ChevronUp size={20} color={idx === 0 ? '#ccc' : '#333'} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => moveTemplateItem(item, 1)}
-                        disabled={idx === arr.length - 1}
-                        style={[styles.iconBtn, idx === arr.length - 1 && styles.iconBtnDisabled]}
-                      >
-                        <ChevronDown size={20} color={idx === arr.length - 1 ? '#ccc' : '#333'} />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => deleteTemplateItem(item)} style={styles.iconBtn}>
-                        <Trash2 size={18} color="#E8654A" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ))}
-                {allItemsBySlot[slot].length === 0 && (
-                  <Text style={styles.templateSlotEmpty}>習慣がありません。「追加」から登録できます。</Text>
-                )}
-              </View>
-            ))}
+              );
+            })}
+            <View style={{ height: 40 }} />
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -772,38 +858,41 @@ export default function RoutineScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#f6f6f6',
   },
   header: {
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
+    borderBottomColor: '#eaeaea',
     paddingHorizontal: 16,
-    paddingBottom: 0,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 8,
-  },
-  templateBtn: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#f0f0f0',
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   headerTitle: {
-    fontSize: 28,
-    fontWeight: '600',
-    color: '#000',
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#111',
+    letterSpacing: -0.5,
+  },
+  templateBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#f2f2f2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dateNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingBottom: 12,
+    gap: 2,
+    paddingVertical: 8,
   },
   navBtn: {
     padding: 6,
@@ -817,13 +906,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   dateText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#222',
   },
   todayBadge: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    fontWeight: '800',
     color: '#fff',
     backgroundColor: '#E8654A',
     borderRadius: 4,
@@ -844,32 +933,55 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
   },
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingBottom: 8,
+  },
+  progressBarBg: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#eee',
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: '#222',
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888',
+    minWidth: 32,
+    textAlign: 'right',
+  },
   tabBar: {
     flexDirection: 'row',
-    gap: 8,
-    paddingTop: 12,
+    gap: 4,
   },
   tab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    borderBottomWidth: 2,
+    gap: 5,
+    paddingVertical: 10,
+    borderBottomWidth: 2.5,
     borderBottomColor: 'transparent',
   },
-  tabActive: {
-    borderBottomColor: '#222',
-  },
   tabText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
-    color: '#999',
+    color: '#aaa',
   },
-  tabTextActive: {
-    color: '#222',
+  tabCount: {
+    fontSize: 11,
     fontWeight: '600',
+    color: '#bbb',
+    marginLeft: 2,
   },
   content: {
     flex: 1,
@@ -896,94 +1008,94 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 40,
+  },
+  emptyIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
     color: '#333',
-    marginTop: 16,
+    marginBottom: 6,
   },
   emptySub: {
-    fontSize: 14,
-    color: '#888',
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 20,
-  },
-  emptySlot: {
-    paddingVertical: 60,
-    alignItems: 'center',
-  },
-  emptySlotText: {
-    fontSize: 15,
+    fontSize: 13,
     color: '#999',
     textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  emptyActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#222',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  emptyActionText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
       },
-      android: { elevation: 2 },
+      android: { elevation: 1 },
     }),
   },
-  cardMain: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+  cardDone: {
+    backgroundColor: '#fafafa',
+    borderColor: '#f0f0f0',
   },
   checkbox: {
-    width: 26,
-    height: 26,
-    borderRadius: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 7,
     borderWidth: 2,
-    borderColor: '#ccc',
-    marginRight: 12,
+    borderColor: '#d0d0d0',
+    marginRight: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxOn: {
-    backgroundColor: '#222',
-    borderColor: '#222',
-  },
-  checkMark: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
   cardText: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     color: '#222',
     lineHeight: 22,
   },
   cardTextDone: {
-    color: '#888',
+    color: '#aaa',
     textDecorationLine: 'line-through',
-  },
-  deleteBtn: {
-    padding: 8,
-    marginLeft: 8,
   },
   fab: {
     position: 'absolute',
     bottom: 24,
     right: 24,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 56,
+    height: 56,
+    borderRadius: 16,
     backgroundColor: '#222',
     alignItems: 'center',
     justifyContent: 'center',
@@ -991,183 +1103,232 @@ const styles = StyleSheet.create({
       ios: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
+        shadowOpacity: 0.2,
+        shadowRadius: 12,
       },
       android: { elevation: 8 },
     }),
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
   addModalContent: {
     backgroundColor: '#fff',
-    borderRadius: 16,
+    borderRadius: 20,
     width: '100%',
     maxWidth: 400,
-    padding: 20,
+    padding: 24,
   },
   addModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 4,
   },
   addModalTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#000',
+    color: '#111',
+  },
+  addModalSub: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 16,
+    lineHeight: 18,
   },
   closeBtn: {
     padding: 4,
   },
   addInput: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#e5e5e5',
     borderRadius: 12,
     padding: 14,
-    fontSize: 16,
-    minHeight: 100,
-    textAlignVertical: 'top',
+    fontSize: 15,
     backgroundColor: '#fafafa',
-    marginBottom: 20,
+    marginBottom: 16,
+    color: '#222',
   },
   addModalActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   cancelBtn: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 10,
     backgroundColor: '#f0f0f0',
     alignItems: 'center',
   },
   cancelBtnText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#666',
   },
   saveBtn: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 10,
     backgroundColor: '#222',
     alignItems: 'center',
   },
   saveBtnDisabled: {
-    backgroundColor: '#ccc',
+    backgroundColor: '#d0d0d0',
   },
   saveBtnText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#fff',
   },
-  templateModalRoot: {
+  tmRoot: {
     flex: 1,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#f6f6f6',
   },
-  templateModalHeader: {
+  tmHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e5e5',
     backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eaeaea',
   },
-  templateModalTitle: {
+  tmTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#000',
+    color: '#111',
   },
-  templateModalClose: {
+  tmDoneBtn: {
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
   },
-  templateModalCloseText: {
+  tmDoneText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#007AFF',
   },
-  templateScroll: {
+  tmDesc: {
+    fontSize: 12,
+    color: '#999',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    lineHeight: 18,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eaeaea',
+  },
+  tmScroll: {
     flex: 1,
     padding: 16,
   },
-  templateSection: {
-    marginBottom: 24,
+  tmSection: {
+    marginBottom: 20,
   },
-  templateSectionHead: {
+  tmSectionHead: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 8,
   },
-  templateSectionTitleRow: {
+  tmSectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  templateSectionTitle: {
-    fontSize: 16,
+  tmSectionTitle: {
+    fontSize: 15,
     fontWeight: '700',
-    color: '#111',
   },
-  addSmallBtn: {
+  tmSectionCount: {
+    fontSize: 11,
+    color: '#999',
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  tmAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#222',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 8,
   },
-  addSmallBtnText: {
+  tmAddBtnText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 13,
+    fontSize: 12,
   },
-  templateRow: {
+  tmRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 6,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: '#f0f0f0',
   },
-  templateRowMain: {
+  tmRowInactive: {
+    opacity: 0.5,
+  },
+  tmActiveToggle: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#d0d0d0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  tmRowContent: {
     flex: 1,
-    marginRight: 8,
+    marginRight: 6,
   },
-  templateInput: {
+  tmEditInput: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#d0d0d0',
     borderRadius: 8,
     paddingHorizontal: 10,
-    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-    fontSize: 15,
+    paddingVertical: Platform.OS === 'ios' ? 8 : 6,
+    fontSize: 14,
     backgroundColor: '#fafafa',
+    color: '#222',
   },
-  templateRowActions: {
-    justifyContent: 'center',
-    gap: 4,
+  tmTitleTouch: {
+    paddingVertical: 4,
   },
-  iconBtn: {
-    padding: 6,
+  tmItemTitle: {
+    fontSize: 14,
+    color: '#222',
+    lineHeight: 20,
   },
-  iconBtnDisabled: {
-    opacity: 0.4,
-  },
-  templateSlotEmpty: {
-    fontSize: 13,
+  tmItemTitleInactive: {
     color: '#999',
-    fontStyle: 'italic',
-    marginBottom: 8,
+  },
+  tmRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  tmIconBtn: {
+    padding: 5,
+  },
+  tmEmptySlot: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  tmEmptyText: {
+    fontSize: 13,
+    color: '#bbb',
   },
 });
