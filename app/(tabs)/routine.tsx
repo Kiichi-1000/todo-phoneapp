@@ -101,6 +101,7 @@ export default function RoutineScreen() {
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [items, setItems] = useState<RoutineTemplateItem[]>([]);
   const [completedItemIds, setCompletedItemIds] = useState<Set<string>>(new Set());
+  const [skippedItemIds, setSkippedItemIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [routineTablesMissing, setRoutineTablesMissing] = useState(false);
   const [calendarVisible, setCalendarVisible] = useState(false);
@@ -242,6 +243,20 @@ export default function RoutineScreen() {
 
       if (compError) throw compError;
       setCompletedItemIds(new Set((compRows || []).map((r) => r.item_id)));
+
+      const { data: skipRows, error: skipError } = (await supabase
+        .from('routine_skips')
+        .select('item_id')
+        .eq('user_id', user.id)
+        .eq('date', currentDate)) as {
+        data: { item_id: string }[] | null;
+        error: Error | null;
+      };
+      if (!skipError) {
+        setSkippedItemIds(new Set((skipRows || []).map((r) => r.item_id)));
+      } else {
+        setSkippedItemIds(new Set());
+      }
     } catch (e: any) {
       console.error('loadRoutine:', e);
       if (isRoutineTableMissingError(e)) {
@@ -249,6 +264,7 @@ export default function RoutineScreen() {
       }
       setItems([]);
       setCompletedItemIds(new Set());
+      setSkippedItemIds(new Set());
     } finally {
       setLoading(false);
     }
@@ -267,10 +283,11 @@ export default function RoutineScreen() {
     for (const it of items) {
       if (!it.is_active) continue;
       if (it.today_only_date && it.today_only_date !== currentDate) continue;
+      if (skippedItemIds.has(it.id)) continue;
       map[it.slot].push(it);
     }
     return map;
-  }, [items, currentDate]);
+  }, [items, currentDate, skippedItemIds]);
 
   const allItemsBySlot = useMemo(() => {
     const map: Record<RoutineSlot, RoutineTemplateItem[]> = {
@@ -399,6 +416,19 @@ export default function RoutineScreen() {
       ]);
     }
   }, [templateId, touchTemplateUpdated, loadRoutine]);
+
+  const skipItemForToday = useCallback(async (item: RoutineTemplateItem) => {
+    if (!user || !currentDate) return;
+    try {
+      const { error } = await supabase
+        .from('routine_skips')
+        .insert({ user_id: user.id, item_id: item.id, date: currentDate } as any);
+      if (error) throw error;
+      setSkippedItemIds((prev) => new Set(prev).add(item.id));
+    } catch (e) {
+      console.error('skipItemForToday:', e);
+    }
+  }, [user, currentDate]);
 
   const deactivateItemFromDailyView = useCallback(async (item: RoutineTemplateItem) => {
     if (!templateId) return;
@@ -727,6 +757,7 @@ export default function RoutineScreen() {
                 onReorder={reorderSlotItems}
                 onDelete={deleteItemFromDailyView}
                 onDeactivate={deactivateItemFromDailyView}
+                onSkipToday={skipItemForToday}
               />
             </ScrollView>
           )}

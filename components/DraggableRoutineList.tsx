@@ -15,7 +15,7 @@ import Animated, {
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
-import { Check, CircleCheck as CheckCircle, GripVertical, Trash2, EyeOff } from 'lucide-react-native';
+import { Check, CircleCheck as CheckCircle, GripVertical, Trash2, EyeOff, CalendarOff } from 'lucide-react-native';
 import { RoutineTemplateItem } from '@/types/database';
 
 const ITEM_HEIGHT = 58;
@@ -30,6 +30,7 @@ interface Props {
   onReorder: (fromIndex: number, toIndex: number) => void;
   onDelete: (item: RoutineTemplateItem) => void;
   onDeactivate?: (item: RoutineTemplateItem) => void;
+  onSkipToday?: (item: RoutineTemplateItem) => void;
 }
 
 function DraggableItem({
@@ -165,6 +166,7 @@ export default function DraggableRoutineList({
   onReorder,
   onDelete,
   onDeactivate,
+  onSkipToday,
 }: Props) {
   const [dragIndex, setDragIndex] = useState(-1);
   const [dragTranslateY, setDragTranslateY] = useState(0);
@@ -236,6 +238,25 @@ export default function DraggableRoutineList({
             <Text style={styles.menuTitle} numberOfLines={1}>
               {menuItem?.short_label?.trim() || menuItem?.title || ''}
             </Text>
+
+            {onSkipToday && menuItem && !menuItem.today_only_date && (
+              <TouchableOpacity
+                style={styles.menuAction}
+                onPress={() => {
+                  const item = menuItem;
+                  closeMenu();
+                  if (item) onSkipToday(item);
+                }}
+              >
+                <View style={[styles.menuIconWrap, { backgroundColor: '#E3F2FD' }]}>
+                  <CalendarOff size={18} color="#1976D2" />
+                </View>
+                <View style={styles.menuActionContent}>
+                  <Text style={styles.menuActionLabel}>今日だけスキップ</Text>
+                  <Text style={styles.menuActionDesc}>今日のリストから非表示にします</Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
             {onDeactivate && menuItem && !menuItem.today_only_date && (
               <TouchableOpacity
