@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { BookOpen, ChartBar as BarChart3, Settings, Clock } from 'lucide-react-native';
+import { BookOpen, ChartBar as BarChart3, Settings, Clock, ListChecks } from 'lucide-react-native';
 
 export default function TabLayout() {
   return (
@@ -25,6 +25,13 @@ export default function TabLayout() {
         options={{
           title: 'スケジュール',
           tabBarIcon: ({ size, color }) => <Clock size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="routine"
+        options={{
+          title: 'ルーティン',
+          tabBarIcon: ({ size, color }) => <ListChecks size={size} color={color} />,
         }}
       />
       <Tabs.Screen

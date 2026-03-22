@@ -64,6 +64,34 @@ export interface Reminder {
   is_active: boolean;
 }
 
+export type RoutineSlot = 'morning' | 'daytime' | 'evening';
+
+export interface RoutineTemplate {
+  id: string;
+  user_id: string;
+  updated_at: string;
+}
+
+export interface RoutineTemplateItem {
+  id: string;
+  template_id: string;
+  slot: RoutineSlot;
+  sort_order: number;
+  title: string;
+  short_label: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoutineCompletion {
+  id: string;
+  user_id: string;
+  item_id: string;
+  date: string;
+  completed_at: string;
+}
+
 export type Json =
   | string
   | number
@@ -139,6 +167,62 @@ export interface Database {
             foreignKeyName: 'schedules_source_todo_id_fkey';
             columns: ['source_todo_id'];
             referencedRelation: 'todos';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      routine_templates: {
+        Row: RoutineTemplate;
+        Insert: {
+          id?: string;
+          user_id: string;
+          updated_at?: string;
+        };
+        Update: Partial<Pick<RoutineTemplate, 'updated_at'>>;
+        Relationships: [];
+      };
+      routine_template_items: {
+        Row: RoutineTemplateItem;
+        Insert: {
+          id?: string;
+          template_id: string;
+          slot: RoutineSlot;
+          sort_order?: number;
+          title?: string;
+          short_label?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Omit<RoutineTemplateItem, 'id' | 'template_id' | 'created_at'> & {
+            created_at?: string;
+          }
+        >;
+        Relationships: [
+          {
+            foreignKeyName: 'routine_template_items_template_id_fkey';
+            columns: ['template_id'];
+            referencedRelation: 'routine_templates';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      routine_completions: {
+        Row: RoutineCompletion;
+        Insert: {
+          id?: string;
+          user_id: string;
+          item_id: string;
+          date: string;
+          completed_at?: string;
+        };
+        Update: Partial<Pick<RoutineCompletion, 'completed_at'>>;
+        Relationships: [
+          {
+            foreignKeyName: 'routine_completions_item_id_fkey';
+            columns: ['item_id'];
+            referencedRelation: 'routine_template_items';
             referencedColumns: ['id'];
           }
         ];
