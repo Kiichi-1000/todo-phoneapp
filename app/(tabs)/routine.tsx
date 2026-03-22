@@ -375,6 +375,44 @@ export default function RoutineScreen() {
     }
   }, [templateId, activeItemsBySlot, currentSlot, touchTemplateUpdated, loadRoutine]);
 
+  const deleteItemFromDailyView = useCallback(async (item: RoutineTemplateItem) => {
+    if (!templateId) return;
+    const doDelete = async () => {
+      try {
+        const { error } = await supabase.from('routine_template_items').delete().eq('id', item.id);
+        if (error) throw error;
+        await touchTemplateUpdated(templateId);
+        await loadRoutine();
+      } catch (e) {
+        console.error('deleteItemFromDailyView:', e);
+      }
+    };
+    const label = item.title || '無題';
+    if (Platform.OS === 'web') {
+      if (window.confirm(`「${label}」を削除しますか？`)) {
+        await doDelete();
+      }
+    } else {
+      Alert.alert('削除', `「${label}」を削除しますか？`, [
+        { text: 'キャンセル', style: 'cancel' },
+        { text: '削除', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  }, [templateId, touchTemplateUpdated, loadRoutine]);
+
+  const deactivateItemFromDailyView = useCallback(async (item: RoutineTemplateItem) => {
+    if (!templateId) return;
+    const { error } = await (supabase.from('routine_template_items') as any)
+      .update({ is_active: false })
+      .eq('id', item.id);
+    if (error) {
+      console.error('deactivateItem:', error);
+      return;
+    }
+    await touchTemplateUpdated(templateId);
+    await loadRoutine();
+  }, [templateId, touchTemplateUpdated, loadRoutine]);
+
   const jumpToDate = (dateStr: string) => {
     const idx = allDates.indexOf(dateStr);
     if (idx >= 0) setCurrentIndex(idx);
@@ -687,6 +725,8 @@ export default function RoutineScreen() {
                 accentColor={slotColor.accent}
                 onToggle={toggleCompletion}
                 onReorder={reorderSlotItems}
+                onDelete={deleteItemFromDailyView}
+                onDeactivate={deactivateItemFromDailyView}
               />
             </ScrollView>
           )}

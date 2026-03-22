@@ -1,11 +1,11 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Platform,
-  LayoutChangeEvent,
+  Modal,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -15,7 +15,7 @@ import Animated, {
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
-import { Check, CircleCheck as CheckCircle, GripVertical } from 'lucide-react-native';
+import { Check, CircleCheck as CheckCircle, GripVertical, Trash2, EyeOff } from 'lucide-react-native';
 import { RoutineTemplateItem } from '@/types/database';
 
 const ITEM_HEIGHT = 58;
@@ -28,11 +28,8 @@ interface Props {
   accentColor: string;
   onToggle: (itemId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
-}
-
-interface ItemLayout {
-  y: number;
-  height: number;
+  onDelete: (item: RoutineTemplateItem) => void;
+  onDeactivate?: (item: RoutineTemplateItem) => void;
 }
 
 function DraggableItem({
@@ -47,6 +44,7 @@ function DraggableItem({
   onDragStart,
   onDragUpdate,
   onDragEnd,
+  onLongPress,
   totalItems,
 }: {
   item: RoutineTemplateItem;
@@ -60,6 +58,7 @@ function DraggableItem({
   onDragStart: (index: number) => void;
   onDragUpdate: (translationY: number) => void;
   onDragEnd: () => void;
+  onLongPress: (item: RoutineTemplateItem) => void;
   totalItems: number;
 }) {
   const scale = useSharedValue(1);
@@ -108,7 +107,6 @@ function DraggableItem({
   const isBeingDragged = isDragging && dragIndex === index;
   const displacement = isDragging && !isBeingDragged
     ? (() => {
-        const dragCurrent = index;
         const rawTarget = dragIndex + Math.round(dragTranslateY / TOTAL_HEIGHT);
         const target = Math.max(0, Math.min(totalItems - 1, rawTarget));
         if (dragIndex < index && target >= index) return -TOTAL_HEIGHT;
@@ -127,37 +125,50 @@ function DraggableItem({
   }));
 
   return (
-    <GestureDetector gesture={composedGesture}>
-      <Animated.View style={[styles.card, completed && styles.cardDone, animatedStyle, isBeingDragged && styles.cardDragging]}>
-        <TouchableOpacity
-          style={styles.dragHandle}
-          activeOpacity={0.6}
-        >
+    <Animated.View style={[styles.card, completed && styles.cardDone, animatedStyle, isBeingDragged && styles.cardDragging]}>
+      <GestureDetector gesture={composedGesture}>
+        <Animated.View style={styles.dragHandle}>
           <GripVertical size={16} color="#ccc" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.cardBody}
-          onPress={() => onToggle(item.id)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.checkbox, completed && { backgroundColor: accentColor, borderColor: accentColor }]}>
-            {completed && <Check size={14} color="#fff" strokeWidth={3} />}
+        </Animated.View>
+      </GestureDetector>
+      <TouchableOpacity
+        style={styles.cardBody}
+        onPress={() => onToggle(item.id)}
+        onLongPress={() => onLongPress(item)}
+        delayLongPress={400}
+        activeOpacity={0.7}
+      >
+        <View style={[styles.checkbox, completed && { backgroundColor: accentColor, borderColor: accentColor }]}>
+          {completed && <Check size={14} color="#fff" strokeWidth={3} />}
+        </View>
+        <Text style={[styles.cardText, completed && styles.cardTextDone]} numberOfLines={2}>
+          {item.short_label?.trim() || item.title}
+        </Text>
+        {item.today_only_date && (
+          <View style={styles.todayBadge}>
+            <Text style={styles.todayBadgeText}>TODAY</Text>
           </View>
-          <Text style={[styles.cardText, completed && styles.cardTextDone]} numberOfLines={2}>
-            {item.short_label?.trim() || item.title}
-          </Text>
-          {completed && (
-            <CheckCircle size={18} color={accentColor} style={{ marginLeft: 8 }} />
-          )}
-        </TouchableOpacity>
-      </Animated.View>
-    </GestureDetector>
+        )}
+        {completed && (
+          <CheckCircle size={18} color={accentColor} style={{ marginLeft: 4 }} />
+        )}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
-export default function DraggableRoutineList({ items, completedItemIds, accentColor, onToggle, onReorder }: Props) {
+export default function DraggableRoutineList({
+  items,
+  completedItemIds,
+  accentColor,
+  onToggle,
+  onReorder,
+  onDelete,
+  onDeactivate,
+}: Props) {
   const [dragIndex, setDragIndex] = useState(-1);
   const [dragTranslateY, setDragTranslateY] = useState(0);
+  const [menuItem, setMenuItem] = useState<RoutineTemplateItem | null>(null);
   const isDragging = dragIndex >= 0;
 
   const handleDragStart = useCallback((index: number) => {
@@ -180,6 +191,14 @@ export default function DraggableRoutineList({ items, completedItemIds, accentCo
     setDragTranslateY(0);
   }, [dragIndex, dragTranslateY, items.length, onReorder]);
 
+  const handleLongPress = useCallback((item: RoutineTemplateItem) => {
+    setMenuItem(item);
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    setMenuItem(null);
+  }, []);
+
   return (
     <View style={styles.list}>
       {items.map((item, index) => (
@@ -196,9 +215,72 @@ export default function DraggableRoutineList({ items, completedItemIds, accentCo
           onDragStart={handleDragStart}
           onDragUpdate={handleDragUpdate}
           onDragEnd={handleDragEnd}
+          onLongPress={handleLongPress}
           totalItems={items.length}
         />
       ))}
+
+      <Modal
+        visible={menuItem !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeMenu}
+      >
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
+          onPress={closeMenu}
+        >
+          <View style={styles.menuSheet}>
+            <View style={styles.menuHandle} />
+            <Text style={styles.menuTitle} numberOfLines={1}>
+              {menuItem?.short_label?.trim() || menuItem?.title || ''}
+            </Text>
+
+            {onDeactivate && menuItem && !menuItem.today_only_date && (
+              <TouchableOpacity
+                style={styles.menuAction}
+                onPress={() => {
+                  const item = menuItem;
+                  closeMenu();
+                  if (item) onDeactivate(item);
+                }}
+              >
+                <View style={[styles.menuIconWrap, { backgroundColor: '#FFF3E0' }]}>
+                  <EyeOff size={18} color="#E8954A" />
+                </View>
+                <View style={styles.menuActionContent}>
+                  <Text style={styles.menuActionLabel}>非表示にする</Text>
+                  <Text style={styles.menuActionDesc}>テンプレートから無効化します</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={styles.menuAction}
+              onPress={() => {
+                const item = menuItem;
+                closeMenu();
+                if (item) onDelete(item);
+              }}
+            >
+              <View style={[styles.menuIconWrap, { backgroundColor: '#FFEBEE' }]}>
+                <Trash2 size={18} color="#E8654A" />
+              </View>
+              <View style={styles.menuActionContent}>
+                <Text style={[styles.menuActionLabel, { color: '#E8654A' }]}>削除する</Text>
+                <Text style={styles.menuActionDesc}>
+                  {menuItem?.today_only_date ? 'この今日だけのタスクを削除します' : 'テンプレートから完全に削除します'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.menuCancelBtn} onPress={closeMenu}>
+              <Text style={styles.menuCancelText}>キャンセル</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -280,5 +362,86 @@ const styles = StyleSheet.create({
   cardTextDone: {
     color: '#aaa',
     textDecorationLine: 'line-through',
+  },
+  todayBadge: {
+    backgroundColor: '#E8654A',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginLeft: 6,
+  },
+  todayBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  menuSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    paddingHorizontal: 20,
+  },
+  menuHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ddd',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#222',
+    marginBottom: 16,
+    paddingHorizontal: 4,
+  },
+  menuAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
+  },
+  menuIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  menuActionContent: {
+    flex: 1,
+  },
+  menuActionLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#222',
+    marginBottom: 2,
+  },
+  menuActionDesc: {
+    fontSize: 12,
+    color: '#999',
+    lineHeight: 16,
+  },
+  menuCancelBtn: {
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#f5f5f5',
+    alignItems: 'center',
+  },
+  menuCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#666',
   },
 });
