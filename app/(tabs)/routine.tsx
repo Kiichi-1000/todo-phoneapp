@@ -1,12 +1,10 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Animated,
-  PanResponder,
   Dimensions,
   Modal,
   TextInput,
@@ -16,6 +14,13 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
 import {
   ChevronLeft,
   ChevronRight,
@@ -93,63 +98,49 @@ export default function RoutineScreen() {
     evening: true,
   });
 
-  const translateX = useRef(new Animated.Value(0)).current;
-  const isAnimating = useRef(false);
+  const translateX = useSharedValue(0);
+  const [isAnimating, setIsAnimating] = useState(false);
 
   const currentDate = allDates[currentIndex];
   const isToday = currentDate === formatDate(new Date());
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gs) =>
-        Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5,
-      onPanResponderRelease: (_, gs) => {
-        if (gs.dx > SWIPE_THRESHOLD) goToPrevDate();
-        else if (gs.dx < -SWIPE_THRESHOLD) goToNextDate();
-      },
-    })
-  ).current;
-
   const goToNextDate = useCallback(() => {
-    if (currentIndex >= allDates.length - 1 || isAnimating.current) return;
-    isAnimating.current = true;
-    Animated.timing(translateX, {
-      toValue: -SCREEN_WIDTH,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      setCurrentIndex((prev) => prev + 1);
-      translateX.setValue(SCREEN_WIDTH);
-      Animated.timing(translateX, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }).start(() => {
-        isAnimating.current = false;
+    if (currentIndex >= allDates.length - 1 || isAnimating) return;
+    setIsAnimating(true);
+    translateX.value = withTiming(-SCREEN_WIDTH, { duration: 200 }, () => {
+      runOnJS(setCurrentIndex)(currentIndex + 1);
+      translateX.value = SCREEN_WIDTH;
+      translateX.value = withTiming(0, { duration: 200 }, () => {
+        runOnJS(setIsAnimating)(false);
       });
     });
-  }, [currentIndex, allDates.length, translateX]);
+  }, [currentIndex, allDates.length, translateX, isAnimating]);
 
   const goToPrevDate = useCallback(() => {
-    if (currentIndex <= 0 || isAnimating.current) return;
-    isAnimating.current = true;
-    Animated.timing(translateX, {
-      toValue: SCREEN_WIDTH,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      setCurrentIndex((prev) => prev - 1);
-      translateX.setValue(-SCREEN_WIDTH);
-      Animated.timing(translateX, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }).start(() => {
-        isAnimating.current = false;
+    if (currentIndex <= 0 || isAnimating) return;
+    setIsAnimating(true);
+    translateX.value = withTiming(SCREEN_WIDTH, { duration: 200 }, () => {
+      runOnJS(setCurrentIndex)(currentIndex - 1);
+      translateX.value = -SCREEN_WIDTH;
+      translateX.value = withTiming(0, { duration: 200 }, () => {
+        runOnJS(setIsAnimating)(false);
       });
     });
-  }, [currentIndex, translateX]);
+  }, [currentIndex, translateX, isAnimating]);
+
+  const panGesture = Gesture.Pan()
+    .onEnd((event) => {
+      if (event.translationX > SWIPE_THRESHOLD) {
+        runOnJS(goToPrevDate)();
+      } else if (event.translationX < -SWIPE_THRESHOLD) {
+        runOnJS(goToNextDate)();
+      }
+    })
+    .enabled(!isAnimating);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
   const touchTemplateUpdated = useCallback(async (tid: string) => {
     await (supabase.from('routine_templates') as any)
@@ -465,78 +456,77 @@ export default function RoutineScreen() {
         </View>
       </View>
 
-      <Animated.View
-        style={[styles.content, { transform: [{ translateX }] }]}
-        {...panResponder.panHandlers}
-      >
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#222" />
-          </View>
-        ) : !hasAnyActive ? (
-          <View style={styles.emptyWrap}>
-            <ListChecks size={48} color="#ccc" />
-            <Text style={styles.emptyTitle}>
-              {routineTablesMissing ? 'ルーティン機能を準備中です' : 'ルーティンがありません'}
-            </Text>
-            <Text style={styles.emptySub}>
-              {routineTablesMissing
-                ? 'Supabase にルーティン用の最新マイグレーションを適用してください。'
-                : '右上の鉛筆から、朝・日中・夜の習慣を追加できます。'}
-            </Text>
-            {!routineTablesMissing && (
-              <TouchableOpacity style={styles.emptyCta} onPress={openEditor}>
-                <Text style={styles.emptyCtaText}>テンプレートを編集</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-          >
-            {SLOTS.map((slot) => {
-              const slotItems = activeItemsBySlot[slot];
-              if (slotItems.length === 0) return null;
-              const open = sectionOpen[slot];
-              return (
-                <View key={slot} style={styles.section}>
-                  <TouchableOpacity
-                    style={styles.sectionHeader}
-                    onPress={() => setSectionOpen((s) => ({ ...s, [slot]: !s[slot] }))}
-                  >
-                    <Text style={styles.sectionTitle}>{SLOT_LABELS[slot]}</Text>
-                    {open ? <ChevronUp size={20} color="#666" /> : <ChevronDown size={20} color="#666" />}
-                  </TouchableOpacity>
-                  {open &&
-                    slotItems.map((item) => {
-                      const checked = completedItemIds.has(item.id);
-                      return (
-                        <TouchableOpacity
-                          key={item.id}
-                          style={styles.row}
-                          onPress={() => toggleCompletion(item.id)}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[styles.checkbox, checked && styles.checkboxOn]}>
-                            {checked && <Text style={styles.checkMark}>✓</Text>}
-                          </View>
-                          <Text
-                            style={[styles.rowLabel, checked && styles.rowLabelDone]}
-                            numberOfLines={2}
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={[styles.content, animatedStyle]}>
+          {loading ? (
+            <View style={styles.centered}>
+              <ActivityIndicator size="large" color="#222" />
+            </View>
+          ) : !hasAnyActive ? (
+            <View style={styles.emptyWrap}>
+              <ListChecks size={48} color="#ccc" />
+              <Text style={styles.emptyTitle}>
+                {routineTablesMissing ? 'ルーティン機能を準備中です' : 'ルーティンがありません'}
+              </Text>
+              <Text style={styles.emptySub}>
+                {routineTablesMissing
+                  ? 'Supabase にルーティン用の最新マイグレーションを適用してください。'
+                  : '右上の鉛筆から、朝・日中・夜の習慣を追加できます。'}
+              </Text>
+              {!routineTablesMissing && (
+                <TouchableOpacity style={styles.emptyCta} onPress={openEditor}>
+                  <Text style={styles.emptyCtaText}>テンプレートを編集</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {SLOTS.map((slot) => {
+                const slotItems = activeItemsBySlot[slot];
+                if (slotItems.length === 0) return null;
+                const open = sectionOpen[slot];
+                return (
+                  <View key={slot} style={styles.section}>
+                    <TouchableOpacity
+                      style={styles.sectionHeader}
+                      onPress={() => setSectionOpen((s) => ({ ...s, [slot]: !s[slot] }))}
+                    >
+                      <Text style={styles.sectionTitle}>{SLOT_LABELS[slot]}</Text>
+                      {open ? <ChevronUp size={20} color="#666" /> : <ChevronDown size={20} color="#666" />}
+                    </TouchableOpacity>
+                    {open &&
+                      slotItems.map((item) => {
+                        const checked = completedItemIds.has(item.id);
+                        return (
+                          <TouchableOpacity
+                            key={item.id}
+                            style={styles.row}
+                            onPress={() => toggleCompletion(item.id)}
+                            activeOpacity={0.7}
                           >
-                            {itemDisplayLabel(item)}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                </View>
-              );
-            })}
-          </ScrollView>
-        )}
-      </Animated.View>
+                            <View style={[styles.checkbox, checked && styles.checkboxOn]}>
+                              {checked && <Text style={styles.checkMark}>✓</Text>}
+                            </View>
+                            <Text
+                              style={[styles.rowLabel, checked && styles.rowLabelDone]}
+                              numberOfLines={2}
+                            >
+                              {itemDisplayLabel(item)}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </Animated.View>
+      </GestureDetector>
 
       <ScheduleCalendarModal
         visible={calendarVisible}
