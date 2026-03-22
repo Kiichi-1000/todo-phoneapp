@@ -80,6 +80,7 @@ export interface RoutineTemplateItem {
   title: string;
   short_label: string | null;
   is_active: boolean;
+  today_only_date: string | null;
   created_at: string;
   updated_at: string;
 }

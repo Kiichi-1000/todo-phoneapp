@@ -36,13 +36,13 @@ import {
   ChevronUp,
   ChevronDown,
   Check,
-  CircleCheck as CheckCircle,
 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { RoutineTemplateItem, RoutineSlot } from '@/types/database';
 import { formatDate, formatDateDisplay } from '@/lib/scheduleUtils';
 import ScheduleCalendarModal from '@/components/ScheduleCalendarModal';
+import DraggableRoutineList from '@/components/DraggableRoutineList';
 
 const SWIPE_THRESHOLD = 50;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -266,10 +266,11 @@ export default function RoutineScreen() {
     };
     for (const it of items) {
       if (!it.is_active) continue;
+      if (it.today_only_date && it.today_only_date !== currentDate) continue;
       map[it.slot].push(it);
     }
     return map;
-  }, [items]);
+  }, [items, currentDate]);
 
   const allItemsBySlot = useMemo(() => {
     const map: Record<RoutineSlot, RoutineTemplateItem[]> = {
@@ -278,6 +279,7 @@ export default function RoutineScreen() {
       evening: [],
     };
     for (const it of items) {
+      if (it.today_only_date) continue;
       map[it.slot].push(it);
     }
     return map;
@@ -340,6 +342,39 @@ export default function RoutineScreen() {
     }
   };
 
+  const reorderSlotItems = useCallback(async (fromIndex: number, toIndex: number) => {
+    if (!templateId) return;
+    const slotItems = [...activeItemsBySlot[currentSlot]];
+    const [moved] = slotItems.splice(fromIndex, 1);
+    slotItems.splice(toIndex, 0, moved);
+
+    const updates = slotItems.map((item, idx) => ({
+      id: item.id,
+      sort_order: idx,
+    }));
+
+    setItems((prev) => {
+      const next = [...prev];
+      for (const u of updates) {
+        const i = next.findIndex((it) => it.id === u.id);
+        if (i >= 0) next[i] = { ...next[i], sort_order: u.sort_order };
+      }
+      return next;
+    });
+
+    try {
+      for (const u of updates) {
+        await (supabase.from('routine_template_items') as any)
+          .update({ sort_order: u.sort_order })
+          .eq('id', u.id);
+      }
+      await touchTemplateUpdated(templateId);
+    } catch (e) {
+      console.error('reorderSlotItems:', e);
+      await loadRoutine();
+    }
+  }, [templateId, activeItemsBySlot, currentSlot, touchTemplateUpdated, loadRoutine]);
+
   const jumpToDate = (dateStr: string) => {
     const idx = allDates.indexOf(dateStr);
     if (idx >= 0) setCurrentIndex(idx);
@@ -376,28 +411,18 @@ export default function RoutineScreen() {
           slot: currentSlot,
           sort_order: maxOrder + 1,
           title,
-          is_active: false,
+          is_active: true,
+          today_only_date: currentDate,
         } as any)
         .select('*')
         .single()) as { data: RoutineTemplateItem | null; error: Error | null };
       if (error) throw error;
-
-      if (newItem) {
-        const { error: compError } = await supabase.from('routine_completions').insert({
-          user_id: user!.id,
-          item_id: newItem.id,
-          date: currentDate,
-          completed_at: new Date().toISOString(),
-        } as any);
-        if (compError) console.error('completion insert:', compError);
-      }
 
       await touchTemplateUpdated(templateId);
       await loadRoutine();
       closeAddModal();
     } catch (e) {
       console.error('saveNewTodayTask:', e);
-      Alert.alert('エラー', '保存に失敗しました');
     }
   };
 
@@ -655,31 +680,14 @@ export default function RoutineScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-              {currentSlotItems.map((item) => {
-                const checked = completedItemIds.has(item.id);
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.card, checked && styles.cardDone]}
-                    onPress={() => toggleCompletion(item.id)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.checkbox, checked && { backgroundColor: slotColor.accent, borderColor: slotColor.accent }]}>
-                      {checked && <Check size={14} color="#fff" strokeWidth={3} />}
-                    </View>
-                    <Text
-                      style={[styles.cardText, checked && styles.cardTextDone]}
-                      numberOfLines={2}
-                    >
-                      {item.short_label?.trim() || item.title}
-                    </Text>
-                    {checked && (
-                      <CheckCircle size={18} color={slotColor.accent} style={{ marginLeft: 8 }} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+            <ScrollView style={styles.scroll}>
+              <DraggableRoutineList
+                items={currentSlotItems}
+                completedItemIds={completedItemIds}
+                accentColor={slotColor.accent}
+                onToggle={toggleCompletion}
+                onReorder={reorderSlotItems}
+              />
             </ScrollView>
           )}
         </Animated.View>
@@ -992,10 +1000,6 @@ const styles = StyleSheet.create({
   scroll: {
     flex: 1,
   },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 100,
-  },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -1047,50 +1051,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 14,
-  },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.04,
-        shadowRadius: 4,
-      },
-      android: { elevation: 1 },
-    }),
-  },
-  cardDone: {
-    backgroundColor: '#fafafa',
-    borderColor: '#f0f0f0',
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 7,
-    borderWidth: 2,
-    borderColor: '#d0d0d0',
-    marginRight: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardText: {
-    flex: 1,
-    fontSize: 15,
-    color: '#222',
-    lineHeight: 22,
-  },
-  cardTextDone: {
-    color: '#aaa',
-    textDecorationLine: 'line-through',
   },
   fab: {
     position: 'absolute',
