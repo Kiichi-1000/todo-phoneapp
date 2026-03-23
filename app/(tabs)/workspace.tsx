@@ -277,6 +277,7 @@ export default function WorkspaceScreen() {
   });
 
   useEffect(() => {
+    if (!user) return;
     const initializeApp = async () => {
       try {
         await loadSettings();
@@ -286,33 +287,30 @@ export default function WorkspaceScreen() {
     };
 
     initializeApp();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
-    if (settings) {
+    if (settings && user) {
       loadWorkspaceDates();
     }
-  }, [settings?.default_workspace_type]);
+  }, [settings, user]);
 
-  // 設定変更時に現在のワークスペースを再読み込み（タイプを強制更新）
   useEffect(() => {
     if (!settings || workspaceDates.length === 0 || !workspaceDates[currentIndex]) {
       return;
     }
-    
+
     const currentType = settings.default_workspace_type;
-    
-    // 前の設定タイプを初期化
+
     if (previousWorkspaceType.current === null) {
       previousWorkspaceType.current = currentType;
       return;
     }
-    
+
     if (previousWorkspaceType.current !== currentType) {
       previousWorkspaceType.current = currentType;
       loadWorkspaceByDate(workspaceDates[currentIndex], true, currentType);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.default_workspace_type]);
 
   // 設定変更の検知用
@@ -332,41 +330,27 @@ export default function WorkspaceScreen() {
   // 画面がフォーカスされたときに設定を再読み込みし、ワークスペースタイプを確認
   useFocusEffect(
     useCallback(() => {
+      if (!user) return;
       const checkAndUpdateWorkspace = async () => {
-        // 設定を再読み込み
-        const { data: newSettings, error } = await supabase
-          .from('user_settings')
-          .select('*')
-          .limit(1)
-          .maybeSingle() as { data: UserSettings | null; error: any };
-
-        if (error || !newSettings) return;
-
-        const currentType = newSettings.default_workspace_type;
-        
-        if (previousWorkspaceType.current !== null && previousWorkspaceType.current !== currentType) {
-          setSettings(newSettings);
-          // previousWorkspaceType.currentはuseEffect内で更新される
-        } else if (previousWorkspaceType.current === null) {
-          previousWorkspaceType.current = currentType;
-          setSettings(newSettings);
-        } else {
-          // 設定タイプが変更されていない場合も設定を更新
-          setSettings(newSettings);
+        try {
+          await loadSettings();
+        } catch (error) {
+          console.error('Focus settings reload error:', error);
         }
       };
-      
+
       checkAndUpdateWorkspace();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [user])
   );
 
   useEffect(() => {
-    if (workspaceDates.length > 0 && workspaceDates[currentIndex] && previousWorkspaceType.current !== null) {
-      // 設定タイプが初期化済みの場合のみ通常の読み込み
+    if (workspaceDates.length > 0 && workspaceDates[currentIndex] && settings) {
+      if (previousWorkspaceType.current === null) {
+        previousWorkspaceType.current = settings.default_workspace_type;
+      }
       loadWorkspaceByDate(workspaceDates[currentIndex]);
     }
-  }, [currentIndex, workspaceDates]);
+  }, [currentIndex, workspaceDates, settings]);
 
   const loadSettings = async () => {
     try {
