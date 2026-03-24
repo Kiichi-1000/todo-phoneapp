@@ -13,7 +13,7 @@ import {
 } from '@/lib/notifications';
 
 function RootNavigator() {
-  const { session, loading } = useAuth();
+  const { session, loading, isPasswordRecovery } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const notificationListenerRef = useRef<any>(null);
@@ -42,6 +42,11 @@ function RootNavigator() {
   useEffect(() => {
     if (loading) return;
 
+    if (isPasswordRecovery && session) {
+      router.replace('/(auth)/reset-password');
+      return;
+    }
+
     const inAuthGroup = segments[0] === '(auth)';
 
     if (!session && !inAuthGroup) {
@@ -49,9 +54,12 @@ function RootNavigator() {
         router.replace('/(auth)/login');
       }, 0);
     } else if (session && inAuthGroup) {
-      router.replace('/(tabs)/workspace');
+      const inResetPassword = segments[1] === 'reset-password';
+      if (!inResetPassword) {
+        router.replace('/(tabs)/workspace');
+      }
     }
-  }, [session, loading]);
+  }, [session, loading, isPasswordRecovery]);
 
   if (loading) {
     return (

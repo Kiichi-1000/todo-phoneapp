@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
@@ -9,8 +10,9 @@ import {
   Alert,
   Platform,
   Switch,
+  ActivityIndicator,
 } from 'react-native';
-import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
@@ -34,11 +36,16 @@ const WORKSPACE_TYPES = [
 ];
 
 export default function SettingsScreen() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, updatePassword } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
   const [todoSyncEnabled, setTodoSyncEnabled] = useState(true);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -178,6 +185,38 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleChangePassword = async () => {
+    setPasswordError(null);
+
+    if (!newPassword.trim()) {
+      setPasswordError('新しいパスワードを入力してください');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordError('パスワードは6文字以上で入力してください');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('パスワードが一致しません');
+      return;
+    }
+
+    setPasswordLoading(true);
+    const { error: err } = await updatePassword(newPassword);
+    setPasswordLoading(false);
+
+    if (err) {
+      setPasswordError(err);
+      return;
+    }
+
+    Alert.alert('完了', 'パスワードを変更しました');
+    setShowPasswordForm(false);
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setPasswordError(null);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -282,6 +321,61 @@ export default function SettingsScreen() {
               <Text style={styles.infoText}>{user?.email}</Text>
             </View>
           </View>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => {
+              setShowPasswordForm(!showPasswordForm);
+              setPasswordError(null);
+              setNewPassword('');
+              setConfirmNewPassword('');
+            }}
+          >
+            <View style={styles.settingLeft}>
+              <KeyRound size={20} color="#000" />
+              <Text style={styles.settingText}>パスワードを変更</Text>
+            </View>
+          </TouchableOpacity>
+
+          {showPasswordForm && (
+            <View style={styles.passwordForm}>
+              {passwordError && (
+                <View style={styles.passwordErrorContainer}>
+                  <Text style={styles.passwordErrorText}>{passwordError}</Text>
+                </View>
+              )}
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="新しいパスワード"
+                placeholderTextColor="#8a8a9a"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                secureTextEntry
+                editable={!passwordLoading}
+              />
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="新しいパスワード（確認）"
+                placeholderTextColor="#8a8a9a"
+                value={confirmNewPassword}
+                onChangeText={setConfirmNewPassword}
+                secureTextEntry
+                editable={!passwordLoading}
+              />
+              <TouchableOpacity
+                style={[styles.passwordSubmitButton, passwordLoading && styles.passwordSubmitDisabled]}
+                onPress={handleChangePassword}
+                disabled={passwordLoading}
+              >
+                {passwordLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.passwordSubmitText}>変更する</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
           <TouchableOpacity
             style={styles.logoutItem}
             onPress={() => {
@@ -520,5 +614,52 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 10,
+  },
+  passwordForm: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    gap: 10,
+  },
+  passwordErrorContainer: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    padding: 10,
+  },
+  passwordErrorText: {
+    color: '#dc2626',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  passwordInput: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e2ea',
+    paddingHorizontal: 14,
+    height: 44,
+    fontSize: 15,
+    color: '#1a1a2e',
+  },
+  passwordSubmitButton: {
+    backgroundColor: '#1a1a2e',
+    borderRadius: 8,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  passwordSubmitDisabled: {
+    opacity: 0.7,
+  },
+  passwordSubmitText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

@@ -11,11 +11,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { BookOpen, Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
 
 export default function LoginScreen() {
   const { signIn, signUp } = useAuth();
+  const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -191,6 +193,16 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
+            {isLogin && (
+              <TouchableOpacity
+                style={styles.forgotButton}
+                onPress={() => router.push('/(auth)/forgot-password')}
+                disabled={loading}
+              >
+                <Text style={styles.forgotText}>パスワードをお忘れですか？</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={styles.switchButton}
               onPress={switchMode}
@@ -333,6 +345,16 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  forgotButton: {
+    alignSelf: 'center',
+    marginTop: 16,
+    paddingVertical: 4,
+  },
+  forgotText: {
+    fontSize: 14,
+    color: '#6b6b7b',
+    textDecorationLine: 'underline',
   },
   switchButton: {
     flexDirection: 'row',
