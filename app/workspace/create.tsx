@@ -38,6 +38,23 @@ export default function CreateWorkspaceScreen() {
     if (!user) return;
 
     try {
+      const { data: latestWs } = await supabase
+        .from('workspaces')
+        .select('area_titles')
+        .eq('user_id', user.id)
+        .eq('type', selectedType)
+        .not('area_titles', 'is', null)
+        .order('date', { ascending: false })
+        .limit(1)
+        .maybeSingle() as any;
+
+      const inheritedTitles = {
+        top_left: latestWs?.area_titles?.top_left || '左上エリア',
+        top_right: latestWs?.area_titles?.top_right || '右上エリア',
+        bottom_left: latestWs?.area_titles?.bottom_left || '左下エリア',
+        bottom_right: latestWs?.area_titles?.bottom_right || '右下エリア',
+      };
+
       const { data, error } = await supabase
         .from('workspaces')
         .insert({
@@ -45,6 +62,7 @@ export default function CreateWorkspaceScreen() {
           type: selectedType,
           date: selectedDate,
           user_id: user.id,
+          area_titles: inheritedTitles,
         } as any)
         .select()
         .single() as any;

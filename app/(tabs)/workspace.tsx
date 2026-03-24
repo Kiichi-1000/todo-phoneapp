@@ -499,9 +499,26 @@ export default function WorkspaceScreen() {
           await loadTodos(existingWorkspace.id, existingWorkspace.type);
         }
       } else {
-        // 既存のワークスペースがない場合のみ、現在の設定タイプで新規作成
         if (!user) return;
         const date = new Date(dateString);
+
+        const { data: latestWs } = await supabase
+          .from('workspaces')
+          .select('area_titles')
+          .eq('user_id', user.id)
+          .eq('type', currentType)
+          .not('area_titles', 'is', null)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle() as { data: { area_titles: Workspace['area_titles'] } | null; error: any };
+
+        const inheritedTitles = {
+          top_left: latestWs?.area_titles?.top_left || '左上エリア',
+          top_right: latestWs?.area_titles?.top_right || '右上エリア',
+          bottom_left: latestWs?.area_titles?.bottom_left || '左下エリア',
+          bottom_right: latestWs?.area_titles?.bottom_right || '右下エリア',
+        };
+
         const { data: newWorkspace, error: createError } = await supabase
           .from('workspaces')
           .insert({
@@ -509,12 +526,7 @@ export default function WorkspaceScreen() {
             type: currentType,
             date: dateString,
             user_id: user.id,
-            area_titles: {
-              top_left: '左上エリア',
-              top_right: '右上エリア',
-              bottom_left: '左下エリア',
-              bottom_right: '右下エリア',
-            },
+            area_titles: inheritedTitles,
           } as any)
           .select()
           .single() as { data: Workspace | null; error: any };
