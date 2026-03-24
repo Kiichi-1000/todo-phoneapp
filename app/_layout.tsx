@@ -45,11 +45,13 @@ function RootNavigator() {
     const inAuthGroup = segments[0] === '(auth)';
 
     if (!session && !inAuthGroup) {
-      router.replace('/(auth)/login');
+      setTimeout(() => {
+        router.replace('/(auth)/login');
+      }, 0);
     } else if (session && inAuthGroup) {
       router.replace('/(tabs)/workspace');
     }
-  }, [session, loading, segments]);
+  }, [session, loading]);
 
   if (loading) {
     return (
