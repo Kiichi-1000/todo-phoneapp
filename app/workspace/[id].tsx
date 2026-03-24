@@ -168,6 +168,7 @@ function WorkspaceScreen() {
   };
 
   const moveTodo = async (todo: Todo, direction: 'up' | 'down') => {
+    if (!todo.grid_area) return;
     try {
       const areaTodos = getTodosForArea(todo.grid_area);
       const currentIndex = areaTodos.findIndex((t) => t.id === todo.id);

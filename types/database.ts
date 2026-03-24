@@ -4,6 +4,7 @@ export type RepeatType = 'none' | 'daily' | 'weekly' | 'monthly';
 
 export interface Workspace {
   id: string;
+  user_id: string;
   title: string;
   type: WorkspaceType;
   date: string;
@@ -19,6 +20,7 @@ export interface Workspace {
 
 export interface UserSettings {
   id: string;
+  user_id: string;
   default_workspace_type: WorkspaceType;
   todo_schedule_sync: boolean;
   created_at: string;
@@ -110,8 +112,11 @@ export interface Database {
           id?: string;
           created_at?: string;
           updated_at?: string;
+          area_titles?: Workspace['area_titles'];
         };
-        Update: Partial<Omit<Workspace, 'id' | 'created_at' | 'updated_at'>>;
+        Update: Partial<Omit<Workspace, 'id' | 'created_at' | 'updated_at'>> & {
+          area_titles?: Workspace['area_titles'];
+        };
         Relationships: [];
       };
       user_settings: {
@@ -126,11 +131,12 @@ export interface Database {
       };
       todos: {
         Row: Todo;
-        Insert: Omit<Todo, 'id' | 'created_at'> & {
+        Insert: Omit<Todo, 'id' | 'created_at' | 'order'> & {
           id?: string;
           created_at?: string;
+          order?: number;
         };
-        Update: Partial<Omit<Todo, 'id' | 'created_at'>>;
+        Update: Partial<Omit<Todo, 'id'>>;
         Relationships: [
           {
             foreignKeyName: 'todos_workspace_id_fkey';

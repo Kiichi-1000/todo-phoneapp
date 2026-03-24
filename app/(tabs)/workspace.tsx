@@ -140,7 +140,7 @@ export default function WorkspaceScreen() {
   const addMoreFutureDates = () => {
     const lastDate = workspaceDates[workspaceDates.length - 1];
     const lastDateObj = new Date(lastDate);
-    const newFutureDates = [];
+    const newFutureDates: string[] = [];
     
     // 現在の最後の日付からさらに30日先まで追加
     for (let i = 1; i <= 30; i++) {
@@ -551,7 +551,9 @@ export default function WorkspaceScreen() {
                 bottom_right: updatedWorkspace.area_titles?.bottom_right || '右下エリア',
               });
             }
-            await loadTodos(updatedWorkspace.id, updatedWorkspace.type);
+            if (updatedWorkspace) {
+              await loadTodos(updatedWorkspace.id, updatedWorkspace.type);
+            }
           } else {
             throw createError;
           }
@@ -778,7 +780,9 @@ export default function WorkspaceScreen() {
 
       if (error) throw error;
 
-      setTodos((prev) => [...prev, newTodo]);
+      if (newTodo) {
+        setTodos((prev) => [...prev, newTodo]);
+      }
       setIsAddingPostit(false);
       setNewTaskText('');
     } catch (error) {
