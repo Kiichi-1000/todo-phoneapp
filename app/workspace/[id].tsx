@@ -26,7 +26,7 @@ const GRID_AREA_LABELS: Record<GridArea, string> = {
 
 function WorkspaceScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -129,7 +129,7 @@ function WorkspaceScreen() {
         .update({
           is_completed: !todo.is_completed,
           completed_at: !todo.is_completed ? new Date().toISOString() : null,
-        } as any)
+        })
         .eq('id', todo.id);
 
       if (error) throw error;
@@ -197,7 +197,7 @@ function WorkspaceScreen() {
       const updatePromises = updates.map((update) =>
         supabase
           .from('todos')
-          .update({ order: update.order } as any)
+          .update({ order: update.order })
           .eq('id', update.id)
       );
       
@@ -276,7 +276,7 @@ function WorkspaceScreen() {
 
       const { error } = await supabase
         .from('workspaces')
-        .update({ area_titles: updatedTitles } as any)
+        .update({ area_titles: updatedTitles })
         .eq('id', id);
 
       if (error) throw error;

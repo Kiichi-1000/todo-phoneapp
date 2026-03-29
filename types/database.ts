@@ -2,7 +2,7 @@ export type WorkspaceType = 'four_grid' | 'individual' | 'note';
 export type GridArea = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
 export type RepeatType = 'none' | 'daily' | 'weekly' | 'monthly';
 
-export interface Workspace {
+export type Workspace = {
   id: string;
   user_id: string;
   title: string;
@@ -16,18 +16,18 @@ export interface Workspace {
   };
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface UserSettings {
+export type UserSettings = {
   id: string;
   user_id: string;
   default_workspace_type: WorkspaceType;
   todo_schedule_sync: boolean;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface Schedule {
+export type Schedule = {
   id: string;
   user_id: string;
   date: string;
@@ -39,9 +39,9 @@ export interface Schedule {
   source_todo_id: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface Todo {
+export type Todo = {
   id: string;
   workspace_id: string;
   content: string;
@@ -55,26 +55,26 @@ export interface Todo {
   completed_at: string | null;
   reminder_at: string | null;
   notification_id: string | null;
-}
+};
 
-export interface Reminder {
+export type Reminder = {
   id: string;
   todo_id: string;
   reminder_time: string;
   repeat_type: RepeatType;
   minutes_before: number[];
   is_active: boolean;
-}
+};
 
 export type RoutineSlot = 'morning' | 'daytime' | 'evening';
 
-export interface RoutineTemplate {
+export type RoutineTemplate = {
   id: string;
   user_id: string;
   updated_at: string;
-}
+};
 
-export interface RoutineTemplateItem {
+export type RoutineTemplateItem = {
   id: string;
   template_id: string;
   slot: RoutineSlot;
@@ -85,15 +85,22 @@ export interface RoutineTemplateItem {
   today_only_date: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface RoutineCompletion {
+export type RoutineCompletion = {
   id: string;
   user_id: string;
   item_id: string;
   date: string;
   completed_at: string;
-}
+};
+
+export type RoutineSkip = {
+  id: string;
+  user_id: string;
+  item_id: string;
+  date: string;
+};
 
 export type Json =
   | string
@@ -103,7 +110,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       workspaces: {
@@ -234,6 +241,24 @@ export interface Database {
           }
         ];
       };
+      routine_skips: {
+        Row: RoutineSkip;
+        Insert: {
+          id?: string;
+          user_id: string;
+          item_id: string;
+          date: string;
+        };
+        Update: Partial<Pick<RoutineSkip, 'date'>>;
+        Relationships: [
+          {
+            foreignKeyName: 'routine_skips_item_id_fkey';
+            columns: ['item_id'];
+            referencedRelation: 'routine_template_items';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -248,4 +273,4 @@ export interface Database {
       [_ in never]: never;
     };
   };
-}
+};

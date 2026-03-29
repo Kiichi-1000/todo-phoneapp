@@ -317,9 +317,7 @@ export default function StatisticsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>統計</Text>
-      </View>
+      <View style={styles.header} />
 
       <ScrollView
         style={styles.scrollView}

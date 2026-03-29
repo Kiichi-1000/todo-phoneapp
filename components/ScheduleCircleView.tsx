@@ -175,28 +175,52 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
             />
           ))}
 
-          {scheduleSegments.map(seg => (
-            <G key={seg.id}>
-              <Path
-                d={seg.path}
-                fill={seg.color}
-                opacity={0.7}
-                onPress={() => onSchedulePress(seg as unknown as Schedule)}
-              />
-              <SvgText
-                x={seg.labelPos.x}
-                y={seg.labelPos.y}
-                fill="#fff"
-                fontSize={11}
-                fontWeight="500"
-                textAnchor="middle"
-                alignmentBaseline="central"
-                opacity={0.9}
-              >
-                {seg.durationLabel}
-              </SvgText>
-            </G>
-          ))}
+          {scheduleSegments.map(seg => {
+            const durationMin = seg.end_minutes - seg.start_minutes;
+            const displayTitle = seg.title || '(無題)';
+            const maxChars = durationMin >= 120 ? 8 : durationMin >= 60 ? 6 : 4;
+            const truncTitle = displayTitle.length > maxChars ? displayTitle.slice(0, maxChars - 1) + '…' : displayTitle;
+            const showBothLines = durationMin >= 90;
+            const showTitle = durationMin >= 30;
+            const cx = seg.labelPos.x;
+            const cy = seg.labelPos.y;
+            return (
+              <G key={seg.id}>
+                <Path
+                  d={seg.path}
+                  fill={seg.color}
+                  opacity={0.7}
+                  onPress={() => onSchedulePress(seg as unknown as Schedule)}
+                />
+                {showTitle && (
+                  <SvgText
+                    x={cx}
+                    y={showBothLines ? cy - 6 : cy}
+                    fill="#fff"
+                    fontSize={10}
+                    fontWeight="700"
+                    textAnchor="middle"
+                    alignmentBaseline="central"
+                  >
+                    {truncTitle}
+                  </SvgText>
+                )}
+                {showBothLines && (
+                  <SvgText
+                    x={cx}
+                    y={cy + 7}
+                    fill="rgba(255,255,255,0.7)"
+                    fontSize={9}
+                    fontWeight="500"
+                    textAnchor="middle"
+                    alignmentBaseline="central"
+                  >
+                    {seg.durationLabel}
+                  </SvgText>
+                )}
+              </G>
+            );
+          })}
 
           {hourLabels.map(({ hour, tickO, tickI }) => {
             const hourMin = hour * 60;

@@ -37,7 +37,15 @@ interface GridAreaDropTargetProps {
   onClearReminder: (todo: Todo) => void;
 }
 
-function InlineAddInput({ area, onQuickAdd }: { area: GridArea; onQuickAdd: (area: GridArea, content: string) => void }) {
+function InlineAddInput({
+  area,
+  onQuickAdd,
+  onFocus,
+}: {
+  area: GridArea;
+  onQuickAdd: (area: GridArea, content: string) => void;
+  onFocus?: () => void;
+}) {
   const [text, setText] = useState('');
 
   const handleSubmit = () => {
@@ -59,6 +67,7 @@ function InlineAddInput({ area, onQuickAdd }: { area: GridArea; onQuickAdd: (are
       onSubmitEditing={handleSubmit}
       blurOnSubmit
       returnKeyType="done"
+      onFocus={onFocus}
     />
   );
 }
@@ -89,6 +98,7 @@ export default function GridAreaDropTarget({
 }: GridAreaDropTargetProps) {
   const { dragState, hoveredArea, registerArea } = useDragDrop();
   const viewRef = useRef<View>(null);
+  const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -167,6 +177,7 @@ export default function GridAreaDropTarget({
       )}
 
       <ScrollView
+        ref={scrollRef}
         style={styles.todoList}
         scrollEnabled={dragState === null}
         keyboardShouldPersistTaps="handled"
@@ -192,7 +203,13 @@ export default function GridAreaDropTarget({
           />
         ))}
 
-        <InlineAddInput area={area} onQuickAdd={onQuickAdd} />
+        <InlineAddInput
+          area={area}
+          onQuickAdd={onQuickAdd}
+          onFocus={() => {
+            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
+          }}
+        />
       </ScrollView>
     </View>
   );
@@ -203,8 +220,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fffacd',
     borderRadius: 2,
-    marginHorizontal: 4,
-    padding: 16,
+    marginHorizontal: 3,
+    padding: 10,
     shadowColor: '#000',
     shadowOffset: { width: 2, height: 2 },
     shadowOpacity: 0.15,

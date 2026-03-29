@@ -98,7 +98,7 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
               placeholder="タイトルを入力"
               placeholderTextColor="#c0c0c0"
               maxLength={50}
-              autoFocus={isNew}
+              autoFocus={false}
             />
 
             <View style={styles.timeSection}>

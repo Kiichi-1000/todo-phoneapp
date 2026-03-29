@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -119,35 +119,49 @@ export default function RoutineScreen() {
   const isToday = currentDate === formatDate(new Date());
 
   const goToNextDate = useCallback(() => {
-    if (currentIndex >= allDates.length - 1 || isAnimating) return;
+    if (currentIndex >= allDates.length - 1) return;
+    setCurrentIndex((prev) => prev + 1);
+  }, [currentIndex, allDates.length]);
+
+  const goToPrevDate = useCallback(() => {
+    if (currentIndex <= 0) return;
+    setCurrentIndex((prev) => prev - 1);
+  }, [currentIndex]);
+
+  const goToNextSlot = useCallback(() => {
+    if (isAnimating) return;
+    const idx = SLOTS.indexOf(currentSlot);
+    if (idx >= SLOTS.length - 1) return;
     setIsAnimating(true);
     translateX.value = withTiming(-SCREEN_WIDTH, { duration: 200 }, () => {
-      runOnJS(setCurrentIndex)(currentIndex + 1);
+      runOnJS(setCurrentSlot)(SLOTS[idx + 1]);
       translateX.value = SCREEN_WIDTH;
       translateX.value = withTiming(0, { duration: 200 }, () => {
         runOnJS(setIsAnimating)(false);
       });
     });
-  }, [currentIndex, allDates.length, translateX, isAnimating]);
+  }, [currentSlot, translateX, isAnimating]);
 
-  const goToPrevDate = useCallback(() => {
-    if (currentIndex <= 0 || isAnimating) return;
+  const goToPrevSlot = useCallback(() => {
+    if (isAnimating) return;
+    const idx = SLOTS.indexOf(currentSlot);
+    if (idx <= 0) return;
     setIsAnimating(true);
     translateX.value = withTiming(SCREEN_WIDTH, { duration: 200 }, () => {
-      runOnJS(setCurrentIndex)(currentIndex - 1);
+      runOnJS(setCurrentSlot)(SLOTS[idx - 1]);
       translateX.value = -SCREEN_WIDTH;
       translateX.value = withTiming(0, { duration: 200 }, () => {
         runOnJS(setIsAnimating)(false);
       });
     });
-  }, [currentIndex, translateX, isAnimating]);
+  }, [currentSlot, translateX, isAnimating]);
 
   const panGesture = Gesture.Pan()
     .onEnd((event) => {
       if (event.translationX > SWIPE_THRESHOLD) {
-        runOnJS(goToPrevDate)();
+        runOnJS(goToPrevSlot)();
       } else if (event.translationX < -SWIPE_THRESHOLD) {
-        runOnJS(goToNextDate)();
+        runOnJS(goToNextSlot)();
       }
     })
     .enabled(!isAnimating);
@@ -653,7 +667,6 @@ export default function RoutineScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>ルーティン</Text>
           <TouchableOpacity onPress={openTemplateModal} style={styles.templateBtn} activeOpacity={0.7}>
             <Settings size={20} color="#555" />
           </TouchableOpacity>
@@ -673,7 +686,7 @@ export default function RoutineScreen() {
           </TouchableOpacity>
           {!isToday && (
             <TouchableOpacity onPress={jumpToToday} style={styles.todayBtn}>
-              <Text style={styles.todayBtnText}>今日</Text>
+              <Text style={styles.todayBtnText}>今日へ戻る</Text>
             </TouchableOpacity>
           )}
         </View>

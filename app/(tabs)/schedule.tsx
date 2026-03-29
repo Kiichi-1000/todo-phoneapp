@@ -258,7 +258,7 @@ export default function ScheduleScreen() {
             end_minutes: data.end_minutes,
             title: data.title,
             color: data.color,
-          } as any)
+          })
           .eq('id', editingSchedule.id);
         if (error) throw error;
       }
@@ -304,7 +304,6 @@ export default function ScheduleScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>スケジュール</Text>
           <View style={styles.modeSwitcher}>
             <TouchableOpacity
               style={[styles.modeBtn, viewMode === 'list' && styles.modeBtnActive]}
@@ -334,7 +333,7 @@ export default function ScheduleScreen() {
           </TouchableOpacity>
           {!isToday && (
             <TouchableOpacity onPress={jumpToToday} style={styles.todayBtn}>
-              <Text style={styles.todayBtnText}>今日</Text>
+              <Text style={styles.todayBtnText}>今日へ戻る</Text>
             </TouchableOpacity>
           )}
         </View>

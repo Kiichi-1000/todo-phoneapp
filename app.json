@@ -1,13 +1,22 @@
 {
   "expo": {
-    "name": "bolt-expo-nativewind",
-    "slug": "bolt-expo-nativewind",
+    "name": "ToSche",
+    "slug": "tosche",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "myapp",
+    "icon": "./assets/images/icon.png",
+    "scheme": "tosche",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.synthera.tosche",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.synthera.tosche"
     },
     "web": {
       "bundler": "metro",
@@ -29,10 +38,14 @@
     },
     "extra": {
       "supabaseUrl": "https://utfyxsvxyvzxjqcgzjjl.supabase.co",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0Znl4c3Z4eXZ6eGpxY2d6ampsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyMTU5NjksImV4cCI6MjA4OTc5MTk2OX0.dXQHhLdzLQ9vs3eP-HiqR_pWZ_CtVLcgN4icvWeGup8"
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0Znl4c3Z4eXZ6eGpxY2d6ampsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyMTU5NjksImV4cCI6MjA4OTc5MTk2OX0.dXQHhLdzLQ9vs3eP-HiqR_pWZ_CtVLcgN4icvWeGup8",
+      "eas": {
+        "projectId": "bcc70f23-fdff-4e18-9421-5462fcbd01f3"
+      },
+      "router": {},
+      "supportPageBaseUrl": "https://example.com/tosche/support",
+      "supportEmail": "support@example.com"
     },
-    "android": {
-      "package": "com.kiichi.x2022222.boltexponativewind"
-    }
+    "owner": "kiichi.2022222"
   }
 }

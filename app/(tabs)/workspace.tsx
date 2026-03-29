@@ -14,13 +14,14 @@ import {
   Modal,
   Platform,
   AppState,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, Trash2 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
+import { Workspace, Todo, GridArea, UserSettings, WorkspaceType } from '@/types/database';
 import { DragDropProvider } from '@/components/DragDropContext';
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
@@ -83,8 +84,6 @@ export default function WorkspaceScreen() {
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
   const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
-  const areaRefs = useRef<Record<string, View | null>>({});
-
   // アニメーション用の値
   const translateX = useRef(new Animated.Value(0)).current;
   const isAnimating = useRef(false);
@@ -230,34 +229,6 @@ export default function WorkspaceScreen() {
     }
     
     return days;
-  };
-
-  const renderDateItem = ({ item }: { item: string }) => {
-    const date = new Date(item);
-    const isToday = item === formatDate(new Date());
-    const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
-    const isFuture = new Date(item) > new Date();
-    
-    return (
-      <TouchableOpacity
-        style={[styles.dateItem, isToday && styles.todayDateItem]}
-        onPress={() => selectDate(item)}
-      >
-        <View style={styles.dateItemContent}>
-          <Text style={[styles.dateItemText, isToday && styles.todayDateItemText]}>
-            {formatDateTitle(date)}
-          </Text>
-          <Text style={[styles.dayOfWeekText, isToday && styles.todayDayOfWeekText]}>
-            {dayOfWeek}
-          </Text>
-        </View>
-        {isFuture && !isToday && (
-          <View style={styles.futureBadge}>
-            <Text style={styles.futureBadgeText}>未来</Text>
-          </View>
-        )}
-      </TouchableOpacity>
-    );
   };
 
   // スワイプ用のPanResponder
@@ -449,7 +420,7 @@ export default function WorkspaceScreen() {
     }
   };
 
-  const loadWorkspaceByDate = async (dateString: string, forceUpdateType: boolean = false, overrideType?: string) => {
+  const loadWorkspaceByDate = async (dateString: string, forceUpdateType: boolean = false, overrideType?: WorkspaceType) => {
     try {
       const currentType = overrideType || settings?.default_workspace_type || 'four_grid';
 
@@ -470,7 +441,7 @@ export default function WorkspaceScreen() {
           // 設定変更時にタイプを強制更新
           const { data: updatedWorkspace, error: updateError } = await supabase
             .from('workspaces')
-            .update({ type: currentType } as any)
+            .update({ type: currentType })
             .eq('date', dateString)
             .select()
             .single() as { data: Workspace | null; error: any };
@@ -687,7 +658,7 @@ export default function WorkspaceScreen() {
         
         const { data: updateData, error } = await supabase
           .from('workspaces')
-          .update({ area_titles: updatedAreaTitles } as any)
+          .update({ area_titles: updatedAreaTitles })
           .eq('id', workspace.id)
           .select();
 
@@ -730,7 +701,7 @@ export default function WorkspaceScreen() {
     try {
       const { error } = await supabase
         .from('todos')
-        .update({ content: editingTodoText.trim() } as any)
+        .update({ content: editingTodoText.trim() })
         .eq('id', editingTodo.id);
 
       if (error) throw error;
@@ -797,7 +768,7 @@ export default function WorkspaceScreen() {
 
       const { error } = await supabase
         .from('todos')
-        .update({ grid_area: targetArea } as any)
+        .update({ grid_area: targetArea })
         .eq('id', todoId);
 
       if (error) throw error;
@@ -834,14 +805,14 @@ export default function WorkspaceScreen() {
       const tempCreatedAt = todo.created_at;
       const { error: error1 } = await supabase
         .from('todos')
-        .update({ created_at: targetTodo.created_at } as any)
+        .update({ created_at: targetTodo.created_at })
         .eq('id', todo.id);
 
       if (error1) throw error1;
 
       const { error: error2 } = await supabase
         .from('todos')
-        .update({ created_at: tempCreatedAt } as any)
+        .update({ created_at: tempCreatedAt })
         .eq('id', targetTodo.id);
 
       if (error2) throw error2;
@@ -886,7 +857,7 @@ export default function WorkspaceScreen() {
       }
       const { error } = await supabase
         .from('todos')
-        .update({ reminder_at: null, notification_id: null } as any)
+        .update({ reminder_at: null, notification_id: null })
         .eq('id', todo.id);
       if (!error) {
         setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, reminder_at: null, notification_id: null } : t));
@@ -915,7 +886,7 @@ export default function WorkspaceScreen() {
 
       const { error } = await supabase
         .from('todos')
-        .update({ reminder_at: reminderAt, notification_id: notificationId } as any)
+        .update({ reminder_at: reminderAt, notification_id: notificationId })
         .eq('id', reminderTodo.id);
 
       if (error) throw error;
@@ -972,7 +943,7 @@ export default function WorkspaceScreen() {
         .update({
           is_completed: !todo.is_completed,
           completed_at: !todo.is_completed ? new Date().toISOString() : null,
-        } as any)
+        })
         .eq('id', todo.id);
 
       if (error) throw error;
@@ -1076,10 +1047,24 @@ export default function WorkspaceScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.dateContainer} onPress={openDatePicker}>
-          <Calendar size={20} color="#000" />
-          <Text style={styles.headerTitle}>{workspace.title}</Text>
-        </TouchableOpacity>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity style={styles.dateContainer} onPress={openDatePicker}>
+            <Calendar size={20} color="#000" />
+            <Text style={styles.headerTitle}>{workspace.title}</Text>
+          </TouchableOpacity>
+          {workspaceDates[currentIndex] !== formatDate(new Date()) && (
+            <TouchableOpacity
+              style={styles.todayJumpBtn}
+              onPress={() => {
+                const todayStr = formatDate(new Date());
+                const idx = workspaceDates.indexOf(todayStr);
+                if (idx >= 0) setCurrentIndex(idx);
+              }}
+            >
+              <Text style={styles.todayJumpText}>今日へ戻る</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <Text style={styles.pageIndicator}>
           {todosWorkspaceCount} ページ
         </Text>
@@ -1090,18 +1075,24 @@ export default function WorkspaceScreen() {
         {...swipePanResponder.panHandlers}
       >
         {workspace.type === 'four_grid' ? (
-          <DragDropProvider>
-            <View style={styles.grid}>
-              <View style={styles.gridRow}>
-                {renderGridArea('top_left')}
-                {renderGridArea('top_right')}
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+          >
+            <DragDropProvider>
+              <View style={styles.grid}>
+                <View style={styles.gridRow}>
+                  {renderGridArea('top_left')}
+                  {renderGridArea('top_right')}
+                </View>
+                <View style={styles.gridRow}>
+                  {renderGridArea('bottom_left')}
+                  {renderGridArea('bottom_right')}
+                </View>
               </View>
-              <View style={styles.gridRow}>
-                {renderGridArea('bottom_left')}
-                {renderGridArea('bottom_right')}
-              </View>
-            </View>
-          </DragDropProvider>
+            </DragDropProvider>
+          </KeyboardAvoidingView>
         ) : workspace.type === 'individual' ? (
           <View style={styles.individualContainer}>
             {/* ポストイット表示エリア */}
@@ -1315,7 +1306,7 @@ export default function WorkspaceScreen() {
                     }
                     const { error } = await supabase
                       .from('todos')
-                      .update({ reminder_at: null, notification_id: null } as any)
+                      .update({ reminder_at: null, notification_id: null })
                       .eq('id', t.id);
                     if (!error) {
                       setTodos(prev => prev.map(td => td.id === t.id ? { ...td, reminder_at: null, notification_id: null } : td));
@@ -1454,15 +1445,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   dateContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  todayJumpBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#222',
+  },
+  todayJumpText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
   },
   headerTitle: {
     fontSize: 16,
@@ -1478,12 +1486,12 @@ const styles = StyleSheet.create({
   },
   grid: {
     flex: 1,
-    padding: 8,
+    padding: 4,
   },
   gridRow: {
     flex: 1,
     flexDirection: 'row',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   modalContainer: {
     flex: 1,

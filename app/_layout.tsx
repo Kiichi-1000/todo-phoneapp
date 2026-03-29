@@ -54,7 +54,7 @@ function RootNavigator() {
         router.replace('/(auth)/login');
       }, 0);
     } else if (session && inAuthGroup) {
-      const inResetPassword = segments[1] === 'reset-password';
+      const inResetPassword = (segments as string[])[1] === 'reset-password';
       if (!inResetPassword) {
         router.replace('/(tabs)/workspace');
       }

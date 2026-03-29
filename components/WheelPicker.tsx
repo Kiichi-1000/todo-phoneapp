@@ -24,17 +24,26 @@ export default function WheelPicker({ items, selectedValue, onValueChange, width
   const scrollRef = useRef<ScrollView>(null);
   const isUserScroll = useRef(false);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastProgrammaticValue = useRef(selectedValue);
+  const hasMounted = useRef(false);
 
   const selectedIndex = items.findIndex(item => item.value === selectedValue);
 
   useEffect(() => {
-    if (!isUserScroll.current && scrollRef.current) {
-      const targetY = Math.max(0, selectedIndex) * ITEM_HEIGHT;
-      setTimeout(() => {
+    const targetY = Math.max(0, selectedIndex) * ITEM_HEIGHT;
+    if (!hasMounted.current) {
+      hasMounted.current = true;
+      const timer = setTimeout(() => {
         scrollRef.current?.scrollTo({ y: targetY, animated: false });
-      }, 50);
+      }, 80);
+      return () => clearTimeout(timer);
     }
-  }, [selectedIndex]);
+    if (isUserScroll.current) return;
+    if (selectedValue !== lastProgrammaticValue.current) {
+      lastProgrammaticValue.current = selectedValue;
+      scrollRef.current?.scrollTo({ y: targetY, animated: true });
+    }
+  }, [selectedIndex, selectedValue]);
 
   const handleScrollEnd = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = e.nativeEvent.contentOffset.y;
@@ -44,6 +53,7 @@ export default function WheelPicker({ items, selectedValue, onValueChange, width
     scrollRef.current?.scrollTo({ y: clampedIndex * ITEM_HEIGHT, animated: true });
 
     if (items[clampedIndex] && items[clampedIndex].value !== selectedValue) {
+      lastProgrammaticValue.current = items[clampedIndex].value;
       onValueChange(items[clampedIndex].value);
     }
     isUserScroll.current = false;
