@@ -16,7 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { BookOpen, Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
 
 export default function LoginScreen() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -25,6 +25,7 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubmit = async () => {
@@ -81,6 +82,17 @@ export default function LoginScreen() {
     return err;
   };
 
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setSuccessMessage(null);
+    setGoogleLoading(true);
+    const { error: err } = await signInWithGoogle();
+    if (err) {
+      setError(err);
+    }
+    setGoogleLoading(false);
+  };
+
   const switchMode = () => {
     setIsLogin(!isLogin);
     setError(null);
@@ -103,7 +115,7 @@ export default function LoginScreen() {
             <View style={styles.logoContainer}>
               <BookOpen size={40} color="#1a1a2e" />
             </View>
-            <Text style={styles.appName}>FreeTask</Text>
+            <Text style={styles.appName}>ToSche</Text>
             <Text style={styles.appTagline}>
               {isLogin ? 'おかえりなさい' : 'はじめましょう'}
             </Text>
@@ -190,6 +202,27 @@ export default function LoginScreen() {
                 <Text style={styles.submitButtonText}>
                   {isLogin ? 'ログイン' : 'アカウント作成'}
                 </Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.dividerContainer}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>または</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.googleButton, googleLoading && styles.submitButtonDisabled]}
+              onPress={handleGoogleSignIn}
+              disabled={loading || googleLoading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color="#1a1a2e" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.googleIcon}>G</Text>
+                  <Text style={styles.googleButtonText}>Googleで続ける</Text>
+                </>
               )}
             </TouchableOpacity>
 
@@ -345,6 +378,43 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e2e2ea',
+  },
+  dividerText: {
+    marginHorizontal: 16,
+    fontSize: 13,
+    color: '#8a8a9a',
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    height: 52,
+    borderWidth: 1,
+    borderColor: '#e2e2ea',
+  },
+  googleIcon: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#4285F4',
+    marginRight: 10,
+  },
+  googleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1a1a2e',
   },
   forgotButton: {
     alignSelf: 'center',

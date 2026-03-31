@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, Modal } from 'react-native';
-import { Bell, Trash2 } from 'lucide-react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import { Bell, Trash2, Pencil } from 'lucide-react-native';
 import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
 
@@ -19,6 +22,10 @@ interface DraggableTodoItemProps {
   onDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
+  onDragStart?: (todo: Todo, area: GridArea, absoluteX: number, absoluteY: number) => void;
+  onDragMove?: (absoluteX: number, absoluteY: number) => void;
+  onDragDrop?: (todo: Todo, sourceArea: GridArea, absoluteX: number, absoluteY: number) => void;
+  isDragging?: boolean;
 }
 
 export default function DraggableTodoItem({
@@ -36,10 +43,17 @@ export default function DraggableTodoItem({
   onDragEnd,
   onReminderPress,
   onClearReminder,
+  onDragStart,
+  onDragMove,
+  onDragDrop,
+  isDragging,
 }: DraggableTodoItemProps) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const itemRef = useRef<View>(null);
+  const hasMoved = useSharedValue(false);
+  const startAbsX = useSharedValue(0);
+  const startAbsY = useSharedValue(0);
 
   const showMenu = () => {
     if (itemRef.current) {
@@ -52,23 +66,77 @@ export default function DraggableTodoItem({
     }
   };
 
+  const handleDragStart = (absX: number, absY: number) => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    onDragStart?.(todo, area, absX, absY);
+  };
+
+  const handleDragMove = (absX: number, absY: number) => {
+    onDragMove?.(absX, absY);
+  };
+
+  const handleDragDrop = (absX: number, absY: number) => {
+    onDragDrop?.(todo, area, absX, absY);
+  };
+
+  const handleShowMenu = () => {
+    showMenu();
+  };
+
+  const panGesture = Gesture.Pan()
+    .activateAfterLongPress(400)
+    .onStart((e) => {
+      hasMoved.value = false;
+      startAbsX.value = e.absoluteX;
+      startAbsY.value = e.absoluteY;
+      runOnJS(handleDragStart)(e.absoluteX, e.absoluteY);
+    })
+    .onUpdate((e) => {
+      const dx = Math.abs(e.translationX);
+      const dy = Math.abs(e.translationY);
+      if (dx > 5 || dy > 5) {
+        hasMoved.value = true;
+      }
+      runOnJS(handleDragMove)(e.absoluteX, e.absoluteY);
+    })
+    .onEnd((e) => {
+      if (hasMoved.value) {
+        runOnJS(handleDragDrop)(e.absoluteX, e.absoluteY);
+      } else {
+        runOnJS(handleShowMenu)();
+        // Also need to cancel drag
+        runOnJS(handleDragDrop)(startAbsX.value, startAbsY.value);
+      }
+    })
+    .onFinalize(() => {
+      hasMoved.value = false;
+    });
+
   if (isEditing) {
     return (
-      <View style={styles.todoItemEditing}>
-        <TextInput
-          style={styles.todoEditInput}
-          value={editingText}
-          onChangeText={onEditTextChange}
-          multiline
-          autoFocus
-          maxLength={100}
-        />
-        <View style={styles.todoEditButtons}>
-          <TouchableOpacity style={styles.todoEditSaveButton} onPress={onSaveEdit}>
-            <Text style={styles.todoEditSaveText}>OK</Text>
+      <View style={[styles.todoItem, styles.todoItemEditingInline]}>
+        <View style={styles.todoItemInner}>
+          <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
+            {todo.is_completed && <View style={styles.checkboxFilled} />}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.todoEditCancelButton} onPress={onCancelEdit}>
-            <Text style={styles.todoEditCancelText}>x</Text>
+          <TextInput
+            style={[styles.todoText, styles.todoEditInlineInput]}
+            value={editingText}
+            onChangeText={onEditTextChange}
+            multiline
+            autoFocus
+            maxLength={100}
+            onSubmitEditing={onSaveEdit}
+          />
+        </View>
+        <View style={styles.todoEditInlineButtons}>
+          <TouchableOpacity style={styles.todoEditInlineSave} onPress={onSaveEdit}>
+            <Text style={styles.todoEditInlineSaveText}>保存</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.todoEditInlineCancel} onPress={onCancelEdit}>
+            <Text style={styles.todoEditInlineCancelText}>取消</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -77,37 +145,34 @@ export default function DraggableTodoItem({
 
   return (
     <>
-      <View style={styles.todoItem}>
-        <View ref={itemRef} style={styles.todoItemInner}>
-          <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
-            {todo.is_completed && <View style={styles.checkboxFilled} />}
-          </TouchableOpacity>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={[styles.todoItem, isDragging && styles.todoItemDragging]}>
+          <View ref={itemRef} style={styles.todoItemInner}>
+            <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
+              {todo.is_completed && <View style={styles.checkboxFilled} />}
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.todoTextContainer}
-            onPress={() => onStartEdit(todo)}
-            onLongPress={showMenu}
-            delayLongPress={400}
-          >
-            <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
-              {todo.content}
-            </Text>
-          </TouchableOpacity>
+            <View style={styles.todoTextContainer}>
+              <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
+                {todo.content}
+              </Text>
+            </View>
+
+            {todo.reminder_at && (
+              <Bell size={10} color="#e67e22" style={styles.reminderDot} />
+            )}
+          </View>
 
           {todo.reminder_at && (
-            <Bell size={10} color="#e67e22" style={styles.reminderDot} />
+            <View style={styles.reminderBadge}>
+              <Bell size={9} color="#e67e22" />
+              <Text style={styles.reminderBadgeText}>
+                {formatReminderDisplay(todo.reminder_at)}
+              </Text>
+            </View>
           )}
-        </View>
-
-        {todo.reminder_at && (
-          <View style={styles.reminderBadge}>
-            <Bell size={9} color="#e67e22" />
-            <Text style={styles.reminderBadgeText}>
-              {formatReminderDisplay(todo.reminder_at)}
-            </Text>
-          </View>
-        )}
-      </View>
+        </Animated.View>
+      </GestureDetector>
 
       <Modal
         visible={menuVisible}
@@ -121,6 +186,16 @@ export default function DraggableTodoItem({
           onPress={() => setMenuVisible(false)}
         >
           <View style={[styles.menu, { top: menuPosition.y, left: menuPosition.x }]}>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                onStartEdit(todo);
+              }}
+            >
+              <Pencil size={15} color="#3498db" />
+              <Text style={[styles.menuItemText, { color: '#3498db' }]}>タスクを編集</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.menuItem}
               onPress={() => {
@@ -173,6 +248,9 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#ff6b6b',
   },
+  todoItemDragging: {
+    opacity: 0.3,
+  },
   todoItemInner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -224,51 +302,44 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#e67e22',
   },
-  todoItemEditing: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: '#3498db',
+  todoItemEditingInline: {
+    borderLeftColor: '#3498db',
+    backgroundColor: 'rgba(52, 152, 219, 0.08)',
   },
-  todoEditInput: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 14,
-    color: '#2c3e50',
-    minHeight: 60,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    marginBottom: 8,
+  todoEditInlineInput: {
+    flex: 1,
+    borderBottomWidth: 1,
+    borderBottomColor: '#3498db',
+    paddingVertical: 2,
+    minHeight: 20,
   },
-  todoEditButtons: {
+  todoEditInlineButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 8,
+    marginTop: 4,
+    marginLeft: 26,
   },
-  todoEditSaveButton: {
+  todoEditInlineSave: {
     backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    borderRadius: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
   },
-  todoEditSaveText: {
+  todoEditInlineSaveText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '600',
   },
-  todoEditCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+  todoEditInlineCancel: {
+    backgroundColor: '#95a5a6',
+    borderRadius: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
   },
-  todoEditCancelText: {
+  todoEditInlineCancelText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '600',
   },
   menuOverlay: {

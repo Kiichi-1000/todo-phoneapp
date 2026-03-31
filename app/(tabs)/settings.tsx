@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
@@ -13,22 +14,7 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
-import Constants from 'expo-constants';
-import {
-  Download,
-  Trash2,
-  Info,
-  CircleCheck as CheckCircle2,
-  LogOut,
-  CalendarSync,
-  KeyRound,
-  MessageCircle,
-  HelpCircle,
-  BookOpen,
-  Bug,
-  Shield,
-  Mail,
-} from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
@@ -51,37 +37,8 @@ const WORKSPACE_TYPES = [
   },
 ];
 
-type AppExtra = {
-  supportPageBaseUrl?: string;
-  supportEmail?: string;
-};
-
-const getSupportConfig = () => {
-  const extra = Constants.expoConfig?.extra as AppExtra | undefined;
-  const base = (extra?.supportPageBaseUrl ?? 'https://example.com/tosche/support').replace(
-    /\/$/,
-    ''
-  );
-  const email = extra?.supportEmail ?? 'support@example.com';
-  return { base, email };
-};
-
-const SUPPORT_GRID_ITEMS: {
-  id: string;
-  label: string;
-  hash?: string;
-  mailto?: boolean;
-  Icon: typeof Mail;
-}[] = [
-  { id: 'contact', label: 'お問い合わせ', hash: '#contact', Icon: MessageCircle },
-  { id: 'faq', label: 'よくある質問', hash: '#faq', Icon: HelpCircle },
-  { id: 'guide', label: '使い方ガイド', hash: '#guide', Icon: BookOpen },
-  { id: 'bugs', label: '不具合・要望', hash: '#bugs', Icon: Bug },
-  { id: 'privacy', label: 'プライバシー', hash: '#privacy', Icon: Shield },
-  { id: 'email', label: 'メールで連絡', mailto: true, Icon: Mail },
-];
-
 export default function SettingsScreen() {
+  const router = useRouter();
   const { user, signOut, updatePassword } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -229,34 +186,6 @@ export default function SettingsScreen() {
         },
       ]
     );
-  };
-
-  const openSupportLink = async (url: string) => {
-    try {
-      if (url.startsWith('mailto:')) {
-        await Linking.openURL(url);
-        return;
-      }
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert('エラー', 'このリンクを開けませんでした');
-      }
-    } catch {
-      Alert.alert('エラー', 'リンクを開けませんでした');
-    }
-  };
-
-  const handleSupportItemPress = (item: (typeof SUPPORT_GRID_ITEMS)[number]) => {
-    const { base, email } = getSupportConfig();
-    if (item.mailto) {
-      const subject = encodeURIComponent('ToSche サポート');
-      openSupportLink(`mailto:${email}?subject=${subject}`);
-      return;
-    }
-    const hash = item.hash ?? '';
-    openSupportLink(`${base}${hash}`);
   };
 
   const handleChangePassword = async () => {
@@ -465,32 +394,6 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>カスタマーサポート</Text>
-          <Text style={styles.sectionDescription}>
-            サポートページの各セクションへ移動します。URL は app.json の extra（supportPageBaseUrl /
-            supportEmail）で変更できます。
-          </Text>
-          <View style={styles.supportGrid}>
-            {SUPPORT_GRID_ITEMS.map((item) => {
-              const Icon = item.Icon;
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.supportGridCell}
-                  onPress={() => handleSupportItemPress(item)}
-                  activeOpacity={0.7}
-                >
-                  <Icon size={22} color="#1a1a2e" />
-                  <Text style={styles.supportGridLabel} numberOfLines={2}>
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        <View style={styles.section}>
           <Text style={styles.sectionTitle}>アプリ情報</Text>
 
           <View style={styles.infoCard}>
@@ -503,6 +406,58 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>カスタマーサポート</Text>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/support/usage-guide')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingTextNoIcon}>使い方ガイド</Text>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/support/privacy-policy')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingTextNoIcon}>プライバシー（プライバシーポリシー）</Text>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/support/faq')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingTextNoIcon}>FAQ</Text>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => Linking.openURL('https://www.synthera.jp/contact')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingTextNoIcon}>お問い合わせ</Text>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -610,10 +565,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  settingRowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   settingText: {
     fontSize: 16,
     color: '#000',
     marginLeft: 12,
+  },
+  settingTextNoIcon: {
+    fontSize: 16,
+    color: '#000',
   },
   dangerText: {
     color: '#ff3b30',
@@ -759,28 +723,5 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
-  },
-  supportGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 10,
-  },
-  supportGridCell: {
-    width: '48%',
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#e5e5e5',
-    minHeight: 92,
-    justifyContent: 'flex-start',
-  },
-  supportGridLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#000',
-    marginTop: 10,
-    lineHeight: 19,
   },
 });

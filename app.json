@@ -43,8 +43,8 @@
         "projectId": "bcc70f23-fdff-4e18-9421-5462fcbd01f3"
       },
       "router": {},
-      "supportPageBaseUrl": "https://example.com/tosche/support",
-      "supportEmail": "support@example.com"
+      "supportPageBaseUrl": "https://synthera.jp/contact",
+      "supportEmail": "support@synthera.jp"
     },
     "owner": "kiichi.2022222"
   }

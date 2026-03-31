@@ -74,6 +74,7 @@ function RootNavigator() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="support" />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />

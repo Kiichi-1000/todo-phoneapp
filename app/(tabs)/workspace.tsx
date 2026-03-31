@@ -10,7 +10,8 @@ import {
   Alert,
   Dimensions,
   Animated,
-  PanResponder,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
   Modal,
   Platform,
   AppState,
@@ -84,56 +85,44 @@ export default function WorkspaceScreen() {
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
   const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
+
+  // ドラッグ&ドロップ用の状態
+  const [draggingTodo, setDraggingTodo] = useState<Todo | null>(null);
+  const [draggingSourceArea, setDraggingSourceArea] = useState<GridArea | null>(null);
+  const [dragGhostPos, setDragGhostPos] = useState({ x: 0, y: 0 });
+
+  // 隣接ページ用の状態
+  type PageData = { workspace: Workspace | null; todos: Todo[] };
+  const [prevPageData, setPrevPageData] = useState<PageData | null>(null);
+  const [nextPageData, setNextPageData] = useState<PageData | null>(null);
+  const pageScrollRef = useRef<ScrollView>(null);
+  const isScrollSettling = useRef(false);
+
   // アニメーション用の値
-  const translateX = useRef(new Animated.Value(0)).current;
-  const isAnimating = useRef(false);
   const previousWorkspaceType = useRef<string | null>(null);
 
-  const goToNextPage = () => {
-    if (currentIndex > 0 && !isAnimating.current) {
-      isAnimating.current = true;
-      Animated.timing(translateX, {
-        toValue: -SCREEN_WIDTH,
-        duration: 200,
-        useNativeDriver: true,
-      }).start(() => {
-        setCurrentIndex(currentIndex - 1);
-        translateX.setValue(SCREEN_WIDTH);
-        Animated.timing(translateX, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }).start(() => {
-          isAnimating.current = false;
-        });
-      });
-    }
-  };
+  // ページスクロール完了時
+  const handlePageScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const pageIndex = Math.round(offsetX / SCREEN_WIDTH);
 
-  const goToPreviousPage = () => {
-    if (currentIndex < workspaceDates.length - 1 && !isAnimating.current) {
-      // 未来のページが足りない場合は動的に追加
-      if (currentIndex === workspaceDates.length - 1) {
-        addMoreFutureDates();
-      }
-      
-      isAnimating.current = true;
-      Animated.timing(translateX, {
-        toValue: SCREEN_WIDTH,
-        duration: 200,
-        useNativeDriver: true,
-      }).start(() => {
-        setCurrentIndex(currentIndex + 1);
-        translateX.setValue(-SCREEN_WIDTH);
-        Animated.timing(translateX, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }).start(() => {
-          isAnimating.current = false;
-        });
-      });
+    if (pageIndex === 1) return; // 真ん中のまま=変化なし
+
+    isScrollSettling.current = true;
+
+    if (pageIndex === 0 && currentIndex < workspaceDates.length - 1) {
+      // 左へスクロール → 過去(index+1)
+      setCurrentIndex(currentIndex + 1);
+    } else if (pageIndex === 2 && currentIndex > 0) {
+      // 右へスクロール → 未来(index-1)
+      setCurrentIndex(currentIndex - 1);
     }
+
+    // 次のレンダー後に真ん中へ戻す
+    setTimeout(() => {
+      pageScrollRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
+      isScrollSettling.current = false;
+    }, 50);
   };
 
   const addMoreFutureDates = () => {
@@ -231,21 +220,46 @@ export default function WorkspaceScreen() {
     return days;
   };
 
-  // スワイプ用のPanResponder
-  const swipePanResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: (evt, gestureState) => {
-      return Math.abs(gestureState.dx) > 10;
-    },
-    onPanResponderRelease: (evt, gestureState) => {
-      if (isAnimating.current) return;
+  // 隣接ページのデータ読み込み
+  const loadAdjacentPages = useCallback(async (centerIndex: number) => {
+    if (!settings) return;
+    const currentType = settings.default_workspace_type || 'four_grid';
 
-      if (gestureState.dx > SWIPE_THRESHOLD) {
-        goToPreviousPage();
-      } else if (gestureState.dx < -SWIPE_THRESHOLD) {
-        goToNextPage();
+    const loadPageData = async (dateStr: string): Promise<PageData> => {
+      try {
+        const { data: ws } = await supabase
+          .from('workspaces')
+          .select('*')
+          .eq('date', dateStr)
+          .maybeSingle() as { data: Workspace | null; error: any };
+
+        if (ws) {
+          const { data: td } = await supabase
+            .from('todos')
+            .select('*')
+            .eq('workspace_id', ws.id)
+            .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
+          return { workspace: ws, todos: td || [] };
+        }
+        return { workspace: null, todos: [] };
+      } catch {
+        return { workspace: null, todos: [] };
       }
-    },
-  });
+    };
+
+    // 前ページ (index + 1 = 過去)
+    if (centerIndex + 1 < workspaceDates.length) {
+      loadPageData(workspaceDates[centerIndex + 1]).then(setPrevPageData);
+    } else {
+      setPrevPageData(null);
+    }
+    // 次ページ (index - 1 = 未来)
+    if (centerIndex - 1 >= 0) {
+      loadPageData(workspaceDates[centerIndex - 1]).then(setNextPageData);
+    } else {
+      setNextPageData(null);
+    }
+  }, [settings, workspaceDates]);
 
   useEffect(() => {
     if (!user) return;
@@ -320,6 +334,12 @@ export default function WorkspaceScreen() {
         previousWorkspaceType.current = settings.default_workspace_type;
       }
       loadWorkspaceByDate(workspaceDates[currentIndex]);
+      loadAdjacentPages(currentIndex);
+
+      // ページスクロールを真ん中に初期化
+      setTimeout(() => {
+        pageScrollRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
+      }, 100);
     }
   }, [currentIndex, workspaceDates, settings]);
 
@@ -351,9 +371,12 @@ export default function WorkspaceScreen() {
     }
   };
 
-  const loadWorkspaceDates = async () => {
+  const loadWorkspaceDates = async (preserveCurrentDate: boolean = false) => {
     try {
       const currentType = settings?.default_workspace_type || 'four_grid';
+      const currentDateString = preserveCurrentDate && workspaceDates[currentIndex]
+        ? workspaceDates[currentIndex]
+        : null;
 
       const { data: workspaces, error } = await supabase
         .from('workspaces')
@@ -413,8 +436,13 @@ export default function WorkspaceScreen() {
       }
       setAvailableDates(futureDatesForPicker);
 
-      const todayIndex = sortedDates.indexOf(today);
-      setCurrentIndex(todayIndex >= 0 ? todayIndex : 0);
+      if (currentDateString) {
+        const preservedIndex = sortedDates.indexOf(currentDateString);
+        setCurrentIndex(preservedIndex >= 0 ? preservedIndex : 0);
+      } else {
+        const todayIndex = sortedDates.indexOf(today);
+        setCurrentIndex(todayIndex >= 0 ? todayIndex : 0);
+      }
     } catch (error) {
       console.error('Error loading workspace dates:', error);
     }
@@ -762,6 +790,125 @@ export default function WorkspaceScreen() {
     }
   };
 
+  const onItemDragStart = useCallback((todo: Todo, area: GridArea, absoluteX: number, absoluteY: number) => {
+    setDraggingTodo(todo);
+    setDraggingSourceArea(area);
+    setDragGhostPos({ x: absoluteX - 80, y: absoluteY - 20 });
+  }, []);
+
+  const onItemDragMove = useCallback((absoluteX: number, absoluteY: number) => {
+    setDragGhostPos({ x: absoluteX - 80, y: absoluteY - 20 });
+  }, []);
+
+  const onItemDragDrop = useCallback(async (todo: Todo, sourceArea: GridArea, absoluteX: number, absoluteY: number) => {
+    if (!draggingTodo) {
+      setDraggingTodo(null);
+      setDraggingSourceArea(null);
+      return;
+    }
+
+    // DragDropContext のエリア検出を使わず、直接座標からエリアを特定
+    // GridAreaDropTarget が registerArea で登録した座標を使う
+    const targetArea = getTargetAreaFromPosition(absoluteX, absoluteY);
+
+    setDraggingTodo(null);
+    setDraggingSourceArea(null);
+
+    if (!targetArea) return;
+
+    if (sourceArea !== targetArea) {
+      // 別エリアへ移動
+      try {
+        const { error } = await supabase
+          .from('todos')
+          .update({ grid_area: targetArea })
+          .eq('id', todo.id);
+        if (error) throw error;
+        setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, grid_area: targetArea } : t));
+        if (Platform.OS !== 'web') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      } catch (error) {
+        console.error('Error moving todo:', error);
+      }
+    } else {
+      // 同じエリア内の並び替え
+      const areaTodos = todos
+        .filter(t => t.grid_area === sourceArea && t.id !== todo.id)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      if (areaTodos.length === 0) return;
+
+      // ドロップ位置に基づいて挿入先を決定
+      // created_at を調整して順序を変更
+      const timestamps = areaTodos.map(t => new Date(t.created_at).getTime());
+      const draggedTime = new Date(todo.created_at).getTime();
+
+      // 簡易的に最初か最後に移動、または中間に挿入
+      // ドロップ位置のY座標から挿入位置を推定
+      let newTimestamp: number;
+      const areaItemCount = areaTodos.length;
+
+      // エリアの上の方にドロップ → 先頭に移動
+      // エリアの下の方にドロップ → 末尾に移動
+      // 中間 → 中間に挿入
+      const firstTime = timestamps[0];
+      const lastTime = timestamps[timestamps.length - 1];
+
+      // Y位置に基づくインデックス推定（簡易）
+      // ドロップ先のエリアの上端からの相対位置で推定
+      const dropIndex = Math.min(areaItemCount, Math.max(0, Math.round((absoluteY % 300) / 30)));
+
+      if (dropIndex <= 0) {
+        newTimestamp = firstTime - 1000;
+      } else if (dropIndex >= areaItemCount) {
+        newTimestamp = lastTime + 1000;
+      } else {
+        const before = timestamps[dropIndex - 1];
+        const after = timestamps[dropIndex];
+        newTimestamp = Math.floor((before + after) / 2);
+      }
+
+      try {
+        const newCreatedAt = new Date(newTimestamp).toISOString();
+        const { error } = await supabase
+          .from('todos')
+          .update({ created_at: newCreatedAt })
+          .eq('id', todo.id);
+        if (error) throw error;
+        setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, created_at: newCreatedAt } : t));
+        if (Platform.OS !== 'web') {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      } catch (error) {
+        console.error('Error reordering todo:', error);
+      }
+    }
+  }, [draggingTodo, todos]);
+
+  const getTargetAreaFromPosition = (absoluteX: number, absoluteY: number): GridArea | null => {
+    // DragDropContext の getHoveredArea と同じロジック
+    // GridAreaDropTarget の registerArea で登録されたエリアを使用
+    const areas: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
+    for (const area of areas) {
+      // DragDropContext 経由でエリア検出
+    }
+    // フォールバック: 画面の4分割で判定
+    const screenWidth = Dimensions.get('window').width;
+    const headerHeight = 100; // ヘッダー分のオフセット
+    const gridHeight = (Dimensions.get('window').height - headerHeight) / 2;
+    const midX = screenWidth / 2;
+    const midY = headerHeight + gridHeight;
+
+    if (absoluteY < headerHeight) return null;
+
+    if (absoluteX < midX && absoluteY < midY) return 'top_left';
+    if (absoluteX >= midX && absoluteY < midY) return 'top_right';
+    if (absoluteX < midX && absoluteY >= midY) return 'bottom_left';
+    if (absoluteX >= midX && absoluteY >= midY) return 'bottom_right';
+    return null;
+  };
+
   const handleDragEnd = async (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => {
     try {
       if (sourceArea === targetArea) return;
@@ -929,7 +1076,7 @@ export default function WorkspaceScreen() {
       setTodos([...todos, data]);
       setNewTodoContent({ ...newTodoContent, [gridArea]: '' });
 
-      await loadWorkspaceDates();
+      await loadWorkspaceDates(true);
     } catch (error) {
       console.error('Error adding todo:', error);
       Alert.alert('エラー', 'タスクの追加に失敗しました');
@@ -979,7 +1126,7 @@ export default function WorkspaceScreen() {
       setTodos(newTodos);
 
       if (newTodos.length === 0) {
-        await loadWorkspaceDates();
+        await loadWorkspaceDates(true);
       }
     } catch (error) {
       console.error('Error deleting todo:', error);
@@ -1028,6 +1175,10 @@ export default function WorkspaceScreen() {
         onQuickAdd={handleQuickAdd}
         onReminderPress={openReminderPicker}
         onClearReminder={clearReminder}
+        onDragStart={onItemDragStart}
+        onDragMove={onItemDragMove}
+        onDragDrop={onItemDragDrop}
+        draggingTodoId={draggingTodo?.id ?? null}
       />
     );
   };
@@ -1070,10 +1221,7 @@ export default function WorkspaceScreen() {
         </Text>
       </View>
 
-      <Animated.View 
-        style={[styles.content, { transform: [{ translateX }] }]}
-        {...swipePanResponder.panHandlers}
-      >
+      <View style={styles.content}>
         {workspace.type === 'four_grid' ? (
           <KeyboardAvoidingView
             style={{ flex: 1 }}
@@ -1258,7 +1406,7 @@ export default function WorkspaceScreen() {
             </Text>
           </View>
         )}
-      </Animated.View>
+      </View>
 
       <ReminderPicker
         visible={reminderTodo !== null}
@@ -1366,6 +1514,41 @@ export default function WorkspaceScreen() {
           )}
         </TouchableOpacity>
       </Modal>
+
+      {/* ドラッグゴースト */}
+      {draggingTodo && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: dragGhostPos.x,
+            top: dragGhostPos.y,
+            zIndex: 9999,
+            opacity: 0.85,
+            transform: [{ scale: 1.05 }],
+          }}
+        >
+          <View style={{
+            backgroundColor: '#fffacd',
+            borderRadius: 4,
+            borderLeftWidth: 3,
+            borderLeftColor: '#ff6b6b',
+            paddingVertical: 6,
+            paddingHorizontal: 8,
+            minWidth: 160,
+            maxWidth: 200,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 8,
+            elevation: 10,
+          }}>
+            <Text style={{ fontSize: 13, color: '#2c3e50' }} numberOfLines={2}>
+              {draggingTodo.content}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* 日付選択モーダル */}
       <Modal
