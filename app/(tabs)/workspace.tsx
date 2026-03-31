@@ -6,162 +6,401 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  TextInput,
-  Alert,
   Dimensions,
-  Animated,
+  Modal,
+  AppState,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  Modal,
-  Platform,
-  AppState,
-  KeyboardAvoidingView,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Calendar, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, Trash2 } from 'lucide-react-native';
+import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Workspace, Todo, GridArea, UserSettings, WorkspaceType } from '@/types/database';
-import { DragDropProvider } from '@/components/DragDropContext';
-import GridAreaDropTarget from '@/components/GridAreaDropTarget';
-import ReminderPicker from '@/components/ReminderPicker';
-import { scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
+import { Workspace, Todo, UserSettings, WorkspaceType } from '@/types/database';
+import WorkspacePage from '@/components/WorkspacePage';
 
-const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const PAGE_HEIGHT = SCREEN_HEIGHT - 140;
 
-const GRID_AREA_LABELS: Record<GridArea, string> = {
-  top_left: '左上',
-  top_right: '右上',
-  bottom_left: '左下',
-  bottom_right: '右下',
-};
-
-const SWIPE_THRESHOLD = 50;
-const SCREEN_WIDTH = Dimensions.get('window').width;
+interface PageData {
+  workspace: Workspace | null;
+  todos: Todo[];
+  date: string;
+}
 
 export default function WorkspaceScreen() {
   const { user } = useAuth();
   const [workspaceDates, setWorkspaceDates] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [todos, setTodos] = useState<Todo[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
-  const [gridTitles, setGridTitles] = useState<Record<GridArea, string>>({
-    top_left: '左上エリア',
-    top_right: '右上エリア',
-    bottom_left: '左下エリア',
-    bottom_right: '右下エリア',
-  });
-  const [newTodoContent, setNewTodoContent] = useState<Record<GridArea, string>>({
-    top_left: '',
-    top_right: '',
-    bottom_left: '',
-    bottom_right: '',
-  });
-
-  // 日付選択モーダルの状態
-  const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
-  const [availableDates, setAvailableDates] = useState<string[]>([]);
+  const [pagesData, setPagesData] = useState<Map<string, PageData>>(new Map());
   const [todosWorkspaceCount, setTodosWorkspaceCount] = useState(0);
-  
-  // カレンダー用の状態
+  const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  
-  // エリア名編集用の状態
-  const [editingArea, setEditingArea] = useState<GridArea | null>(null);
-  const [editingAreaName, setEditingAreaName] = useState('');
-  
-  // タスク追加用の状態
-  const [isAddingPostit, setIsAddingPostit] = useState(false);
-  const [newTaskText, setNewTaskText] = useState('');
-  
-  // タスク編集用の状態
-  const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
-  const [editingTodoText, setEditingTodoText] = useState('');
-  
-  const [reminderTodo, setReminderTodo] = useState<Todo | null>(null);
-  const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
-  const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
-  const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
-
-  // ドラッグ&ドロップ用の状態
-  const [draggingTodo, setDraggingTodo] = useState<Todo | null>(null);
-  const [draggingSourceArea, setDraggingSourceArea] = useState<GridArea | null>(null);
-  const [dragGhostPos, setDragGhostPos] = useState({ x: 0, y: 0 });
-
-  // 隣接ページ用の状態
-  type PageData = { workspace: Workspace | null; todos: Todo[] };
-  const [prevPageData, setPrevPageData] = useState<PageData | null>(null);
-  const [nextPageData, setNextPageData] = useState<PageData | null>(null);
-  const pageScrollRef = useRef<ScrollView>(null);
-  const isScrollSettling = useRef(false);
-
-  // アニメーション用の値
+  const scrollRef = useRef<ScrollView>(null);
+  const isScrollingProgrammatically = useRef(false);
   const previousWorkspaceType = useRef<string | null>(null);
+  const loadedDates = useRef<Set<string>>(new Set());
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 2 });
 
-  // ページスクロール完了時
-  const handlePageScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const pageIndex = Math.round(offsetX / SCREEN_WIDTH);
+  useEffect(() => {
+    if (!user) return;
+    loadSettings();
+  }, [user]);
 
-    if (pageIndex === 1) return; // 真ん中のまま=変化なし
-
-    isScrollSettling.current = true;
-
-    if (pageIndex === 0 && currentIndex < workspaceDates.length - 1) {
-      // 左へスクロール → 過去(index+1)
-      setCurrentIndex(currentIndex + 1);
-    } else if (pageIndex === 2 && currentIndex > 0) {
-      // 右へスクロール → 未来(index-1)
-      setCurrentIndex(currentIndex - 1);
+  useEffect(() => {
+    if (settings && user) {
+      loadWorkspaceDates();
     }
+  }, [settings, user]);
 
-    // 次のレンダー後に真ん中へ戻す
-    setTimeout(() => {
-      pageScrollRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
-      isScrollSettling.current = false;
-    }, 50);
+  useEffect(() => {
+    if (!settings || workspaceDates.length === 0) return;
+    const currentType = settings.default_workspace_type;
+    if (previousWorkspaceType.current === null) {
+      previousWorkspaceType.current = currentType;
+      return;
+    }
+    if (previousWorkspaceType.current !== currentType) {
+      previousWorkspaceType.current = currentType;
+      loadedDates.current.clear();
+      setPagesData(new Map());
+      loadVisiblePages(currentIndex);
+    }
+  }, [settings?.default_workspace_type]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (nextAppState === 'active') await loadSettings();
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      loadSettings();
+    }, [user])
+  );
+
+  useEffect(() => {
+    if (workspaceDates.length > 0 && settings) {
+      if (previousWorkspaceType.current === null) {
+        previousWorkspaceType.current = settings.default_workspace_type;
+      }
+      loadVisiblePages(currentIndex);
+    }
+  }, [currentIndex, workspaceDates, settings]);
+
+  const loadSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('*')
+        .limit(1)
+        .maybeSingle() as { data: UserSettings | null; error: any };
+      if (error) throw error;
+      if (!data) {
+        if (!user) return;
+        const { data: newSettings, error: insertError } = await supabase
+          .from('user_settings')
+          .insert({ default_workspace_type: 'four_grid', user_id: user.id } as any)
+          .select()
+          .single() as { data: UserSettings | null; error: any };
+        if (insertError) throw insertError;
+        setSettings(newSettings);
+      } else {
+        setSettings(data);
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
   };
 
-  const addMoreFutureDates = () => {
-    const lastDate = workspaceDates[workspaceDates.length - 1];
-    const lastDateObj = new Date(lastDate);
-    const newFutureDates: string[] = [];
-    
-    // 現在の最後の日付からさらに30日先まで追加
-    for (let i = 1; i <= 30; i++) {
-      const newDate = new Date(lastDateObj);
-      newDate.setDate(newDate.getDate() + i);
-      newFutureDates.push(formatDate(newDate));
+  const loadWorkspaceDates = async (preserveCurrentDate: boolean = false) => {
+    try {
+      const currentType = settings?.default_workspace_type || 'four_grid';
+      const currentDateString = preserveCurrentDate && workspaceDates[currentIndex]
+        ? workspaceDates[currentIndex] : null;
+
+      const { data: workspaces, error } = await supabase
+        .from('workspaces')
+        .select('id, date, type')
+        .order('date', { ascending: false }) as { data: Array<{ id: string; date: string; type: string }> | null; error: any };
+      if (error) throw error;
+
+      const { data: workspacesWithTodos, error: todosError } = await supabase
+        .from('todos')
+        .select('workspace_id')
+        .not('workspace_id', 'is', null) as { data: Array<{ workspace_id: string }> | null; error: any };
+      if (todosError) throw todosError;
+
+      const workspaceIdsWithTodos = new Set(workspacesWithTodos?.map(t => t.workspace_id) || []);
+      const today = formatDate(new Date());
+
+      const pastDatesWithTodos = (workspaces || [])
+        .filter(w => workspaceIdsWithTodos.has(w.id) && w.type === currentType)
+        .map(w => w.date);
+
+      const futureDates = [];
+      for (let i = 0; i <= 365; i++) {
+        const futureDate = new Date();
+        futureDate.setDate(futureDate.getDate() + i);
+        futureDates.push(formatDate(futureDate));
+      }
+
+      const allDates = [...pastDatesWithTodos, ...futureDates];
+      const sortedDates = Array.from(new Set(allDates)).sort(
+        (a, b) => new Date(b).getTime() - new Date(a).getTime()
+      );
+      setWorkspaceDates(sortedDates);
+      setTodosWorkspaceCount(pastDatesWithTodos.length);
+
+      if (currentDateString) {
+        const preservedIndex = sortedDates.indexOf(currentDateString);
+        setCurrentIndex(preservedIndex >= 0 ? preservedIndex : 0);
+      } else {
+        const todayIndex = sortedDates.indexOf(today);
+        setCurrentIndex(todayIndex >= 0 ? todayIndex : 0);
+      }
+    } catch (error) {
+      console.error('Error loading workspace dates:', error);
     }
-    
-    setWorkspaceDates(prev => [...prev, ...newFutureDates]);
   };
 
-  const openDatePicker = () => {
-    setIsDatePickerVisible(true);
+  const loadVisiblePages = async (centerIndex: number) => {
+    if (!settings || workspaceDates.length === 0) return;
+    const currentType = settings.default_workspace_type || 'four_grid';
+    const rangePadding = 2;
+    const startIdx = Math.max(0, centerIndex - rangePadding);
+    const endIdx = Math.min(workspaceDates.length - 1, centerIndex + rangePadding);
+    setVisibleRange({ start: startIdx, end: endIdx });
+
+    for (let i = startIdx; i <= endIdx; i++) {
+      const dateStr = workspaceDates[i];
+      if (!dateStr || loadedDates.current.has(dateStr)) continue;
+      loadedDates.current.add(dateStr);
+      loadPageData(dateStr, currentType);
+    }
+  };
+
+  const loadPageData = async (dateStr: string, currentType: string) => {
+    try {
+      const today = formatDate(new Date());
+      const isFutureDate = dateStr >= today;
+
+      let ws: Workspace | null = null;
+      const { data: existingWorkspace, error: fetchError } = await supabase
+        .from('workspaces')
+        .select('*')
+        .eq('date', dateStr)
+        .maybeSingle() as { data: Workspace | null; error: any };
+      if (fetchError) throw fetchError;
+
+      if (existingWorkspace) {
+        if (isFutureDate && existingWorkspace.type !== currentType) {
+          const { data: updatedWorkspace } = await supabase
+            .from('workspaces')
+            .update({ type: currentType })
+            .eq('date', dateStr)
+            .select()
+            .single() as { data: Workspace | null; error: any };
+          ws = updatedWorkspace;
+        } else {
+          ws = existingWorkspace;
+        }
+      } else {
+        if (!user) return;
+        const date = new Date(dateStr);
+        const { data: latestWs } = await supabase
+          .from('workspaces')
+          .select('area_titles')
+          .eq('user_id', user.id)
+          .eq('type', currentType)
+          .not('area_titles', 'is', null)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle() as { data: { area_titles: Workspace['area_titles'] } | null; error: any };
+
+        const inheritedTitles = {
+          top_left: latestWs?.area_titles?.top_left || '\u5DE6\u4E0A\u30A8\u30EA\u30A2',
+          top_right: latestWs?.area_titles?.top_right || '\u53F3\u4E0A\u30A8\u30EA\u30A2',
+          bottom_left: latestWs?.area_titles?.bottom_left || '\u5DE6\u4E0B\u30A8\u30EA\u30A2',
+          bottom_right: latestWs?.area_titles?.bottom_right || '\u53F3\u4E0B\u30A8\u30EA\u30A2',
+        };
+
+        const { data: newWorkspace, error: createError } = await supabase
+          .from('workspaces')
+          .insert({
+            title: formatDateTitle(date),
+            type: currentType,
+            date: dateStr,
+            user_id: user.id,
+            area_titles: inheritedTitles,
+          } as any)
+          .select()
+          .single() as { data: Workspace | null; error: any };
+
+        if (createError) {
+          if (createError.code === '23505') {
+            const { data: existing } = await supabase
+              .from('workspaces')
+              .select('*')
+              .eq('date', dateStr)
+              .single() as { data: Workspace | null; error: any };
+            ws = existing;
+          } else {
+            throw createError;
+          }
+        } else {
+          ws = newWorkspace;
+        }
+      }
+
+      let pageTodos: Todo[] = [];
+      if (ws) {
+        const { data: td } = await supabase
+          .from('todos')
+          .select('*')
+          .eq('workspace_id', ws.id)
+          .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
+        let filteredTodos = td || [];
+        if (ws.type === 'four_grid') {
+          filteredTodos = filteredTodos.filter(todo => todo.grid_area !== null);
+        } else if (ws.type === 'individual') {
+          filteredTodos = filteredTodos.filter(todo => todo.grid_area === null);
+        }
+        pageTodos = filteredTodos;
+      }
+
+      setPagesData(prev => {
+        const next = new Map(prev);
+        next.set(dateStr, { workspace: ws, todos: pageTodos, date: dateStr });
+        return next;
+      });
+    } catch (error) {
+      console.error('Error loading page data for', dateStr, error);
+    }
+  };
+
+  const handleTodosChange = useCallback((workspaceId: string, newTodos: Todo[]) => {
+    setPagesData(prev => {
+      const next = new Map(prev);
+      for (const [key, value] of next.entries()) {
+        if (value.workspace?.id === workspaceId) {
+          next.set(key, { ...value, todos: newTodos });
+          break;
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const handleWorkspaceChange = useCallback((updatedWorkspace: Workspace) => {
+    setPagesData(prev => {
+      const next = new Map(prev);
+      for (const [key, value] of next.entries()) {
+        if (value.workspace?.id === updatedWorkspace.id) {
+          next.set(key, { ...value, workspace: updatedWorkspace });
+          break;
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDataChanged = useCallback(() => {
+    loadWorkspaceDates(true);
+  }, [settings, workspaceDates, currentIndex]);
+
+  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (isScrollingProgrammatically.current) return;
+    const offsetY = e.nativeEvent.contentOffset.y;
+    const pageIndex = Math.round(offsetY / PAGE_HEIGHT);
+    const actualIndex = visibleRange.start + pageIndex;
+    if (actualIndex !== currentIndex && actualIndex >= 0 && actualIndex < workspaceDates.length) {
+      setCurrentIndex(actualIndex);
+    }
+  }, [currentIndex, workspaceDates.length, visibleRange.start]);
+
+  const scrollToIndex = (index: number) => {
+    const localIndex = index - visibleRange.start;
+    if (localIndex >= 0) {
+      isScrollingProgrammatically.current = true;
+      scrollRef.current?.scrollTo({ y: localIndex * PAGE_HEIGHT, animated: true });
+      setTimeout(() => { isScrollingProgrammatically.current = false; }, 500);
+    }
+    setCurrentIndex(index);
+  };
+
+  const formatDate = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const formatDateTitle = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const dayOfWeek = ['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'][date.getDay()];
+    return `${year}\u5E74${month}\u6708${day}\u65E5 (${dayOfWeek})`;
+  };
+
+  const formatDateShort = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const dayOfWeek = ['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'][date.getDay()];
+    return `${month}\u6708${day}\u65E5 (${dayOfWeek})`;
+  };
+
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    return { daysInMonth: lastDay.getDate(), startingDayOfWeek: firstDay.getDay() };
+  };
+
+  const getMonthName = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    return `${year}\u5E74${month}\u6708`;
+  };
+
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    const newMonth = new Date(currentMonth);
+    if (direction === 'prev') newMonth.setMonth(newMonth.getMonth() - 1);
+    else newMonth.setMonth(newMonth.getMonth() + 1);
+    setCurrentMonth(newMonth);
+  };
+
+  const isDateInFuture = (date: Date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return date >= today;
+  };
+
+  const isDateToday = (date: Date) => {
+    const today = new Date();
+    return date.toDateString() === today.toDateString();
   };
 
   const selectDate = (dateString: string) => {
     setSelectedDate(dateString);
-    
-    // 選択した日付がワークスペースリストに存在するかチェック
     let targetIndex = workspaceDates.indexOf(dateString);
-    
-    // 存在しない場合は、その日付のワークスペースを作成して追加
     if (targetIndex === -1) {
-      // 新しい日付をワークスペースリストに追加
       const newDates = [...workspaceDates, dateString].sort(
         (a, b) => new Date(b).getTime() - new Date(a).getTime()
       );
       setWorkspaceDates(newDates);
       targetIndex = newDates.indexOf(dateString);
     }
-    
     if (targetIndex !== -1) {
-      setCurrentIndex(targetIndex);
+      scrollToIndex(targetIndex);
     }
     setIsDatePickerVisible(false);
   };
@@ -170,7 +409,6 @@ export default function WorkspaceScreen() {
     if (!isCurrentMonth) {
       return <View key={`empty-${day}`} style={styles.calendarDay} />;
     }
-
     const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
     const dateString = formatDate(date);
     const isFuture = isDateInFuture(date);
@@ -206,990 +444,27 @@ export default function WorkspaceScreen() {
   const renderCalendar = () => {
     const { daysInMonth, startingDayOfWeek } = getDaysInMonth(currentMonth);
     const days = [];
-    
-    // 前月の日付（空白）
     for (let i = 0; i < startingDayOfWeek; i++) {
       days.push(renderCalendarDay(i, false));
     }
-    
-    // 当月の日付
     for (let day = 1; day <= daysInMonth; day++) {
       days.push(renderCalendarDay(day));
     }
-    
     return days;
   };
 
-  // 隣接ページのデータ読み込み
-  const loadAdjacentPages = useCallback(async (centerIndex: number) => {
-    if (!settings) return;
-    const currentType = settings.default_workspace_type || 'four_grid';
+  const currentPageData = workspaceDates[currentIndex]
+    ? pagesData.get(workspaceDates[currentIndex])
+    : null;
+  const currentTitle = currentPageData?.workspace?.title || '';
 
-    const loadPageData = async (dateStr: string): Promise<PageData> => {
-      try {
-        const { data: ws } = await supabase
-          .from('workspaces')
-          .select('*')
-          .eq('date', dateStr)
-          .maybeSingle() as { data: Workspace | null; error: any };
+  const visibleDates = workspaceDates.slice(visibleRange.start, visibleRange.end + 1);
 
-        if (ws) {
-          const { data: td } = await supabase
-            .from('todos')
-            .select('*')
-            .eq('workspace_id', ws.id)
-            .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
-          return { workspace: ws, todos: td || [] };
-        }
-        return { workspace: null, todos: [] };
-      } catch {
-        return { workspace: null, todos: [] };
-      }
-    };
-
-    // 前ページ (index + 1 = 過去)
-    if (centerIndex + 1 < workspaceDates.length) {
-      loadPageData(workspaceDates[centerIndex + 1]).then(setPrevPageData);
-    } else {
-      setPrevPageData(null);
-    }
-    // 次ページ (index - 1 = 未来)
-    if (centerIndex - 1 >= 0) {
-      loadPageData(workspaceDates[centerIndex - 1]).then(setNextPageData);
-    } else {
-      setNextPageData(null);
-    }
-  }, [settings, workspaceDates]);
-
-  useEffect(() => {
-    if (!user) return;
-    const initializeApp = async () => {
-      try {
-        await loadSettings();
-      } catch (error) {
-        console.error('App initialization error:', error);
-      }
-    };
-
-    initializeApp();
-  }, [user]);
-
-  useEffect(() => {
-    if (settings && user) {
-      loadWorkspaceDates();
-    }
-  }, [settings, user]);
-
-  useEffect(() => {
-    if (!settings || workspaceDates.length === 0 || !workspaceDates[currentIndex]) {
-      return;
-    }
-
-    const currentType = settings.default_workspace_type;
-
-    if (previousWorkspaceType.current === null) {
-      previousWorkspaceType.current = currentType;
-      return;
-    }
-
-    if (previousWorkspaceType.current !== currentType) {
-      previousWorkspaceType.current = currentType;
-      loadWorkspaceByDate(workspaceDates[currentIndex], true, currentType);
-    }
-  }, [settings?.default_workspace_type]);
-
-  // 設定変更の検知用
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextAppState) => {
-      // アプリがフォアグラウンドに戻ったときに設定を再読み込み
-      if (nextAppState === 'active') {
-        await loadSettings();
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-
-  // 画面がフォーカスされたときに設定を再読み込みし、ワークスペースタイプを確認
-  useFocusEffect(
-    useCallback(() => {
-      if (!user) return;
-      const checkAndUpdateWorkspace = async () => {
-        try {
-          await loadSettings();
-        } catch (error) {
-          console.error('Focus settings reload error:', error);
-        }
-      };
-
-      checkAndUpdateWorkspace();
-    }, [user])
-  );
-
-  useEffect(() => {
-    if (workspaceDates.length > 0 && workspaceDates[currentIndex] && settings) {
-      if (previousWorkspaceType.current === null) {
-        previousWorkspaceType.current = settings.default_workspace_type;
-      }
-      loadWorkspaceByDate(workspaceDates[currentIndex]);
-      loadAdjacentPages(currentIndex);
-
-      // ページスクロールを真ん中に初期化
-      setTimeout(() => {
-        pageScrollRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
-      }, 100);
-    }
-  }, [currentIndex, workspaceDates, settings]);
-
-  const loadSettings = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('user_settings')
-        .select('*')
-        .limit(1)
-        .maybeSingle() as { data: UserSettings | null; error: any };
-
-      if (error) throw error;
-
-      if (!data) {
-        if (!user) return;
-        const { data: newSettings, error: insertError } = await supabase
-          .from('user_settings')
-          .insert({ default_workspace_type: 'four_grid', user_id: user.id } as any)
-          .select()
-          .single() as { data: UserSettings | null; error: any };
-
-        if (insertError) throw insertError;
-        setSettings(newSettings);
-      } else {
-        setSettings(data);
-      }
-    } catch (error) {
-      console.error('Error loading settings:', error);
-    }
-  };
-
-  const loadWorkspaceDates = async (preserveCurrentDate: boolean = false) => {
-    try {
-      const currentType = settings?.default_workspace_type || 'four_grid';
-      const currentDateString = preserveCurrentDate && workspaceDates[currentIndex]
-        ? workspaceDates[currentIndex]
-        : null;
-
-      const { data: workspaces, error } = await supabase
-        .from('workspaces')
-        .select('id, date, type')
-        .order('date', { ascending: false }) as { data: Array<{ id: string; date: string; type: string }> | null; error: any };
-
-      if (error) throw error;
-
-      const { data: workspacesWithTodos, error: todosError } = await supabase
-        .from('todos')
-        .select('workspace_id')
-        .not('workspace_id', 'is', null) as { data: Array<{ workspace_id: string }> | null; error: any };
-
-      if (todosError) {
-        console.error('Error fetching todos:', todosError);
-        throw todosError;
-      }
-
-      const workspaceIdsWithTodos = new Set(
-        workspacesWithTodos?.map((t) => t.workspace_id) || []
-      );
-
-      const today = formatDate(new Date());
-      
-      // 過去の日付（ToDoが作成された日のみ）- 現在の設定タイプに一致するもののみ
-      const pastDatesWithTodos = (workspaces || [])
-        .filter((w) => workspaceIdsWithTodos.has(w.id) && w.type === currentType)
-        .map((w) => w.date);
-      
-      // 未来の日付を生成（今日から1年先まで）
-      const futureDates = [];
-      for (let i = 0; i <= 365; i++) {
-        const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + i);
-        futureDates.push(formatDate(futureDate));
-      }
-
-      // すべての日付を結合（過去 + 未来）
-      const allDates = [...pastDatesWithTodos, ...futureDates];
-      
-      // 重複を削除してソート
-      const sortedDates = Array.from(new Set(allDates)).sort(
-        (a, b) => new Date(b).getTime() - new Date(a).getTime()
-      );
-
-      setWorkspaceDates(sortedDates);
-      
-      // ToDo作成済みワークスペース数を設定
-      setTodosWorkspaceCount(pastDatesWithTodos.length);
-      
-      // 日付選択用のリストを設定（未来の日付のみ、今日から1年先まで）
-      const futureDatesForPicker = [];
-      for (let i = 0; i <= 365; i++) {
-        const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + i);
-        futureDatesForPicker.push(formatDate(futureDate));
-      }
-      setAvailableDates(futureDatesForPicker);
-
-      if (currentDateString) {
-        const preservedIndex = sortedDates.indexOf(currentDateString);
-        setCurrentIndex(preservedIndex >= 0 ? preservedIndex : 0);
-      } else {
-        const todayIndex = sortedDates.indexOf(today);
-        setCurrentIndex(todayIndex >= 0 ? todayIndex : 0);
-      }
-    } catch (error) {
-      console.error('Error loading workspace dates:', error);
-    }
-  };
-
-  const loadWorkspaceByDate = async (dateString: string, forceUpdateType: boolean = false, overrideType?: WorkspaceType) => {
-    try {
-      const currentType = overrideType || settings?.default_workspace_type || 'four_grid';
-
-      const today = formatDate(new Date());
-      const isFutureDate = dateString > today;
-      
-      // まず日付でワークスペースを検索（UNIQUE制約により1日1ワークスペースのみ）
-      const { data: existingWorkspace, error: fetchError } = await supabase
-        .from('workspaces')
-        .select('*')
-        .eq('date', dateString)
-        .maybeSingle() as { data: Workspace | null; error: any };
-
-      if (fetchError) throw fetchError;
-
-      if (existingWorkspace) {
-        if ((isFutureDate || forceUpdateType) && existingWorkspace.type !== currentType) {
-          // 設定変更時にタイプを強制更新
-          const { data: updatedWorkspace, error: updateError } = await supabase
-            .from('workspaces')
-            .update({ type: currentType })
-            .eq('date', dateString)
-            .select()
-            .single() as { data: Workspace | null; error: any };
-
-          if (updateError) throw updateError;
-          setWorkspace(updatedWorkspace);
-          // エリア名を設定
-          if (updatedWorkspace) {
-            setGridTitles({
-              top_left: updatedWorkspace.area_titles?.top_left || '左上エリア',
-              top_right: updatedWorkspace.area_titles?.top_right || '右上エリア',
-              bottom_left: updatedWorkspace.area_titles?.bottom_left || '左下エリア',
-              bottom_right: updatedWorkspace.area_titles?.bottom_right || '右下エリア',
-            });
-          }
-          setTodos([]);
-        } else {
-          setWorkspace(existingWorkspace);
-          // エリア名を設定
-          setGridTitles({
-            top_left: existingWorkspace.area_titles?.top_left || '左上エリア',
-            top_right: existingWorkspace.area_titles?.top_right || '右上エリア',
-            bottom_left: existingWorkspace.area_titles?.bottom_left || '左下エリア',
-            bottom_right: existingWorkspace.area_titles?.bottom_right || '右下エリア',
-          });
-          await loadTodos(existingWorkspace.id, existingWorkspace.type);
-        }
-      } else {
-        if (!user) return;
-        const date = new Date(dateString);
-
-        const { data: latestWs } = await supabase
-          .from('workspaces')
-          .select('area_titles')
-          .eq('user_id', user.id)
-          .eq('type', currentType)
-          .not('area_titles', 'is', null)
-          .order('date', { ascending: false })
-          .limit(1)
-          .maybeSingle() as { data: { area_titles: Workspace['area_titles'] } | null; error: any };
-
-        const inheritedTitles = {
-          top_left: latestWs?.area_titles?.top_left || '左上エリア',
-          top_right: latestWs?.area_titles?.top_right || '右上エリア',
-          bottom_left: latestWs?.area_titles?.bottom_left || '左下エリア',
-          bottom_right: latestWs?.area_titles?.bottom_right || '右下エリア',
-        };
-
-        const { data: newWorkspace, error: createError } = await supabase
-          .from('workspaces')
-          .insert({
-            title: formatDateTitle(date),
-            type: currentType,
-            date: dateString,
-            user_id: user.id,
-            area_titles: inheritedTitles,
-          } as any)
-          .select()
-          .single() as { data: Workspace | null; error: any };
-
-        if (createError) {
-          // UNIQUE制約違反の場合、既存のワークスペースを取得
-          if (createError.code === '23505') {
-            const { data: updatedWorkspace, error: updateError } = await supabase
-              .from('workspaces')
-              .select('*')
-              .eq('date', dateString)
-              .single() as { data: Workspace | null; error: any };
-
-            if (updateError) throw updateError;
-            setWorkspace(updatedWorkspace);
-            // エリア名を設定
-            if (updatedWorkspace) {
-              setGridTitles({
-                top_left: updatedWorkspace.area_titles?.top_left || '左上エリア',
-                top_right: updatedWorkspace.area_titles?.top_right || '右上エリア',
-                bottom_left: updatedWorkspace.area_titles?.bottom_left || '左下エリア',
-                bottom_right: updatedWorkspace.area_titles?.bottom_right || '右下エリア',
-              });
-            }
-            if (updatedWorkspace) {
-              await loadTodos(updatedWorkspace.id, updatedWorkspace.type);
-            }
-          } else {
-            throw createError;
-          }
-        } else {
-          setWorkspace(newWorkspace);
-          // エリア名を設定
-          if (newWorkspace) {
-            setGridTitles({
-              top_left: newWorkspace.area_titles?.top_left || '左上エリア',
-              top_right: newWorkspace.area_titles?.top_right || '右上エリア',
-              bottom_left: newWorkspace.area_titles?.bottom_left || '左下エリア',
-              bottom_right: newWorkspace.area_titles?.bottom_right || '右下エリア',
-            });
-          }
-          setTodos([]);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading workspace:', error);
-    }
-  };
-
-  const loadTodos = async (workspaceId: string, workspaceType?: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('todos')
-        .select('*')
-        .eq('workspace_id', workspaceId)
-        .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
-
-      if (error) throw error;
-
-      let filteredTodos = data || [];
-
-      if (workspaceType === 'four_grid') {
-        filteredTodos = filteredTodos.filter(todo => todo.grid_area !== null);
-      } else if (workspaceType === 'individual') {
-        filteredTodos = filteredTodos.filter(todo => todo.grid_area === null);
-      }
-
-      setTodos(filteredTodos);
-    } catch (error) {
-      console.error('Error loading todos:', error);
-    }
-  };
-
-  const formatDate = (date: Date): string => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  const formatDateTitle = (date: Date): string => {
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
-    return `${year}年${month}月${day}日 (${dayOfWeek})`;
-  };
-
-  // カレンダー用のヘルパー関数
-  const getDaysInMonth = (date: Date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDayOfWeek = firstDay.getDay();
-    
-    return { daysInMonth, startingDayOfWeek };
-  };
-
-  const getMonthName = (date: Date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
-    return `${year}年${month}月`;
-  };
-
-  const navigateMonth = (direction: 'prev' | 'next') => {
-    const newMonth = new Date(currentMonth);
-    if (direction === 'prev') {
-      newMonth.setMonth(newMonth.getMonth() - 1);
-    } else {
-      newMonth.setMonth(newMonth.getMonth() + 1);
-    }
-    setCurrentMonth(newMonth);
-  };
-
-  const isDateInFuture = (date: Date) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return date >= today;
-  };
-
-  const isDateToday = (date: Date) => {
-    const today = new Date();
-    return date.toDateString() === today.toDateString();
-  };
-
-  // エリア名編集用の関数
-  const startEditingAreaName = (area: GridArea) => {
-    setEditingArea(area);
-    setEditingAreaName(gridTitles[area]);
-  };
-
-  const saveAreaName = async () => {
-    if (editingArea && editingAreaName.trim() && workspace) {
-      const newAreaName = editingAreaName.trim();
-      
-      // ローカル状態を更新
-      setGridTitles(prev => ({
-        ...prev,
-        [editingArea]: newAreaName
-      }));
-      
-      // データベースに保存
-      try {
-        // 現在のエリア名を取得して更新
-        const currentAreaTitles = workspace.area_titles || {
-          top_left: '左上エリア',
-          top_right: '右上エリア',
-          bottom_left: '左下エリア',
-          bottom_right: '右下エリア',
-        };
-        
-        const updatedAreaTitles = {
-          ...currentAreaTitles,
-          [editingArea]: newAreaName,
-        };
-        
-        const { data: updateData, error } = await supabase
-          .from('workspaces')
-          .update({ area_titles: updatedAreaTitles })
-          .eq('id', workspace.id)
-          .select();
-
-        if (error) {
-          console.error('Error saving area titles:', error);
-        } else if (updateData && updateData[0]) {
-          setWorkspace({
-            ...workspace,
-            area_titles: updateData[0].area_titles
-          });
-        }
-      } catch (error) {
-        console.error('Error saving area name:', error);
-      }
-    }
-    setEditingArea(null);
-    setEditingAreaName('');
-  };
-
-  const cancelEditingAreaName = () => {
-    setEditingArea(null);
-    setEditingAreaName('');
-  };
-
-  // タスク追加用の関数
-  const cancelAddingPostit = () => {
-    setIsAddingPostit(false);
-    setNewTaskText('');
-  };
-
-  // タスク編集用の関数
-  const startEditingTodo = (todo: Todo) => {
-    setEditingTodo(todo);
-    setEditingTodoText(todo.content);
-  };
-
-  const saveEditingTodo = async () => {
-    if (!editingTodo || !editingTodoText.trim()) return;
-
-    try {
-      const { error } = await supabase
-        .from('todos')
-        .update({ content: editingTodoText.trim() })
-        .eq('id', editingTodo.id);
-
-      if (error) throw error;
-
-      setTodos(todos.map(t => 
-        t.id === editingTodo.id 
-          ? { ...t, content: editingTodoText.trim() }
-          : t
-      ));
-
-      setEditingTodo(null);
-      setEditingTodoText('');
-    } catch (error) {
-      console.error('Error updating todo:', error);
-      Alert.alert('エラー', 'タスクの更新に失敗しました');
-    }
-  };
-
-  const cancelEditingTodo = () => {
-    setEditingTodo(null);
-    setEditingTodoText('');
-  };
-
-  // ポストイット個別モード用の追加機能
-  const startAddingPostit = () => {
-    setIsAddingPostit(true);
-    setNewTaskText('');
-  };
-
-  const handleAddPostit = async () => {
-    if (!workspace || !newTaskText.trim() || !user) return;
-
-    try {
-      const { data: newTodo, error } = await supabase
-        .from('todos')
-        .insert({
-          workspace_id: workspace.id,
-          content: newTaskText.trim(),
-          is_completed: false,
-          grid_area: null,
-          position_x: Math.random() * 200 + 50,
-          position_y: Math.random() * 200 + 50,
-          user_id: user.id,
-        } as any)
-        .select()
-        .single() as { data: Todo | null; error: any };
-
-      if (error) throw error;
-
-      if (newTodo) {
-        setTodos((prev) => [...prev, newTodo]);
-      }
-      setIsAddingPostit(false);
-      setNewTaskText('');
-    } catch (error) {
-      console.error('Error adding postit:', error);
-      Alert.alert('エラー', 'ポストイットの追加に失敗しました');
-    }
-  };
-
-  const onItemDragStart = useCallback((todo: Todo, area: GridArea, absoluteX: number, absoluteY: number) => {
-    setDraggingTodo(todo);
-    setDraggingSourceArea(area);
-    setDragGhostPos({ x: absoluteX - 80, y: absoluteY - 20 });
-  }, []);
-
-  const onItemDragMove = useCallback((absoluteX: number, absoluteY: number) => {
-    setDragGhostPos({ x: absoluteX - 80, y: absoluteY - 20 });
-  }, []);
-
-  const onItemDragDrop = useCallback(async (todo: Todo, sourceArea: GridArea, absoluteX: number, absoluteY: number) => {
-    if (!draggingTodo) {
-      setDraggingTodo(null);
-      setDraggingSourceArea(null);
-      return;
-    }
-
-    // DragDropContext のエリア検出を使わず、直接座標からエリアを特定
-    // GridAreaDropTarget が registerArea で登録した座標を使う
-    const targetArea = getTargetAreaFromPosition(absoluteX, absoluteY);
-
-    setDraggingTodo(null);
-    setDraggingSourceArea(null);
-
-    if (!targetArea) return;
-
-    if (sourceArea !== targetArea) {
-      // 別エリアへ移動
-      try {
-        const { error } = await supabase
-          .from('todos')
-          .update({ grid_area: targetArea })
-          .eq('id', todo.id);
-        if (error) throw error;
-        setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, grid_area: targetArea } : t));
-        if (Platform.OS !== 'web') {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      } catch (error) {
-        console.error('Error moving todo:', error);
-      }
-    } else {
-      // 同じエリア内の並び替え
-      const areaTodos = todos
-        .filter(t => t.grid_area === sourceArea && t.id !== todo.id)
-        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-      if (areaTodos.length === 0) return;
-
-      // ドロップ位置に基づいて挿入先を決定
-      // created_at を調整して順序を変更
-      const timestamps = areaTodos.map(t => new Date(t.created_at).getTime());
-      const draggedTime = new Date(todo.created_at).getTime();
-
-      // 簡易的に最初か最後に移動、または中間に挿入
-      // ドロップ位置のY座標から挿入位置を推定
-      let newTimestamp: number;
-      const areaItemCount = areaTodos.length;
-
-      // エリアの上の方にドロップ → 先頭に移動
-      // エリアの下の方にドロップ → 末尾に移動
-      // 中間 → 中間に挿入
-      const firstTime = timestamps[0];
-      const lastTime = timestamps[timestamps.length - 1];
-
-      // Y位置に基づくインデックス推定（簡易）
-      // ドロップ先のエリアの上端からの相対位置で推定
-      const dropIndex = Math.min(areaItemCount, Math.max(0, Math.round((absoluteY % 300) / 30)));
-
-      if (dropIndex <= 0) {
-        newTimestamp = firstTime - 1000;
-      } else if (dropIndex >= areaItemCount) {
-        newTimestamp = lastTime + 1000;
-      } else {
-        const before = timestamps[dropIndex - 1];
-        const after = timestamps[dropIndex];
-        newTimestamp = Math.floor((before + after) / 2);
-      }
-
-      try {
-        const newCreatedAt = new Date(newTimestamp).toISOString();
-        const { error } = await supabase
-          .from('todos')
-          .update({ created_at: newCreatedAt })
-          .eq('id', todo.id);
-        if (error) throw error;
-        setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, created_at: newCreatedAt } : t));
-        if (Platform.OS !== 'web') {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
-      } catch (error) {
-        console.error('Error reordering todo:', error);
-      }
-    }
-  }, [draggingTodo, todos]);
-
-  const getTargetAreaFromPosition = (absoluteX: number, absoluteY: number): GridArea | null => {
-    // DragDropContext の getHoveredArea と同じロジック
-    // GridAreaDropTarget の registerArea で登録されたエリアを使用
-    const areas: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
-    for (const area of areas) {
-      // DragDropContext 経由でエリア検出
-    }
-    // フォールバック: 画面の4分割で判定
-    const screenWidth = Dimensions.get('window').width;
-    const headerHeight = 100; // ヘッダー分のオフセット
-    const gridHeight = (Dimensions.get('window').height - headerHeight) / 2;
-    const midX = screenWidth / 2;
-    const midY = headerHeight + gridHeight;
-
-    if (absoluteY < headerHeight) return null;
-
-    if (absoluteX < midX && absoluteY < midY) return 'top_left';
-    if (absoluteX >= midX && absoluteY < midY) return 'top_right';
-    if (absoluteX < midX && absoluteY >= midY) return 'bottom_left';
-    if (absoluteX >= midX && absoluteY >= midY) return 'bottom_right';
-    return null;
-  };
-
-  const handleDragEnd = async (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => {
-    try {
-      if (sourceArea === targetArea) return;
-
-      const { error } = await supabase
-        .from('todos')
-        .update({ grid_area: targetArea })
-        .eq('id', todoId);
-
-      if (error) throw error;
-
-      setTodos(prevTodos =>
-        prevTodos.map(t =>
-          t.id === todoId ? { ...t, grid_area: targetArea } : t
-        )
-      );
-
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (error) {
-      console.error('Error moving todo:', error);
-      Alert.alert('エラー', 'タスクの移動に失敗しました');
-    }
-  };
-
-  // 個別モード用の並び替え関数
-  const movePostit = async (todo: Todo, direction: 'up' | 'down') => {
-    try {
-      const postitTodos = todos
-        .filter(t => t.grid_area === null)
-        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      const idx = postitTodos.findIndex((t) => t.id === todo.id);
-
-      if (direction === 'up' && idx === 0) return;
-      if (direction === 'down' && idx === postitTodos.length - 1) return;
-
-      const newIndex = direction === 'up' ? idx - 1 : idx + 1;
-      const targetTodo = postitTodos[newIndex];
-
-      const tempCreatedAt = todo.created_at;
-      const { error: error1 } = await supabase
-        .from('todos')
-        .update({ created_at: targetTodo.created_at })
-        .eq('id', todo.id);
-
-      if (error1) throw error1;
-
-      const { error: error2 } = await supabase
-        .from('todos')
-        .update({ created_at: tempCreatedAt })
-        .eq('id', targetTodo.id);
-
-      if (error2) throw error2;
-
-      setTodos(prevTodos => {
-        return prevTodos.map(t => {
-          if (t.id === todo.id) return { ...t, created_at: targetTodo.created_at };
-          if (t.id === targetTodo.id) return { ...t, created_at: tempCreatedAt };
-          return t;
-        });
-      });
-
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (error) {
-      console.error('Error moving postit:', error);
-      Alert.alert('エラー', 'ポストイットの並び替えに失敗しました');
-    }
-  };
-
-  const handlePostitLongPress = (todoId: string) => {
-    setLongPressedTodo(todoId);
-
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-  };
-
-  const handleQuickAdd = async (gridArea: GridArea, content: string) => {
-    await addTodo(gridArea, content);
-  };
-
-  const openReminderPicker = (todo: Todo) => {
-    setReminderTodo(todo);
-  };
-
-  const clearReminder = async (todo: Todo) => {
-    try {
-      if (todo.notification_id) {
-        await cancelReminderNotification(todo.notification_id);
-      }
-      const { error } = await supabase
-        .from('todos')
-        .update({ reminder_at: null, notification_id: null })
-        .eq('id', todo.id);
-      if (!error) {
-        setTodos(prev => prev.map(t => t.id === todo.id ? { ...t, reminder_at: null, notification_id: null } : t));
-      }
-    } catch (error) {
-      console.error('Error clearing reminder:', error);
-    }
-  };
-
-  const handleSetReminder = async (reminderAt: string | null) => {
-    if (!reminderTodo) return;
-    try {
-      if (reminderTodo.notification_id) {
-        await cancelReminderNotification(reminderTodo.notification_id);
-      }
-
-      let notificationId: string | null = null;
-
-      if (reminderAt) {
-        notificationId = await scheduleReminderNotification(
-          reminderTodo.id,
-          reminderTodo.content,
-          new Date(reminderAt)
-        );
-      }
-
-      const { error } = await supabase
-        .from('todos')
-        .update({ reminder_at: reminderAt, notification_id: notificationId })
-        .eq('id', reminderTodo.id);
-
-      if (error) throw error;
-
-      setTodos(prev =>
-        prev.map(t =>
-          t.id === reminderTodo.id
-            ? { ...t, reminder_at: reminderAt, notification_id: notificationId }
-            : t
-        )
-      );
-    } catch (error) {
-      console.error('Error setting reminder:', error);
-    }
-    setReminderTodo(null);
-  };
-
-  const addTodo = async (gridArea: GridArea, content?: string) => {
-    if (!workspace) return;
-
-    const taskContent = content || newTodoContent[gridArea].trim();
-    if (!taskContent) return;
-
-    try {
-      if (!user) return;
-      const { data, error } = await supabase
-        .from('todos')
-        .insert({
-          workspace_id: workspace.id,
-          content: taskContent,
-          grid_area: gridArea,
-          user_id: user.id,
-        } as any)
-        .select()
-        .single() as { data: Todo | null; error: any };
-
-      if (error) throw error;
-      if (!data) throw new Error('No data returned');
-
-      setTodos([...todos, data]);
-      setNewTodoContent({ ...newTodoContent, [gridArea]: '' });
-
-      await loadWorkspaceDates(true);
-    } catch (error) {
-      console.error('Error adding todo:', error);
-      Alert.alert('エラー', 'タスクの追加に失敗しました');
-    }
-  };
-
-  const toggleTodo = async (todo: Todo) => {
-    try {
-      const { error } = await supabase
-        .from('todos')
-        .update({
-          is_completed: !todo.is_completed,
-          completed_at: !todo.is_completed ? new Date().toISOString() : null,
-        })
-        .eq('id', todo.id);
-
-      if (error) throw error;
-
-      setTodos(
-        todos.map((t) =>
-          t.id === todo.id
-            ? {
-                ...t,
-                is_completed: !t.is_completed,
-                completed_at: !t.is_completed ? new Date().toISOString() : null,
-              }
-            : t
-        )
-      );
-    } catch (error) {
-      console.error('Error toggling todo:', error);
-    }
-  };
-
-  const deleteTodo = async (todoId: string) => {
-    try {
-      const todoToDelete = todos.find(t => t.id === todoId);
-      if (todoToDelete?.notification_id) {
-        await cancelReminderNotification(todoToDelete.notification_id);
-      }
-
-      const { error } = await supabase.from('todos').delete().eq('id', todoId);
-
-      if (error) throw error;
-
-      const newTodos = todos.filter((t) => t.id !== todoId);
-      setTodos(newTodos);
-
-      if (newTodos.length === 0) {
-        await loadWorkspaceDates(true);
-      }
-    } catch (error) {
-      console.error('Error deleting todo:', error);
-      Alert.alert('エラー', 'タスクの削除に失敗しました');
-    }
-  };
-
-  const getTodosForArea = (area: GridArea) => {
-    return todos.filter((t) => t.grid_area === area).sort((a, b) => {
-      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-    });
-  };
-
-  const getProgressForArea = (area: GridArea) => {
-    const areaTodos = getTodosForArea(area);
-    if (areaTodos.length === 0) return 0;
-    const completed = areaTodos.filter((t) => t.is_completed).length;
-    return Math.round((completed / areaTodos.length) * 100);
-  };
-
-  const renderGridArea = (area: GridArea) => {
-    const areaTodos = getTodosForArea(area);
-    const progress = getProgressForArea(area);
-
-    return (
-      <GridAreaDropTarget
-        area={area}
-        gridTitles={gridTitles}
-        editingArea={editingArea}
-        editingAreaName={editingAreaName}
-        setEditingAreaName={setEditingAreaName}
-        saveAreaName={saveAreaName}
-        cancelEditingAreaName={cancelEditingAreaName}
-        startEditingAreaName={startEditingAreaName}
-        progress={progress}
-        areaTodos={areaTodos}
-        editingTodo={editingTodo}
-        editingTodoText={editingTodoText}
-        setEditingTodoText={setEditingTodoText}
-        saveEditingTodo={saveEditingTodo}
-        cancelEditingTodo={cancelEditingTodo}
-        startEditingTodo={startEditingTodo}
-        toggleTodo={toggleTodo}
-        deleteTodo={deleteTodo}
-        handleDragEnd={handleDragEnd}
-        onQuickAdd={handleQuickAdd}
-        onReminderPress={openReminderPicker}
-        onClearReminder={clearReminder}
-        onDragStart={onItemDragStart}
-        onDragMove={onItemDragMove}
-        onDragDrop={onItemDragDrop}
-        draggingTodoId={draggingTodo?.id ?? null}
-      />
-    );
-  };
-
-  // 浮遊するタスクの表示（削除）
-
-  if (!workspace) {
+  if (!settings || workspaceDates.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>読み込み中...</Text>
+          <Text style={styles.loadingText}>{'\u8AAD\u307F\u8FBC\u307F\u4E2D...'}</Text>
         </View>
       </SafeAreaView>
     );
@@ -1199,9 +474,9 @@ export default function WorkspaceScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <TouchableOpacity style={styles.dateContainer} onPress={openDatePicker}>
+          <TouchableOpacity style={styles.dateContainer} onPress={() => setIsDatePickerVisible(true)}>
             <Calendar size={20} color="#000" />
-            <Text style={styles.headerTitle}>{workspace.title}</Text>
+            <Text style={styles.headerTitle}>{currentTitle}</Text>
           </TouchableOpacity>
           {workspaceDates[currentIndex] !== formatDate(new Date()) && (
             <TouchableOpacity
@@ -1209,348 +484,65 @@ export default function WorkspaceScreen() {
               onPress={() => {
                 const todayStr = formatDate(new Date());
                 const idx = workspaceDates.indexOf(todayStr);
-                if (idx >= 0) setCurrentIndex(idx);
+                if (idx >= 0) scrollToIndex(idx);
               }}
             >
-              <Text style={styles.todayJumpText}>今日へ戻る</Text>
+              <Text style={styles.todayJumpText}>{'\u4ECA\u65E5\u3078\u623B\u308B'}</Text>
             </TouchableOpacity>
           )}
         </View>
-        <Text style={styles.pageIndicator}>
-          {todosWorkspaceCount} ページ
-        </Text>
+        <Text style={styles.pageIndicator}>{todosWorkspaceCount} {'\u30DA\u30FC\u30B8'}</Text>
       </View>
 
-      <View style={styles.content}>
-        {workspace.type === 'four_grid' ? (
-          <KeyboardAvoidingView
-            style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
-          >
-            <DragDropProvider>
-              <View style={styles.grid}>
-                <View style={styles.gridRow}>
-                  {renderGridArea('top_left')}
-                  {renderGridArea('top_right')}
-                </View>
-                <View style={styles.gridRow}>
-                  {renderGridArea('bottom_left')}
-                  {renderGridArea('bottom_right')}
-                </View>
-              </View>
-            </DragDropProvider>
-          </KeyboardAvoidingView>
-        ) : workspace.type === 'individual' ? (
-          <View style={styles.individualContainer}>
-            {/* ポストイット表示エリア */}
-            <ScrollView
-              style={styles.postitsArea}
-              contentContainerStyle={styles.postitsContent}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-            >
-              {todos.length === 0 && !isAddingPostit ? (
-                <View style={styles.emptyPostitsContainer}>
-                  <Text style={styles.emptyPostitsText}>
-                    右下の＋ボタンでポストイットを追加
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scrollContainer}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={PAGE_HEIGHT}
+        decelerationRate="fast"
+        snapToAlignment="start"
+      >
+        {visibleDates.map((dateStr, idx) => {
+          const pageData = pagesData.get(dateStr);
+          const globalIdx = visibleRange.start + idx;
+          const todayStr = formatDate(new Date());
+          const isToday = dateStr === todayStr;
+
+          return (
+            <View key={dateStr} style={[styles.pageWrapper, { height: PAGE_HEIGHT }]}>
+              <View style={styles.pageDateHeader}>
+                <View style={styles.pageDateLine} />
+                <View style={[styles.pageDateBadge, isToday && styles.pageDateBadgeToday]}>
+                  <Text style={[styles.pageDateText, isToday && styles.pageDateTextToday]}>
+                    {formatDateShort(dateStr)}
                   </Text>
                 </View>
-              ) : (
-                <>
-                  {(() => {
-                    const sortedPostits = todos
-                      .filter(t => t.grid_area === null)
-                      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                    return sortedPostits.map((todo, index) => (
-                    <View key={todo.id}>
-                      {editingTodo?.id === todo.id ? (
-                        // 編集モード
-                        <View style={styles.postit}>
-                          <View style={styles.postitEditing}>
-                            <TextInput
-                              style={styles.postitEditInput}
-                              value={editingTodoText}
-                              onChangeText={setEditingTodoText}
-                              multiline
-                              autoFocus
-                              maxLength={100}
-                            />
-                            <View style={styles.postitEditButtons}>
-                              <TouchableOpacity
-                                style={styles.postitEditSaveButton}
-                                onPress={saveEditingTodo}
-                              >
-                                <Text style={styles.postitEditSaveText}>✓</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={styles.postitEditCancelButton}
-                                onPress={cancelEditingTodo}
-                              >
-                                <Text style={styles.postitEditCancelText}>✕</Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        </View>
-                      ) : (
-                        <View style={styles.postit}>
-                          <View style={styles.postitRow}>
-                            <TouchableOpacity
-                              style={styles.postitCheckbox}
-                              onPress={() => toggleTodo(todo)}
-                            >
-                              {todo.is_completed && <View style={styles.postitCheckboxFilled} />}
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.postitTextContainer}
-                              onPress={() => startEditingTodo(todo)}
-                              onLongPress={(e) => {
-                                handlePostitLongPress(todo.id);
-                                setPostitMenuTodo(todo);
-                                setPostitMenuPosition({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
-                                if (Platform.OS !== 'web') {
-                                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                }
-                              }}
-                              delayLongPress={400}
-                            >
-                              <Text
-                                style={[
-                                  styles.postitText,
-                                  todo.is_completed && styles.postitTextCompleted,
-                                ]}
-                              >
-                                {todo.content}
-                              </Text>
-                            </TouchableOpacity>
-
-                            {todo.reminder_at && (
-                              <Bell size={10} color="#e67e22" style={{ marginLeft: 4 }} />
-                            )}
-                          </View>
-                          {todo.reminder_at && (
-                            <View style={styles.postitReminderBadge}>
-                              <Bell size={9} color="#e67e22" />
-                              <Text style={styles.postitReminderBadgeText}>
-                                {(() => {
-                                  const d = new Date(todo.reminder_at);
-                                  const h = d.getHours().toString().padStart(2, '0');
-                                  const m = d.getMinutes().toString().padStart(2, '0');
-                                  const now = new Date();
-                                  if (d.toDateString() === now.toDateString()) return `今日 ${h}:${m}`;
-                                  const tmr = new Date(now);
-                                  tmr.setDate(tmr.getDate() + 1);
-                                  if (d.toDateString() === tmr.toDateString()) return `明日 ${h}:${m}`;
-                                  return `${d.getMonth() + 1}/${d.getDate()} ${h}:${m}`;
-                                })()}
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  ))}
-                  )()}
-                  
-                  {/* ポストイット風の入力UI */}
-                  {isAddingPostit && (
-                    <View style={styles.postitInputCard}>
-                      <TextInput
-                        style={styles.postitInputCardText}
-                        value={newTaskText}
-                        onChangeText={setNewTaskText}
-                        placeholder="ポストイットを入力..."
-                        placeholderTextColor="#bdc3c7"
-                        multiline
-                        autoFocus
-                        maxLength={100}
-                      />
-                      <View style={styles.postitInputCardButtons}>
-                        <TouchableOpacity
-                          style={styles.postitInputCardCancelButton}
-                          onPress={cancelAddingPostit}
-                        >
-                          <Text style={styles.postitInputCardCancelText}>✕</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.postitInputCardSaveButton,
-                            !newTaskText.trim() && styles.postitInputCardSaveButtonDisabled
-                          ]}
-                          onPress={handleAddPostit}
-                          disabled={!newTaskText.trim()}
-                        >
-                          <Text style={styles.postitInputCardSaveText}>✓</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                </>
-              )}
-            </ScrollView>
-
-            {/* 右下の追加ボタン */}
-            {!isAddingPostit && (
-              <TouchableOpacity
-                style={styles.addPostitButton}
-                onPress={() => startAddingPostit()}
-              >
-                <Plus size={24} color="#fff" />
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          <View style={styles.individualContainer}>
-            <Text style={styles.individualPlaceholder}>
-              ノートモード（開発中）
-            </Text>
-          </View>
-        )}
-      </View>
-
-      <ReminderPicker
-        visible={reminderTodo !== null}
-        currentReminder={reminderTodo?.reminder_at ?? null}
-        onSelect={handleSetReminder}
-        onClose={() => setReminderTodo(null)}
-      />
-
-      <Modal
-        visible={postitMenuTodo !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => { setPostitMenuTodo(null); setLongPressedTodo(null); }}
-      >
-        <TouchableOpacity
-          style={styles.postitMenuOverlay}
-          activeOpacity={1}
-          onPress={() => { setPostitMenuTodo(null); setLongPressedTodo(null); }}
-        >
-          {postitMenuTodo && (
-            <View style={[styles.postitMenu, { top: postitMenuPosition.y, left: postitMenuPosition.x }]}>
-              <TouchableOpacity
-                style={styles.postitMenuItem}
-                onPress={() => {
-                  const t = postitMenuTodo;
-                  setPostitMenuTodo(null);
-                  setLongPressedTodo(null);
-                  openReminderPicker(t);
-                }}
-              >
-                <Bell size={15} color="#e67e22" />
-                <Text style={styles.postitMenuItemText}>
-                  {postitMenuTodo.reminder_at ? 'リマインダーを変更' : 'リマインダーを設定'}
-                </Text>
-              </TouchableOpacity>
-              {postitMenuTodo.reminder_at && (
-                <TouchableOpacity
-                  style={styles.postitMenuItem}
-                  onPress={async () => {
-                    const t = postitMenuTodo;
-                    setPostitMenuTodo(null);
-                    setLongPressedTodo(null);
-                    if (t.notification_id) {
-                      await cancelReminderNotification(t.notification_id);
-                    }
-                    const { error } = await supabase
-                      .from('todos')
-                      .update({ reminder_at: null, notification_id: null })
-                      .eq('id', t.id);
-                    if (!error) {
-                      setTodos(prev => prev.map(td => td.id === t.id ? { ...td, reminder_at: null, notification_id: null } : td));
-                    }
-                  }}
-                >
-                  <Bell size={15} color="#999" />
-                  <Text style={[styles.postitMenuItemText, { color: '#999' }]}>リマインダーを削除</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={styles.postitMenuItem}
-                onPress={() => {
-                  const sortedPostits = todos
-                    .filter(t => t.grid_area === null)
-                    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                  const idx = sortedPostits.findIndex(t => t.id === postitMenuTodo!.id);
-                  const t = postitMenuTodo;
-                  setPostitMenuTodo(null);
-                  setLongPressedTodo(null);
-                  if (idx > 0) movePostit(t, 'up');
-                }}
-              >
-                <ChevronUp size={15} color="#007AFF" />
-                <Text style={[styles.postitMenuItemText, { color: '#007AFF' }]}>上に移動</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.postitMenuItem}
-                onPress={() => {
-                  const sortedPostits = todos
-                    .filter(t => t.grid_area === null)
-                    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                  const idx = sortedPostits.findIndex(t => t.id === postitMenuTodo!.id);
-                  const t = postitMenuTodo;
-                  setPostitMenuTodo(null);
-                  setLongPressedTodo(null);
-                  if (idx < sortedPostits.length - 1) movePostit(t, 'down');
-                }}
-              >
-                <ChevronDown size={15} color="#007AFF" />
-                <Text style={[styles.postitMenuItemText, { color: '#007AFF' }]}>下に移動</Text>
-              </TouchableOpacity>
-              <View style={styles.postitMenuDivider} />
-              <TouchableOpacity
-                style={styles.postitMenuItem}
-                onPress={() => {
-                  const id = postitMenuTodo.id;
-                  setPostitMenuTodo(null);
-                  setLongPressedTodo(null);
-                  deleteTodo(id);
-                }}
-              >
-                <Trash2 size={15} color="#e74c3c" />
-                <Text style={[styles.postitMenuItemText, { color: '#e74c3c' }]}>タスクを削除</Text>
-              </TouchableOpacity>
+                <View style={styles.pageDateLine} />
+              </View>
+              <View style={styles.pageContent}>
+                {pageData?.workspace && settings ? (
+                  <WorkspacePage
+                    workspace={pageData.workspace}
+                    todos={pageData.todos}
+                    settings={settings}
+                    onTodosChange={handleTodosChange}
+                    onWorkspaceChange={handleWorkspaceChange}
+                    onDataChanged={handleDataChanged}
+                    isCurrentPage={globalIdx === currentIndex}
+                  />
+                ) : (
+                  <View style={styles.pageLoading}>
+                    <Text style={styles.pageLoadingText}>{'\u8AAD\u307F\u8FBC\u307F\u4E2D...'}</Text>
+                  </View>
+                )}
+              </View>
             </View>
-          )}
-        </TouchableOpacity>
-      </Modal>
+          );
+        })}
+      </ScrollView>
 
-      {/* ドラッグゴースト */}
-      {draggingTodo && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: dragGhostPos.x,
-            top: dragGhostPos.y,
-            zIndex: 9999,
-            opacity: 0.85,
-            transform: [{ scale: 1.05 }],
-          }}
-        >
-          <View style={{
-            backgroundColor: '#fffacd',
-            borderRadius: 4,
-            borderLeftWidth: 3,
-            borderLeftColor: '#ff6b6b',
-            paddingVertical: 6,
-            paddingHorizontal: 8,
-            minWidth: 160,
-            maxWidth: 200,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 8,
-            elevation: 10,
-          }}>
-            <Text style={{ fontSize: 13, color: '#2c3e50' }} numberOfLines={2}>
-              {draggingTodo.content}
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* 日付選択モーダル */}
       <Modal
         visible={isDatePickerVisible}
         animationType="slide"
@@ -1559,53 +551,35 @@ export default function WorkspaceScreen() {
       >
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>ToDoを作成する日付を選択</Text>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setIsDatePickerVisible(false)}
-            >
-              <Text style={styles.closeButtonText}>閉じる</Text>
+            <Text style={styles.modalTitle}>{'\u65E5\u4ED8\u3092\u9078\u629E'}</Text>
+            <TouchableOpacity style={styles.closeButton} onPress={() => setIsDatePickerVisible(false)}>
+              <Text style={styles.closeButtonText}>{'\u9589\u3058\u308B'}</Text>
             </TouchableOpacity>
-        </View>
+          </View>
           <View style={styles.modalDescription}>
             <Text style={styles.descriptionText}>
-              未来の日付を選択して、その日のToDoを作成できます
+              {'\u672A\u6765\u306E\u65E5\u4ED8\u3092\u9078\u629E\u3057\u3066\u3001\u305D\u306E\u65E5\u306EToDo\u3092\u4F5C\u6210\u3067\u304D\u307E\u3059'}
             </Text>
           </View>
-          
-          {/* カレンダーヘッダー */}
           <View style={styles.calendarHeader}>
-            <TouchableOpacity
-              style={styles.monthNavButton}
-              onPress={() => navigateMonth('prev')}
-            >
+            <TouchableOpacity style={styles.monthNavButton} onPress={() => navigateMonth('prev')}>
               <ChevronLeft size={24} color="#007AFF" />
             </TouchableOpacity>
             <Text style={styles.monthTitle}>{getMonthName(currentMonth)}</Text>
-            <TouchableOpacity
-              style={styles.monthNavButton}
-              onPress={() => navigateMonth('next')}
-            >
+            <TouchableOpacity style={styles.monthNavButton} onPress={() => navigateMonth('next')}>
               <ChevronRight size={24} color="#007AFF" />
             </TouchableOpacity>
           </View>
-          
-          {/* 曜日ヘッダー */}
           <View style={styles.weekdayHeader}>
-            {['日', '月', '火', '水', '木', '金', '土'].map((day) => (
-              <Text key={day} style={styles.weekdayText}>
-                {day}
-              </Text>
+            {['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'].map(day => (
+              <Text key={day} style={styles.weekdayText}>{day}</Text>
             ))}
           </View>
-          
-          {/* カレンダーグリッド */}
           <View style={styles.calendarGrid}>
             {renderCalendar()}
           </View>
         </SafeAreaView>
       </Modal>
-
     </SafeAreaView>
   );
 }
@@ -1664,17 +638,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
-  content: {
+  scrollContainer: {
     flex: 1,
   },
-  grid: {
-    flex: 1,
-    padding: 4,
+  pageWrapper: {
+    overflow: 'hidden',
   },
-  gridRow: {
-    flex: 1,
+  pageDateHeader: {
     flexDirection: 'row',
-    marginBottom: 4,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: '#f5f5dc',
+  },
+  pageDateLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#d4af37',
+    opacity: 0.4,
+  },
+  pageDateBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d4af37',
+    marginHorizontal: 10,
+  },
+  pageDateBadgeToday: {
+    backgroundColor: '#222',
+    borderColor: '#222',
+  },
+  pageDateText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#8B7355',
+  },
+  pageDateTextToday: {
+    color: '#fff',
+  },
+  pageContent: {
+    flex: 1,
+  },
+  pageLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pageLoadingText: {
+    fontSize: 14,
+    color: '#999',
   },
   modalContainer: {
     flex: 1,
@@ -1710,50 +724,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-  },
-  dateItem: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  dateItemContent: {
-    flex: 1,
-  },
-  todayDateItem: {
-    backgroundColor: '#f0f8ff',
-    borderRadius: 8,
-    marginVertical: 4,
-  },
-  dateItemText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000',
-  },
-  todayDateItemText: {
-    color: '#007AFF',
-    fontWeight: '600',
-  },
-  dayOfWeekText: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 4,
-  },
-  todayDayOfWeekText: {
-    color: '#007AFF',
-  },
-  futureBadge: {
-    backgroundColor: '#e8f5e8',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  futureBadgeText: {
-    fontSize: 12,
-    color: '#28a745',
-    fontWeight: '500',
   },
   calendarHeader: {
     flexDirection: 'row',
@@ -1823,268 +793,5 @@ const styles = StyleSheet.create({
   },
   pastCalendarDayText: {
     color: '#999',
-  },
-  individualContainer: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-    position: 'relative',
-  },
-  individualPlaceholder: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  postitsArea: {
-    flex: 1,
-  },
-  emptyPostitsContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 100,
-  },
-  emptyPostitsText: {
-    fontSize: 16,
-    color: '#999',
-    textAlign: 'center',
-  },
-  postitsContent: {
-    padding: 16,
-  },
-  postit: {
-    backgroundColor: '#fffacd',
-    width: '100%',
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ffd700',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 12,
-  },
-  postitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  postitCheckbox: {
-    width: 16,
-    height: 16,
-    borderWidth: 1,
-    borderColor: '#666',
-    borderRadius: 3,
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  postitCheckboxFilled: {
-    width: 10,
-    height: 10,
-    backgroundColor: '#2ecc71',
-    borderRadius: 2,
-  },
-  postitText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#333',
-  },
-  postitTextCompleted: {
-    textDecorationLine: 'line-through',
-    color: '#999',
-  },
-  postitTextContainer: {
-    flex: 1,
-  },
-  postitOrderButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 4,
-  },
-  postitOrderButton: {
-    padding: 4,
-    marginHorizontal: 2,
-  },
-  postitOrderButtonDisabled: {
-    opacity: 0.3,
-  },
-  postitReminderButton: {
-    padding: 4,
-    marginRight: 4,
-  },
-  postitReminderBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    marginLeft: 24,
-    marginTop: 4,
-  },
-  postitReminderBadgeText: {
-    fontSize: 11,
-    color: '#e67e22',
-  },
-  postitDeleteButton: {
-    padding: 4,
-  },
-  addPostitButton: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#3498db',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  postitInputCard: {
-    backgroundColor: '#fffacd',
-    width: '100%',
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ffd700',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 12,
-  },
-  postitInputCardText: {
-    fontSize: 14,
-    color: '#333',
-    minHeight: 80,
-    textAlignVertical: 'top',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 6,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    marginBottom: 8,
-  },
-  postitInputCardButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  postitInputCardCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitInputCardCancelText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  postitInputCardSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitInputCardSaveButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  postitInputCardSaveText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  postitEditing: {
-    flex: 1,
-  },
-  postitEditInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 14,
-    color: '#333',
-    minHeight: 80,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    marginBottom: 8,
-  },
-  postitEditButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  postitEditSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitEditSaveText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  postitEditCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitEditCancelText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  cancelPostitReorderButton: {
-    backgroundColor: '#dc3545',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  cancelPostitReorderButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  postitMenuOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-  },
-  postitMenu: {
-    position: 'absolute',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingVertical: 6,
-    minWidth: 200,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  postitMenuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  postitMenuItemText: {
-    fontSize: 14,
-    color: '#2c3e50',
-    fontWeight: '500',
-  },
-  postitMenuDivider: {
-    height: 1,
-    backgroundColor: '#f0f0f0',
-    marginHorizontal: 12,
-    marginVertical: 2,
   },
 });
