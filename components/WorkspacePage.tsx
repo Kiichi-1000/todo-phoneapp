@@ -602,6 +602,7 @@ export default function WorkspacePage({
         currentReminder={reminderTodo?.reminder_at ?? null}
         onSelect={handleSetReminder}
         onClose={() => setReminderTodo(null)}
+        workspaceDate={workspace.date}
       />
 
       <PostitMenu

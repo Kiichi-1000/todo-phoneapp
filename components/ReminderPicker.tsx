@@ -16,17 +16,37 @@ interface ReminderPickerProps {
   currentReminder: string | null;
   onSelect: (reminderAt: string | null) => void;
   onClose: () => void;
+  workspaceDate?: string;
 }
 
-const QUICK_OPTIONS = [
-  { label: '5分後', minutes: 5 },
-  { label: '15分後', minutes: 15 },
-  { label: '30分後', minutes: 30 },
-  { label: '1時間後', minutes: 60 },
-  { label: '3時間後', minutes: 180 },
-  { label: '明日 9:00', preset: 'tomorrow9' },
-  { label: '明日 12:00', preset: 'tomorrow12' },
-];
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function buildQuickOptions(targetDate: Date) {
+  const now = new Date();
+  const isToday = isSameDay(targetDate, now);
+
+  if (isToday) {
+    return [
+      { label: '5\u5206\u5F8C', minutes: 5 },
+      { label: '15\u5206\u5F8C', minutes: 15 },
+      { label: '30\u5206\u5F8C', minutes: 30 },
+      { label: '1\u6642\u9593\u5F8C', minutes: 60 },
+      { label: '3\u6642\u9593\u5F8C', minutes: 180 },
+    ];
+  }
+
+  return [
+    { label: '9:00', hour: 9, minute: 0 },
+    { label: '10:00', hour: 10, minute: 0 },
+    { label: '12:00', hour: 12, minute: 0 },
+    { label: '14:00', hour: 14, minute: 0 },
+    { label: '17:00', hour: 17, minute: 0 },
+    { label: '19:00', hour: 19, minute: 0 },
+    { label: '21:00', hour: 21, minute: 0 },
+  ];
+}
 
 const HOUR_ITEMS = Array.from({ length: 24 }, (_, i) => ({
   label: i.toString().padStart(2, '0'),
@@ -38,20 +58,19 @@ const MINUTE_ITEMS = Array.from({ length: 12 }, (_, i) => ({
   value: i * 5,
 }));
 
-function getPresetTime(preset: string): Date {
+function getTargetDate(workspaceDate?: string): Date {
+  if (!workspaceDate) return new Date();
+  const parts = workspaceDate.split('-');
+  return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+}
+
+function formatTargetDateLabel(targetDate: Date): string {
   const now = new Date();
+  if (isSameDay(targetDate, now)) return '\u4ECA\u65E5';
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-
-  if (preset === 'tomorrow9') {
-    tomorrow.setHours(9, 0, 0, 0);
-    return tomorrow;
-  }
-  if (preset === 'tomorrow12') {
-    tomorrow.setHours(12, 0, 0, 0);
-    return tomorrow;
-  }
-  return now;
+  if (isSameDay(targetDate, tomorrow)) return '\u660E\u65E5';
+  return `${targetDate.getMonth() + 1}\u6708${targetDate.getDate()}\u65E5`;
 }
 
 function formatReminderDisplay(dateStr: string): string {
@@ -81,6 +100,7 @@ export default function ReminderPicker({
   currentReminder,
   onSelect,
   onClose,
+  workspaceDate,
 }: ReminderPickerProps) {
   const [mode, setMode] = useState<'quick' | 'calendar'>('quick');
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -88,45 +108,52 @@ export default function ReminderPicker({
   const [calendarHour, setCalendarHour] = useState(9);
   const [calendarMinute, setCalendarMinute] = useState(0);
 
+  const targetDate = getTargetDate(workspaceDate);
+  const isTargetToday = isSameDay(targetDate, new Date());
+  const targetDateLabel = formatTargetDateLabel(targetDate);
+  const quickOptions = buildQuickOptions(targetDate);
+
   const now = new Date();
-  const nextHour = now.getHours() + 1 > 23 ? 23 : now.getHours() + 1;
-  const [todayHour, setTodayHour] = useState(nextHour);
-  const [todayMinute, setTodayMinute] = useState(0);
+  const defaultHour = isTargetToday ? (now.getHours() + 1 > 23 ? 23 : now.getHours() + 1) : 9;
+  const [pickerHour, setPickerHour] = useState(defaultHour);
+  const [pickerMinute, setPickerMinute] = useState(0);
 
   useEffect(() => {
     if (visible) {
       const n = new Date();
-      const nh = n.getHours() + 1 > 23 ? 23 : n.getHours() + 1;
-      setTodayHour(nh);
-      setTodayMinute(0);
+      const td = getTargetDate(workspaceDate);
+      const isTd = isSameDay(td, n);
+      const nh = isTd ? (n.getHours() + 1 > 23 ? 23 : n.getHours() + 1) : 9;
+      setPickerHour(nh);
+      setPickerMinute(0);
     }
-  }, [visible]);
+  }, [visible, workspaceDate]);
 
-  const handleQuickOption = (option: (typeof QUICK_OPTIONS)[number]) => {
+  const handleQuickOption = (option: any) => {
     let date: Date;
     if ('minutes' in option && option.minutes) {
       date = new Date();
       date.setMinutes(date.getMinutes() + option.minutes);
-    } else if ('preset' in option && option.preset) {
-      date = getPresetTime(option.preset);
+    } else if ('hour' in option) {
+      date = new Date(targetDate);
+      date.setHours(option.hour, option.minute || 0, 0, 0);
+      if (date <= new Date()) return;
     } else {
       return;
     }
     onSelect(date.toISOString());
   };
 
-  const handleTodayTimeConfirm = () => {
-    const date = new Date();
-    date.setHours(todayHour, todayMinute, 0, 0);
-    if (date <= new Date()) {
-      return;
-    }
+  const handleTimeConfirm = () => {
+    const date = new Date(targetDate);
+    date.setHours(pickerHour, pickerMinute, 0, 0);
+    if (date <= new Date()) return;
     onSelect(date.toISOString());
   };
 
-  const isTodayTimeValid = () => {
-    const date = new Date();
-    date.setHours(todayHour, todayMinute, 0, 0);
+  const isTimeValid = () => {
+    const date = new Date(targetDate);
+    date.setHours(pickerHour, pickerMinute, 0, 0);
     return date > new Date();
   };
 
@@ -199,48 +226,50 @@ export default function ReminderPicker({
         {mode === 'quick' ? (
           <ScrollView style={styles.quickContainer} showsVerticalScrollIndicator={false}>
             <View style={styles.todayTimeSection}>
-              <Text style={styles.todayTimeSectionTitle}>今日の時間を指定</Text>
+              <Text style={styles.todayTimeSectionTitle}>{targetDateLabel}{'\u306E\u6642\u9593\u3092\u6307\u5B9A'}</Text>
               <View style={styles.wheelRow}>
                 <WheelPicker
                   items={HOUR_ITEMS}
-                  selectedValue={todayHour}
-                  onValueChange={setTodayHour}
+                  selectedValue={pickerHour}
+                  onValueChange={setPickerHour}
                   width={80}
                 />
                 <Text style={styles.wheelColon}>:</Text>
                 <WheelPicker
                   items={MINUTE_ITEMS}
-                  selectedValue={todayMinute}
-                  onValueChange={setTodayMinute}
+                  selectedValue={pickerMinute}
+                  onValueChange={setPickerMinute}
                   width={80}
                 />
               </View>
               <Text style={styles.todayTimePreview}>
-                今日 {todayHour.toString().padStart(2, '0')}:{todayMinute.toString().padStart(2, '0')}
+                {targetDateLabel} {pickerHour.toString().padStart(2, '0')}:{pickerMinute.toString().padStart(2, '0')}
               </Text>
               <TouchableOpacity
-                style={[styles.confirmBtn, !isTodayTimeValid() && styles.confirmBtnDisabled]}
-                disabled={!isTodayTimeValid()}
-                onPress={handleTodayTimeConfirm}
+                style={[styles.confirmBtn, !isTimeValid() && styles.confirmBtnDisabled]}
+                disabled={!isTimeValid()}
+                onPress={handleTimeConfirm}
               >
-                <Text style={styles.confirmBtnText}>この時間に設定</Text>
+                <Text style={styles.confirmBtnText}>{'\u3053\u306E\u6642\u9593\u306B\u8A2D\u5B9A'}</Text>
               </TouchableOpacity>
-              {!isTodayTimeValid() && (
-                <Text style={styles.pastWarning}>過去の時間は設定できません</Text>
+              {!isTimeValid() && (
+                <Text style={styles.pastWarning}>{'\u904E\u53BB\u306E\u6642\u9593\u306F\u8A2D\u5B9A\u3067\u304D\u307E\u305B\u3093'}</Text>
               )}
             </View>
 
             <View style={styles.todayTimeSectionDivider} />
 
             <View style={styles.quickList}>
-              {QUICK_OPTIONS.map((opt) => (
+              {quickOptions.map((opt: any) => (
                 <TouchableOpacity
                   key={opt.label}
                   style={styles.quickOption}
                   onPress={() => handleQuickOption(opt)}
                 >
                   <Bell size={16} color="#e67e22" />
-                  <Text style={styles.quickOptionText}>{opt.label}</Text>
+                  <Text style={styles.quickOptionText}>
+                    {isTargetToday ? opt.label : `${targetDateLabel} ${opt.label}`}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
