@@ -5,22 +5,19 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
+  FlatList,
   Dimensions,
   Modal,
   AppState,
-  NativeSyntheticEvent,
-  NativeScrollEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Workspace, Todo, UserSettings, WorkspaceType } from '@/types/database';
+import { Workspace, Todo, UserSettings } from '@/types/database';
 import WorkspacePage from '@/components/WorkspacePage';
 
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const PAGE_HEIGHT = SCREEN_HEIGHT - 140;
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface PageData {
   workspace: Workspace | null;
@@ -38,11 +35,10 @@ export default function WorkspaceScreen() {
   const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
-  const isScrollingProgrammatically = useRef(false);
+  const flatListRef = useRef<FlatList>(null);
   const previousWorkspaceType = useRef<string | null>(null);
   const loadedDates = useRef<Set<string>>(new Set());
-  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 2 });
+  const initialScrollDone = useRef(false);
 
   useEffect(() => {
     if (!user) return;
@@ -92,6 +88,15 @@ export default function WorkspaceScreen() {
       loadVisiblePages(currentIndex);
     }
   }, [currentIndex, workspaceDates, settings]);
+
+  useEffect(() => {
+    if (workspaceDates.length > 0 && !initialScrollDone.current) {
+      initialScrollDone.current = true;
+      setTimeout(() => {
+        flatListRef.current?.scrollToIndex({ index: currentIndex, animated: false });
+      }, 100);
+    }
+  }, [workspaceDates]);
 
   const loadSettings = async () => {
     try {
@@ -157,13 +162,15 @@ export default function WorkspaceScreen() {
       setWorkspaceDates(sortedDates);
       setTodosWorkspaceCount(pastDatesWithTodos.length);
 
+      let newIndex = 0;
       if (currentDateString) {
         const preservedIndex = sortedDates.indexOf(currentDateString);
-        setCurrentIndex(preservedIndex >= 0 ? preservedIndex : 0);
+        newIndex = preservedIndex >= 0 ? preservedIndex : 0;
       } else {
         const todayIndex = sortedDates.indexOf(today);
-        setCurrentIndex(todayIndex >= 0 ? todayIndex : 0);
+        newIndex = todayIndex >= 0 ? todayIndex : 0;
       }
+      setCurrentIndex(newIndex);
     } catch (error) {
       console.error('Error loading workspace dates:', error);
     }
@@ -175,7 +182,6 @@ export default function WorkspaceScreen() {
     const rangePadding = 2;
     const startIdx = Math.max(0, centerIndex - rangePadding);
     const endIdx = Math.min(workspaceDates.length - 1, centerIndex + rangePadding);
-    setVisibleRange({ start: startIdx, end: endIdx });
 
     for (let i = startIdx; i <= endIdx; i++) {
       const dateStr = workspaceDates[i];
@@ -314,25 +320,64 @@ export default function WorkspaceScreen() {
     loadWorkspaceDates(true);
   }, [settings, workspaceDates, currentIndex]);
 
-  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (isScrollingProgrammatically.current) return;
-    const offsetY = e.nativeEvent.contentOffset.y;
-    const pageIndex = Math.round(offsetY / PAGE_HEIGHT);
-    const actualIndex = visibleRange.start + pageIndex;
-    if (actualIndex !== currentIndex && actualIndex >= 0 && actualIndex < workspaceDates.length) {
-      setCurrentIndex(actualIndex);
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      const centerItem = viewableItems[Math.floor(viewableItems.length / 2)] || viewableItems[0];
+      if (centerItem) {
+        setCurrentIndex(centerItem.index);
+      }
     }
-  }, [currentIndex, workspaceDates.length, visibleRange.start]);
+  }).current;
 
-  const scrollToIndex = (index: number) => {
-    const localIndex = index - visibleRange.start;
-    if (localIndex >= 0) {
-      isScrollingProgrammatically.current = true;
-      scrollRef.current?.scrollTo({ y: localIndex * PAGE_HEIGHT, animated: true });
-      setTimeout(() => { isScrollingProgrammatically.current = false; }, 500);
-    }
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 60,
+  }).current;
+
+  const scrollToIndex = useCallback((index: number) => {
     setCurrentIndex(index);
-  };
+    flatListRef.current?.scrollToIndex({ index, animated: true });
+  }, []);
+
+  const getItemLayout = useCallback((_: any, index: number) => ({
+    length: SCREEN_WIDTH,
+    offset: SCREEN_WIDTH * index,
+    index,
+  }), []);
+
+  const renderItem = useCallback(({ item: dateStr, index }: { item: string; index: number }) => {
+    const pageData = pagesData.get(dateStr);
+    const todayStr = formatDate(new Date());
+    const isToday = dateStr === todayStr;
+
+    return (
+      <View style={styles.pageWrapper}>
+        <View style={styles.pageDateHeader}>
+          <View style={[styles.pageDateBadge, isToday && styles.pageDateBadgeToday]}>
+            <Text style={[styles.pageDateText, isToday && styles.pageDateTextToday]}>
+              {formatDateShort(dateStr)}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.pageContent}>
+          {pageData?.workspace && settings ? (
+            <WorkspacePage
+              workspace={pageData.workspace}
+              todos={pageData.todos}
+              settings={settings}
+              onTodosChange={handleTodosChange}
+              onWorkspaceChange={handleWorkspaceChange}
+              onDataChanged={handleDataChanged}
+              isCurrentPage={index === currentIndex}
+            />
+          ) : (
+            <View style={styles.pageLoading}>
+              <Text style={styles.pageLoadingText}>{'\u8AAD\u307F\u8FBC\u307F\u4E2D...'}</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  }, [pagesData, settings, currentIndex, handleTodosChange, handleWorkspaceChange, handleDataChanged]);
 
   const formatDate = (date: Date): string => {
     const year = date.getFullYear();
@@ -458,8 +503,6 @@ export default function WorkspaceScreen() {
     : null;
   const currentTitle = currentPageData?.workspace?.title || '';
 
-  const visibleDates = workspaceDates.slice(visibleRange.start, visibleRange.end + 1);
-
   if (!settings || workspaceDates.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
@@ -494,54 +537,28 @@ export default function WorkspaceScreen() {
         <Text style={styles.pageIndicator}>{todosWorkspaceCount} {'\u30DA\u30FC\u30B8'}</Text>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scrollContainer}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        snapToInterval={PAGE_HEIGHT}
-        decelerationRate="fast"
-        snapToAlignment="start"
-      >
-        {visibleDates.map((dateStr, idx) => {
-          const pageData = pagesData.get(dateStr);
-          const globalIdx = visibleRange.start + idx;
-          const todayStr = formatDate(new Date());
-          const isToday = dateStr === todayStr;
-
-          return (
-            <View key={dateStr} style={[styles.pageWrapper, { height: PAGE_HEIGHT }]}>
-              <View style={styles.pageDateHeader}>
-                <View style={styles.pageDateLine} />
-                <View style={[styles.pageDateBadge, isToday && styles.pageDateBadgeToday]}>
-                  <Text style={[styles.pageDateText, isToday && styles.pageDateTextToday]}>
-                    {formatDateShort(dateStr)}
-                  </Text>
-                </View>
-                <View style={styles.pageDateLine} />
-              </View>
-              <View style={styles.pageContent}>
-                {pageData?.workspace && settings ? (
-                  <WorkspacePage
-                    workspace={pageData.workspace}
-                    todos={pageData.todos}
-                    settings={settings}
-                    onTodosChange={handleTodosChange}
-                    onWorkspaceChange={handleWorkspaceChange}
-                    onDataChanged={handleDataChanged}
-                    isCurrentPage={globalIdx === currentIndex}
-                  />
-                ) : (
-                  <View style={styles.pageLoading}>
-                    <Text style={styles.pageLoadingText}>{'\u8AAD\u307F\u8FBC\u307F\u4E2D...'}</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+      <FlatList
+        ref={flatListRef}
+        data={workspaceDates}
+        renderItem={renderItem}
+        keyExtractor={(item) => item}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        initialScrollIndex={currentIndex}
+        onScrollToIndexFailed={(info) => {
+          setTimeout(() => {
+            flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
+          }, 100);
+        }}
+        maxToRenderPerBatch={3}
+        windowSize={5}
+        removeClippedSubviews={false}
+        style={styles.flatList}
+      />
 
       <Modal
         visible={isDatePickerVisible}
@@ -607,16 +624,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e5e5e5',
+    zIndex: 10,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flex: 1,
   },
   dateContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexShrink: 1,
   },
   todayJumpBtn: {
     paddingHorizontal: 10,
@@ -637,25 +657,19 @@ const styles = StyleSheet.create({
   pageIndicator: {
     fontSize: 14,
     color: '#666',
+    marginLeft: 8,
   },
-  scrollContainer: {
+  flatList: {
     flex: 1,
   },
   pageWrapper: {
-    overflow: 'hidden',
+    width: SCREEN_WIDTH,
+    flex: 1,
   },
   pageDateHeader: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
     paddingVertical: 6,
     backgroundColor: '#f5f5dc',
-  },
-  pageDateLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#d4af37',
-    opacity: 0.4,
   },
   pageDateBadge: {
     paddingHorizontal: 14,
@@ -664,7 +678,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#d4af37',
-    marginHorizontal: 10,
   },
   pageDateBadgeToday: {
     backgroundColor: '#222',

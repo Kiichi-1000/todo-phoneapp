@@ -22,7 +22,7 @@ import ReminderPicker from '@/components/ReminderPicker';
 import { scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
 import PostitMenu from '@/components/PostitMenu';
 
-const SCREEN_HEIGHT = Dimensions.get('window').height;
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface WorkspacePageProps {
   workspace: Workspace;
@@ -626,7 +626,8 @@ export default function WorkspacePage({
 
 const styles = StyleSheet.create({
   pageContainer: {
-    height: SCREEN_HEIGHT - 140,
+    width: SCREEN_WIDTH,
+    flex: 1,
     backgroundColor: '#f5f5dc',
   },
   grid: {
