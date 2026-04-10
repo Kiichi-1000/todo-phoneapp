@@ -157,7 +157,7 @@ export default function WorkspaceScreen() {
 
       const allDates = [...pastDatesWithTodos, ...futureDates];
       const sortedDates = Array.from(new Set(allDates)).sort(
-        (a, b) => new Date(b).getTime() - new Date(a).getTime()
+        (a, b) => new Date(a).getTime() - new Date(b).getTime()
       );
       setWorkspaceDates(sortedDates);
       setTodosWorkspaceCount(pastDatesWithTodos.length);
@@ -346,18 +346,9 @@ export default function WorkspaceScreen() {
 
   const renderItem = useCallback(({ item: dateStr, index }: { item: string; index: number }) => {
     const pageData = pagesData.get(dateStr);
-    const todayStr = formatDate(new Date());
-    const isToday = dateStr === todayStr;
 
     return (
       <View style={styles.pageWrapper}>
-        <View style={styles.pageDateHeader}>
-          <View style={[styles.pageDateBadge, isToday && styles.pageDateBadgeToday]}>
-            <Text style={[styles.pageDateText, isToday && styles.pageDateTextToday]}>
-              {formatDateShort(dateStr)}
-            </Text>
-          </View>
-        </View>
         <View style={styles.pageContent}>
           {pageData?.workspace && settings ? (
             <WorkspacePage
@@ -392,14 +383,6 @@ export default function WorkspaceScreen() {
     const day = date.getDate();
     const dayOfWeek = ['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'][date.getDay()];
     return `${year}\u5E74${month}\u6708${day}\u65E5 (${dayOfWeek})`;
-  };
-
-  const formatDateShort = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const dayOfWeek = ['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'][date.getDay()];
-    return `${month}\u6708${day}\u65E5 (${dayOfWeek})`;
   };
 
   const getDaysInMonth = (date: Date) => {
@@ -439,7 +422,7 @@ export default function WorkspaceScreen() {
     let targetIndex = workspaceDates.indexOf(dateString);
     if (targetIndex === -1) {
       const newDates = [...workspaceDates, dateString].sort(
-        (a, b) => new Date(b).getTime() - new Date(a).getTime()
+        (a, b) => new Date(a).getTime() - new Date(b).getTime()
       );
       setWorkspaceDates(newDates);
       targetIndex = newDates.indexOf(dateString);
@@ -514,7 +497,7 @@ export default function WorkspaceScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <TouchableOpacity style={styles.dateContainer} onPress={() => setIsDatePickerVisible(true)}>
@@ -665,31 +648,6 @@ const styles = StyleSheet.create({
   pageWrapper: {
     width: SCREEN_WIDTH,
     flex: 1,
-  },
-  pageDateHeader: {
-    alignItems: 'center',
-    paddingVertical: 6,
-    backgroundColor: '#f5f5dc',
-  },
-  pageDateBadge: {
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#d4af37',
-  },
-  pageDateBadgeToday: {
-    backgroundColor: '#222',
-    borderColor: '#222',
-  },
-  pageDateText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8B7355',
-  },
-  pageDateTextToday: {
-    color: '#fff',
   },
   pageContent: {
     flex: 1,

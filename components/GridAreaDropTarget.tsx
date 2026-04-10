@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fffacd',
     borderRadius: 2,
-    marginHorizontal: 3,
+    marginHorizontal: 2,
     padding: 10,
     shadowColor: '#000',
     shadowOffset: { width: 2, height: 2 },
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   areaTitleContainer: {
     flex: 1,
@@ -321,7 +321,7 @@ const styles = StyleSheet.create({
     height: 4,
     backgroundColor: '#f5f5dc',
     borderRadius: 2,
-    marginBottom: 12,
+    marginBottom: 8,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#d4af37',
@@ -349,7 +349,7 @@ const styles = StyleSheet.create({
   },
   todoList: {
     flex: 1,
-    marginBottom: 4,
+    marginBottom: 0,
   },
   inlineAddInput: {
     fontSize: 12,

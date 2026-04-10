@@ -435,7 +435,7 @@ export default function WorkspacePage({
   const renderFourGrid = () => (
     <DragDropProvider>
       <View style={styles.grid}>
-        <View style={styles.gridRow}>
+        <View style={[styles.gridRow, styles.gridRowTop]}>
           {renderGridArea('top_left')}
           {renderGridArea('top_right')}
         </View>
@@ -633,12 +633,17 @@ const styles = StyleSheet.create({
   },
   grid: {
     flex: 1,
-    padding: 4,
+    paddingHorizontal: 3,
+    paddingTop: 2,
+    paddingBottom: 1,
   },
   gridRow: {
     flex: 1,
     flexDirection: 'row',
-    marginBottom: 4,
+    marginBottom: 0,
+  },
+  gridRowTop: {
+    marginBottom: 3,
   },
   dragGhost: {
     position: 'absolute',
@@ -682,12 +687,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   postitsContent: {
-    padding: 16,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   postit: {
     backgroundColor: '#fffacd',
     width: '100%',
-    padding: 16,
+    padding: 14,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#ffd700',
@@ -696,7 +703,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   postitRow: {
     flexDirection: 'row',
@@ -802,7 +809,7 @@ const styles = StyleSheet.create({
   postitInputCard: {
     backgroundColor: '#fffacd',
     width: '100%',
-    padding: 16,
+    padding: 14,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#ffd700',
@@ -811,7 +818,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   postitInputCardText: {
     fontSize: 14,
