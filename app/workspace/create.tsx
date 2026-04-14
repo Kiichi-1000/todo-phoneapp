@@ -46,7 +46,7 @@ export default function CreateWorkspaceScreen() {
         .not('area_titles', 'is', null)
         .order('date', { ascending: false })
         .limit(1)
-        .maybeSingle() as any;
+        .maybeSingle() as { data: { area_titles: any } | null; error: any };
 
       const inheritedTitles = {
         top_left: latestWs?.area_titles?.top_left || '左上エリア',
@@ -63,9 +63,9 @@ export default function CreateWorkspaceScreen() {
           date: selectedDate,
           user_id: user.id,
           area_titles: inheritedTitles,
-        } as any)
+        })
         .select()
-        .single() as any;
+        .single() as { data: { id: string } | null; error: any };
 
       if (error) {
         Alert.alert('エラー', `ワークスペースの作成に失敗しました: ${error.message}`);

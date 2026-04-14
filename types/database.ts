@@ -43,6 +43,7 @@ export type Schedule = {
 
 export type Todo = {
   id: string;
+  user_id: string;
   workspace_id: string;
   content: string;
   is_completed: boolean;
@@ -142,6 +143,7 @@ export type Database = {
           id?: string;
           created_at?: string;
           order?: number;
+          user_id: string;
         };
         Update: Partial<Omit<Todo, 'id'>>;
         Relationships: [

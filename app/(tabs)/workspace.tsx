@@ -110,7 +110,7 @@ export default function WorkspaceScreen() {
         if (!user) return;
         const { data: newSettings, error: insertError } = await supabase
           .from('user_settings')
-          .insert({ default_workspace_type: 'four_grid', user_id: user.id } as any)
+          .insert({ default_workspace_type: 'four_grid', user_id: user.id })
           .select()
           .single() as { data: UserSettings | null; error: any };
         if (insertError) throw insertError;
@@ -244,7 +244,7 @@ export default function WorkspaceScreen() {
             date: dateStr,
             user_id: user.id,
             area_titles: inheritedTitles,
-          } as any)
+          })
           .select()
           .single() as { data: Workspace | null; error: any };
 

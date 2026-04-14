@@ -107,7 +107,7 @@ function WorkspaceScreen() {
           position_y: null,
           completed_at: null,
           user_id: user.id,
-        } as any)
+        })
         .select()
         .single() as { data: Todo | null; error: any };
 

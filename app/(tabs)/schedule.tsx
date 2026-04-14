@@ -192,7 +192,7 @@ export default function ScheduleScreen() {
           color: '#E8654A',
           is_from_todo: true,
           source_todo_id: todo.id,
-        } as any);
+        });
       }
 
       await loadSchedules();
@@ -248,7 +248,7 @@ export default function ScheduleScreen() {
           color: data.color,
           is_from_todo: false,
           source_todo_id: null,
-        } as any);
+        });
         if (error) throw error;
       } else if (editingSchedule?.id) {
         const { error } = await supabase

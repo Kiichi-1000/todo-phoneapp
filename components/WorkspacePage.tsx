@@ -149,7 +149,7 @@ export default function WorkspacePage({
           content: taskContent,
           grid_area: gridArea,
           user_id: user.id,
-        } as any)
+        })
         .select()
         .single() as { data: Todo | null; error: any };
       if (error) throw error;
@@ -176,7 +176,7 @@ export default function WorkspacePage({
           position_x: Math.random() * 200 + 50,
           position_y: Math.random() * 200 + 50,
           user_id: user.id,
-        } as any)
+        })
         .select()
         .single() as { data: Todo | null; error: any };
       if (error) throw error;
