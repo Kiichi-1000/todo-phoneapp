@@ -5,6 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "expo start",
+    "go": "./scripts/start-expo-go.zsh",
+    "go:tunnel": "EXPO_HOST=tunnel ./scripts/start-expo-go.zsh",
+    "go:lan": "EXPO_HOST=lan ./scripts/start-expo-go.zsh",
     "build:web": "expo export --platform web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"

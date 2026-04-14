@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Workspace, Todo, UserSettings } from '@/types/database';
+import { Workspace, Todo, UserSettings, WorkspaceType } from '@/types/database';
 import WorkspacePage from '@/components/WorkspacePage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -191,7 +191,7 @@ export default function WorkspaceScreen() {
     }
   };
 
-  const loadPageData = async (dateStr: string, currentType: string) => {
+  const loadPageData = async (dateStr: string, currentType: WorkspaceType) => {
     try {
       const today = formatDate(new Date());
       const isFutureDate = dateStr >= today;
