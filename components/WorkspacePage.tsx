@@ -4,19 +4,16 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   TextInput,
-  Alert,
   Dimensions,
   Platform,
-  KeyboardAvoidingView,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Plus, Bell, ChevronUp, ChevronDown, Trash2 } from 'lucide-react-native';
+import { Plus, Bell, Check } from 'lucide-react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
-import { DragDropProvider } from '@/components/DragDropContext';
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
 import { scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
@@ -66,9 +63,98 @@ export default function WorkspacePage({
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
   const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
-  const [draggingTodo, setDraggingTodo] = useState<Todo | null>(null);
-  const [draggingSourceArea, setDraggingSourceArea] = useState<GridArea | null>(null);
-  const [dragGhostPos, setDragGhostPos] = useState({ x: 0, y: 0 });
+  const [isReorderMode, setIsReorderMode] = useState(false);
+
+  const enterReorderMode = useCallback(() => {
+    if (workspace.type !== 'four_grid') return;
+    setIsReorderMode(true);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
+  }, [workspace.type]);
+
+  const exitReorderMode = useCallback(() => {
+    setIsReorderMode(false);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, []);
+
+  const persistAreaOrder = useCallback(async (area: GridArea, reorderedAreaTodos: Todo[]) => {
+    const updates = reorderedAreaTodos.map((t, i) => ({ id: t.id, order: i }));
+    const idToOrder = new Map(updates.map(u => [u.id, u.order]));
+    const updatedTodos = todos.map(t =>
+      idToOrder.has(t.id) ? { ...t, order: idToOrder.get(t.id) as number } : t
+    );
+    onTodosChange(workspace.id, updatedTodos);
+
+    const results = await Promise.all(
+      updates.map(u =>
+        supabase.from('todos').update({ order: u.order }).eq('id', u.id)
+      )
+    );
+    const failed = results.filter(r => r.error);
+    if (failed.length > 0) {
+      console.error('persistAreaOrder: Supabase error(s)', failed.map(f => f.error));
+    }
+  }, [todos, workspace.id, onTodosChange]);
+
+  const moveTodoToArea = useCallback(async (todo: Todo, targetArea: GridArea) => {
+    if (todo.grid_area === targetArea) return;
+    const sourceArea = todo.grid_area;
+
+    const targetAreaTodos = todos
+      .filter(t => t.grid_area === targetArea)
+      .sort((a, b) => a.order - b.order);
+    const sourceAreaTodos = sourceArea
+      ? todos
+          .filter(t => t.grid_area === sourceArea && t.id !== todo.id)
+          .sort((a, b) => a.order - b.order)
+      : [];
+
+    const newTargetList = [...targetAreaTodos, { ...todo, grid_area: targetArea }];
+
+    const targetUpdates = newTargetList.map((t, i) => ({
+      id: t.id,
+      order: i,
+      grid_area: targetArea as GridArea,
+    }));
+    const sourceUpdates = sourceAreaTodos.map((t, i) => ({
+      id: t.id,
+      order: i,
+      grid_area: sourceArea as GridArea | null,
+    }));
+    const allUpdates = [...targetUpdates, ...sourceUpdates];
+    const updateMap = new Map(allUpdates.map(u => [u.id, u]));
+
+    const updatedTodos = todos.map(t => {
+      const u = updateMap.get(t.id);
+      if (!u) return t;
+      return { ...t, order: u.order, grid_area: u.grid_area };
+    });
+    onTodosChange(workspace.id, updatedTodos);
+
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+
+    try {
+      await Promise.all(
+        targetUpdates.map(u =>
+          supabase.from('todos')
+            .update({ order: u.order, grid_area: u.grid_area })
+            .eq('id', u.id)
+        )
+      );
+      await Promise.all(
+        sourceUpdates.map(u =>
+          supabase.from('todos').update({ order: u.order }).eq('id', u.id)
+        )
+      );
+    } catch (error) {
+      console.error('Error moving todo across areas:', error);
+    }
+  }, [todos, workspace.id, onTodosChange]);
 
   const startEditingAreaName = (area: GridArea) => {
     setEditingArea(area);
@@ -109,6 +195,7 @@ export default function WorkspacePage({
   };
 
   const startEditingTodo = (todo: Todo) => {
+    setIsReorderMode(false);
     setEditingTodo(todo);
     setEditingTodoText(todo.content);
   };
@@ -142,6 +229,8 @@ export default function WorkspacePage({
     const taskContent = content || newTodoContent[gridArea].trim();
     if (!taskContent) return;
     try {
+      const areaTodos = todos.filter(t => t.grid_area === gridArea);
+      const maxOrder = areaTodos.length > 0 ? Math.max(...areaTodos.map(t => t.order)) : -1;
       const { data, error } = await supabase
         .from('todos')
         .insert({
@@ -149,6 +238,7 @@ export default function WorkspacePage({
           content: taskContent,
           grid_area: gridArea,
           user_id: user.id,
+          order: maxOrder + 1,
         })
         .select()
         .single() as { data: Todo | null; error: any };
@@ -166,6 +256,8 @@ export default function WorkspacePage({
   const handleAddPostit = async () => {
     if (!user || !newTaskText.trim()) return;
     try {
+      const postitTodos = todos.filter(t => t.grid_area === null);
+      const maxOrder = postitTodos.length > 0 ? Math.max(...postitTodos.map(t => t.order)) : -1;
       const { data: newTodo, error } = await supabase
         .from('todos')
         .insert({
@@ -176,6 +268,7 @@ export default function WorkspacePage({
           position_x: Math.random() * 200 + 50,
           position_y: Math.random() * 200 + 50,
           user_id: user.id,
+          order: maxOrder + 1,
         })
         .select()
         .single() as { data: Todo | null; error: any };
@@ -213,6 +306,7 @@ export default function WorkspacePage({
   };
 
   const deleteTodo = async (todoId: string) => {
+    setIsReorderMode(false);
     try {
       const todoToDelete = todos.find(t => t.id === todoId);
       if (todoToDelete?.notification_id) {
@@ -229,10 +323,12 @@ export default function WorkspacePage({
   };
 
   const openReminderPicker = (todo: Todo) => {
+    setIsReorderMode(false);
     setReminderTodo(todo);
   };
 
   const clearReminder = async (todo: Todo) => {
+    setIsReorderMode(false);
     try {
       if (todo.notification_id) {
         await cancelReminderNotification(todo.notification_id);
@@ -279,103 +375,30 @@ export default function WorkspacePage({
     setReminderTodo(null);
   };
 
-  const onItemDragStart = useCallback((todo: Todo, area: GridArea, absoluteX: number, absoluteY: number) => {
-    setDraggingTodo(todo);
-    setDraggingSourceArea(area);
-    setDragGhostPos({ x: absoluteX - 80, y: absoluteY - 20 });
-  }, []);
-
-  const onItemDragMove = useCallback((absoluteX: number, absoluteY: number) => {
-    setDragGhostPos({ x: absoluteX - 80, y: absoluteY - 20 });
-  }, []);
-
-  const onItemDragDrop = useCallback(async (todo: Todo, sourceArea: GridArea, absoluteX: number, absoluteY: number) => {
-    if (!draggingTodo) {
-      setDraggingTodo(null);
-      setDraggingSourceArea(null);
-      return;
-    }
-    const targetArea = getTargetAreaFromPosition(absoluteX, absoluteY);
-    setDraggingTodo(null);
-    setDraggingSourceArea(null);
-    if (!targetArea) return;
-    if (sourceArea !== targetArea) {
-      try {
-        const { error } = await supabase
-          .from('todos')
-          .update({ grid_area: targetArea })
-          .eq('id', todo.id);
-        if (error) throw error;
-        const updated = todos.map(t => t.id === todo.id ? { ...t, grid_area: targetArea } : t);
-        onTodosChange(workspace.id, updated);
-        if (Platform.OS !== 'web') {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      } catch (error) {
-        console.error('Error moving todo:', error);
-      }
-    }
-  }, [draggingTodo, todos, workspace.id, onTodosChange]);
-
-  const getTargetAreaFromPosition = (absoluteX: number, absoluteY: number): GridArea | null => {
-    const screenWidth = Dimensions.get('window').width;
-    const headerHeight = 100;
-    const gridHeight = (Dimensions.get('window').height - headerHeight) / 2;
-    const midX = screenWidth / 2;
-    const midY = headerHeight + gridHeight;
-    if (absoluteY < headerHeight) return null;
-    if (absoluteX < midX && absoluteY < midY) return 'top_left';
-    if (absoluteX >= midX && absoluteY < midY) return 'top_right';
-    if (absoluteX < midX && absoluteY >= midY) return 'bottom_left';
-    if (absoluteX >= midX && absoluteY >= midY) return 'bottom_right';
-    return null;
-  };
-
-  const handleDragEnd = async (todoId: string, sourceArea: GridArea, targetArea: GridArea) => {
-    try {
-      if (sourceArea === targetArea) return;
-      const { error } = await supabase
-        .from('todos')
-        .update({ grid_area: targetArea })
-        .eq('id', todoId);
-      if (error) throw error;
-      const updated = todos.map(t => t.id === todoId ? { ...t, grid_area: targetArea } : t);
-      onTodosChange(workspace.id, updated);
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (error) {
-      console.error('Error moving todo:', error);
-    }
-  };
-
   const movePostit = async (todo: Todo, direction: 'up' | 'down') => {
     try {
       const postitTodos = todos
         .filter(t => t.grid_area === null)
-        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        .sort((a, b) => a.order - b.order);
       const idx = postitTodos.findIndex(t => t.id === todo.id);
       if (direction === 'up' && idx === 0) return;
       if (direction === 'down' && idx === postitTodos.length - 1) return;
       const newIndex = direction === 'up' ? idx - 1 : idx + 1;
-      const targetTodo = postitTodos[newIndex];
-      const tempCreatedAt = todo.created_at;
-      const { error: error1 } = await supabase
-        .from('todos')
-        .update({ created_at: targetTodo.created_at })
-        .eq('id', todo.id);
-      if (error1) throw error1;
-      const { error: error2 } = await supabase
-        .from('todos')
-        .update({ created_at: tempCreatedAt })
-        .eq('id', targetTodo.id);
-      if (error2) throw error2;
-      const updated = todos.map(t => {
-        if (t.id === todo.id) return { ...t, created_at: targetTodo.created_at };
-        if (t.id === targetTodo.id) return { ...t, created_at: tempCreatedAt };
-        return t;
+
+      const reordered = [...postitTodos];
+      const [moved] = reordered.splice(idx, 1);
+      reordered.splice(newIndex, 0, moved);
+
+      const updates = reordered.map((t, i) => ({ id: t.id, order: i }));
+      const updatedTodos = todos.map(t => {
+        const u = updates.find(u => u.id === t.id);
+        return u ? { ...t, order: u.order } : t;
       });
-      onTodosChange(workspace.id, updated);
+      onTodosChange(workspace.id, updatedTodos);
+
+      for (const u of updates) {
+        await supabase.from('todos').update({ order: u.order }).eq('id', u.id);
+      }
       if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -385,9 +408,7 @@ export default function WorkspacePage({
   };
 
   const getTodosForArea = (area: GridArea) => {
-    return todos.filter(t => t.grid_area === area).sort((a, b) =>
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
+    return todos.filter(t => t.grid_area === area).sort((a, b) => a.order - b.order);
   };
 
   const getProgressForArea = (area: GridArea) => {
@@ -420,49 +441,65 @@ export default function WorkspacePage({
         startEditingTodo={startEditingTodo}
         toggleTodo={toggleTodo}
         deleteTodo={deleteTodo}
-        handleDragEnd={handleDragEnd}
         onQuickAdd={addTodo}
         onReminderPress={openReminderPicker}
         onClearReminder={clearReminder}
-        onDragStart={onItemDragStart}
-        onDragMove={onItemDragMove}
-        onDragDrop={onItemDragDrop}
-        draggingTodoId={draggingTodo?.id ?? null}
+        isReorderMode={isReorderMode}
+        onReorderEnd={persistAreaOrder}
+        onMoveToArea={moveTodoToArea}
+        onActivateReorderMode={enterReorderMode}
       />
     );
   };
 
+  const reorderActivationGesture = Gesture.LongPress()
+    .minDuration(300)
+    .maxDistance(10)
+    .runOnJS(true)
+    .onStart(() => {
+      if (!isReorderMode) {
+        enterReorderMode();
+      }
+    });
+
   const renderFourGrid = () => (
-    <DragDropProvider>
-      <View style={styles.grid}>
-        <View style={[styles.gridRow, styles.gridRowTop]}>
-          {renderGridArea('top_left')}
-          {renderGridArea('top_right')}
-        </View>
-        <View style={styles.gridRow}>
-          {renderGridArea('bottom_left')}
-          {renderGridArea('bottom_right')}
-        </View>
-      </View>
-      {draggingTodo && (
-        <View
-          pointerEvents="none"
-          style={[styles.dragGhost, { left: dragGhostPos.x, top: dragGhostPos.y }]}
-        >
-          <View style={styles.dragGhostInner}>
-            <Text style={styles.dragGhostText} numberOfLines={2}>
-              {draggingTodo.content}
-            </Text>
-          </View>
+    <View style={styles.fourGridContainer}>
+      {isReorderMode && (
+        <View style={styles.reorderBar}>
+          <TouchableOpacity style={styles.reorderDoneButton} onPress={exitReorderMode}>
+            <Check size={14} color="#fff" />
+            <Text style={styles.reorderDoneText}>完了</Text>
+          </TouchableOpacity>
         </View>
       )}
-    </DragDropProvider>
+      {/*
+        背面: 余白の長押しのみ並べ替えモードへ（pointerEvents: box-none のレイヤーを通過）
+        前面: 4エリアのタスクグリッドは常にタッチを奪う → 長押しはタスクメニュー用
+      */}
+      <View style={styles.gridWorkspace}>
+        <GestureDetector gesture={reorderActivationGesture}>
+          <View style={styles.reorderHitLayer} collapsable={false} />
+        </GestureDetector>
+        <View style={styles.gridForeground} collapsable={false}>
+          <View style={styles.grid}>
+            <View style={styles.gridRow}>
+              {renderGridArea('top_left')}
+              {renderGridArea('top_right')}
+            </View>
+            <View style={styles.gridRow}>
+              {renderGridArea('bottom_left')}
+              {renderGridArea('bottom_right')}
+            </View>
+          </View>
+        </View>
+      </View>
+    </View>
   );
 
   const renderIndividual = () => {
     const sortedPostits = todos
       .filter(t => t.grid_area === null)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .sort((a, b) => a.order - b.order);
 
     return (
       <View style={styles.individualContainer}>
@@ -631,44 +668,56 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5dc',
   },
+  fourGridContainer: {
+    flex: 1,
+  },
+  gridWorkspace: {
+    flex: 1,
+    position: 'relative',
+  },
+  reorderHitLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+    backgroundColor: 'transparent',
+  },
+  gridForeground: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
+    pointerEvents: 'box-none',
+  },
   grid: {
     flex: 1,
-    paddingHorizontal: 3,
-    paddingTop: 2,
-    paddingBottom: 1,
+    padding: 12,
+    rowGap: 8,
+    pointerEvents: 'box-none',
   },
   gridRow: {
     flex: 1,
     flexDirection: 'row',
-    marginBottom: 0,
+    columnGap: 8,
+    pointerEvents: 'box-none',
   },
-  gridRowTop: {
-    marginBottom: 3,
+  reorderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    backgroundColor: '#8e44ad',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  dragGhost: {
-    position: 'absolute',
-    zIndex: 9999,
-    opacity: 0.85,
-    transform: [{ scale: 1.05 }],
+  reorderDoneButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
-  dragGhostInner: {
-    backgroundColor: '#fffacd',
-    borderRadius: 4,
-    borderLeftWidth: 3,
-    borderLeftColor: '#ff6b6b',
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    minWidth: 160,
-    maxWidth: 200,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
-  },
-  dragGhostText: {
-    fontSize: 13,
-    color: '#2c3e50',
+  reorderDoneText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   individualContainer: {
     flex: 1,

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-EXPO_HOST="${EXPO_HOST:-tunnel}"
+EXPO_HOST="${EXPO_HOST:-lan}"
 EXPO_PORT="${EXPO_PORT:-8081}"
 
 export NVM_DIR="$HOME/.nvm"
@@ -33,4 +33,4 @@ if lsof -ti tcp:"$EXPO_PORT" >/dev/null 2>&1; then
 fi
 
 echo "[INFO] Starting Expo Go (host=$EXPO_HOST, port=$EXPO_PORT)..."
-exec env -u CI EXPO_NO_TELEMETRY=1 npx expo start --go --host "$EXPO_HOST" --port "$EXPO_PORT" --clear
+exec env -u CI EXPO_NO_TELEMETRY=1 npx expo start --go --host "$EXPO_HOST" --port "$EXPO_PORT"

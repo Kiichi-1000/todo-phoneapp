@@ -1,15 +1,14 @@
-import { useRef, useEffect, useState } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  TextInput,
-  Keyboard,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, Keyboard, Platform,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
+import DraggableFlatList, {
+  RenderItemParams,
+  ScaleDecorator,
+} from 'react-native-draggable-flatlist';
 import { Todo, GridArea } from '@/types/database';
-import { useDragDrop } from './DragDropContext';
 import DraggableTodoItem from './DraggableTodoItem';
 
 interface GridAreaDropTargetProps {
@@ -31,24 +30,21 @@ interface GridAreaDropTargetProps {
   startEditingTodo: (todo: Todo) => void;
   toggleTodo: (todo: Todo) => void;
   deleteTodo: (todoId: string) => void;
-  handleDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
   onQuickAdd: (area: GridArea, content: string) => void;
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
-  onDragStart?: (todo: Todo, area: GridArea, absoluteX: number, absoluteY: number) => void;
-  onDragMove?: (absoluteX: number, absoluteY: number) => void;
-  onDragDrop?: (todo: Todo, sourceArea: GridArea, absoluteX: number, absoluteY: number) => void;
-  draggingTodoId?: string | null;
+  isReorderMode?: boolean;
+  onReorderEnd?: (area: GridArea, reorderedAreaTodos: Todo[]) => void;
+  onMoveToArea?: (todo: Todo, targetArea: GridArea) => void;
+  onActivateReorderMode?: () => void;
 }
 
 function InlineAddInput({
   area,
   onQuickAdd,
-  onFocus,
 }: {
   area: GridArea;
   onQuickAdd: (area: GridArea, content: string) => void;
-  onFocus?: () => void;
 }) {
   const [text, setText] = useState('');
 
@@ -71,7 +67,6 @@ function InlineAddInput({
       onSubmitEditing={handleSubmit}
       blurOnSubmit
       returnKeyType="done"
-      onFocus={onFocus}
     />
   );
 }
@@ -95,109 +90,39 @@ export default function GridAreaDropTarget({
   startEditingTodo,
   toggleTodo,
   deleteTodo,
-  handleDragEnd,
   onQuickAdd,
   onReminderPress,
   onClearReminder,
-  onDragStart,
-  onDragMove,
-  onDragDrop,
-  draggingTodoId,
+  isReorderMode = false,
+  onReorderEnd,
+  onMoveToArea,
+  onActivateReorderMode,
 }: GridAreaDropTargetProps) {
-  const { dragState, hoveredArea, registerArea } = useDragDrop();
-  const viewRef = useRef<View>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const [dragSession, setDragSession] = useState(0);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (viewRef.current) {
-        viewRef.current.measureInWindow((x, y, width, height) => {
-          if (width > 0 && height > 0) {
-            registerArea(area, { x, y, width, height });
+  const activateReorderGesture = useMemo(
+    () =>
+      Gesture.LongPress()
+        .minDuration(300)
+        .maxDistance(10)
+        .runOnJS(true)
+        .onStart(() => {
+          if (!isReorderMode) {
+            onActivateReorderMode?.();
           }
-        });
-      }
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [area, registerArea]);
+        }),
+    [isReorderMode, onActivateReorderMode]
+  );
 
-  const isDropTarget = dragState !== null && hoveredArea === area && dragState.sourceArea !== area;
-  const isDragSource = dragState !== null && dragState.sourceArea === area;
-
-  return (
-    <View
-      ref={viewRef}
-      style={[
-        styles.gridArea,
-        isDropTarget && styles.gridAreaDropTarget,
-      ]}
-      onLayout={() => {
-        if (viewRef.current) {
-          viewRef.current.measureInWindow((x, y, width, height) => {
-            if (width > 0 && height > 0) {
-              registerArea(area, { x, y, width, height });
-            }
-          });
-        }
-      }}
-    >
-      <View style={styles.areaHeader}>
-        {editingArea === area ? (
-          <View style={styles.areaNameEditContainer}>
-            <TextInput
-              style={styles.areaNameInput}
-              value={editingAreaName}
-              onChangeText={setEditingAreaName}
-              onSubmitEditing={saveAreaName}
-              onBlur={saveAreaName}
-              autoFocus
-              maxLength={20}
-              placeholder="エリア名を入力"
-              placeholderTextColor="#999"
-            />
-            <TouchableOpacity style={styles.saveAreaNameButton} onPress={saveAreaName}>
-              <Text style={styles.saveAreaNameButtonText}>OK</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelAreaNameButton} onPress={cancelEditingAreaName}>
-              <Text style={styles.cancelAreaNameButtonText}>x</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.areaTitleContainer}
-            onPress={() => startEditingAreaName(area)}
-          >
-            <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
-            <Text style={styles.editHint}>タップして編集</Text>
-          </TouchableOpacity>
-        )}
-        <Text style={styles.areaProgress}>{progress}%</Text>
-      </View>
-
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: `${progress}%` }]} />
-      </View>
-
-      {isDropTarget && (
-        <View style={styles.dropHintBar}>
-          <Text style={styles.dropHintText}>ここにドロップ</Text>
-        </View>
-      )}
-
-      <ScrollView
-        ref={scrollRef}
-        style={styles.todoList}
-        scrollEnabled={dragState === null}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {areaTodos.map((todo, index) => (
+  const renderItem = useCallback(
+    ({ item, drag, isActive }: RenderItemParams<Todo>) => (
+      <View pointerEvents="auto">
+        <ScaleDecorator activeScale={1.05}>
           <DraggableTodoItem
-            key={todo.id}
-            todo={todo}
+            todo={item}
             area={area}
-            index={index}
-            isEditing={editingTodo?.id === todo.id}
+            index={0}
+            isEditing={editingTodo?.id === item.id}
             editingText={editingTodoText}
             onEditTextChange={setEditingTodoText}
             onSaveEdit={saveEditingTodo}
@@ -205,49 +130,162 @@ export default function GridAreaDropTarget({
             onStartEdit={startEditingTodo}
             onToggle={toggleTodo}
             onDelete={deleteTodo}
-            onDragEnd={handleDragEnd}
             onReminderPress={onReminderPress}
             onClearReminder={onClearReminder}
-            onDragStart={onDragStart}
-            onDragMove={onDragMove}
-            onDragDrop={onDragDrop}
-            isDragging={draggingTodoId === todo.id}
+            isReorderMode={isReorderMode}
+            isDragging={isActive}
+            onDragHandle={drag}
+            gridTitles={gridTitles}
+            onMoveToArea={onMoveToArea}
           />
-        ))}
+        </ScaleDecorator>
+      </View>
+    ),
+    [
+      area,
+      editingTodo,
+      editingTodoText,
+      setEditingTodoText,
+      saveEditingTodo,
+      cancelEditingTodo,
+      startEditingTodo,
+      toggleTodo,
+      deleteTodo,
+      onReminderPress,
+      onClearReminder,
+      isReorderMode,
+      gridTitles,
+      onMoveToArea,
+    ]
+  );
 
-        <InlineAddInput
-          area={area}
-          onQuickAdd={onQuickAdd}
-          onFocus={() => {
-            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
-          }}
-        />
-      </ScrollView>
+  const handleDragEnd = useCallback(
+    ({ data, from, to }: { data: Todo[]; from: number; to: number }) => {
+      if (from === to) return;
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      onReorderEnd?.(area, data);
+      setDragSession(s => s + 1);
+    },
+    [area, onReorderEnd]
+  );
+
+  const handlePlaceholderIndexChange = useCallback(() => {
+    if (Platform.OS !== 'web') {
+      Haptics.selectionAsync();
+    }
+  }, []);
+
+  return (
+    <View
+      style={[
+        styles.gridAreaOuter,
+        isReorderMode && styles.gridAreaReorder,
+      ]}
+    >
+      <GestureDetector gesture={activateReorderGesture}>
+        <View style={styles.gridCellHitLayer} collapsable={false} />
+      </GestureDetector>
+      <View pointerEvents="box-none" style={styles.gridAreaInner}>
+        <View pointerEvents="box-none" style={styles.areaHeader}>
+          {editingArea === area ? (
+            <View pointerEvents="auto" style={styles.areaNameEditContainer}>
+              <TextInput
+                style={styles.areaNameInput}
+                value={editingAreaName}
+                onChangeText={setEditingAreaName}
+                onSubmitEditing={saveAreaName}
+                onBlur={saveAreaName}
+                autoFocus
+                maxLength={20}
+                placeholder="エリア名を入力"
+                placeholderTextColor="#999"
+              />
+              <TouchableOpacity style={styles.saveAreaNameButton} onPress={saveAreaName}>
+                <Text style={styles.saveAreaNameButtonText}>OK</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelAreaNameButton} onPress={cancelEditingAreaName}>
+                <Text style={styles.cancelAreaNameButtonText}>x</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.areaTitleTouch}
+              onPress={() => startEditingAreaName(area)}
+              disabled={isReorderMode}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
+            </TouchableOpacity>
+          )}
+          <View pointerEvents="auto" style={styles.areaProgressWrap}>
+            <Text style={styles.areaProgress}>{progress}%</Text>
+          </View>
+        </View>
+
+        <View pointerEvents="box-none" style={styles.progressBar}>
+          <View pointerEvents="auto" style={[styles.progressFill, { width: `${progress}%` }]} />
+        </View>
+
+        <View style={styles.todoListWrap} pointerEvents="box-none">
+          <DraggableFlatList<Todo>
+            key={`${area}-dnd-${dragSession}`}
+            data={areaTodos}
+            extraData={areaTodos.map(t => `${t.id}:${t.order}`).join('|')}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            onDragEnd={handleDragEnd}
+            onPlaceholderIndexChange={handlePlaceholderIndexChange}
+            activationDistance={isReorderMode ? 8 : 10000}
+            autoscrollSpeed={120}
+            autoscrollThreshold={36}
+            containerStyle={styles.todoList}
+            keyboardShouldPersistTaps="handled"
+            pointerEvents="box-none"
+          />
+        </View>
+
+        {!isReorderMode && (
+          <View pointerEvents="auto">
+            <InlineAddInput area={area} onQuickAdd={onQuickAdd} />
+          </View>
+        )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  gridArea: {
+  gridAreaOuter: {
     flex: 1,
+    minHeight: 0,
+    position: 'relative',
     backgroundColor: '#fffacd',
     borderRadius: 2,
-    marginHorizontal: 2,
-    padding: 10,
     shadowColor: '#000',
     shadowOffset: { width: 2, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
     elevation: 3,
-    transform: [{ rotate: '0.5deg' }],
     borderWidth: 0.5,
     borderColor: '#f0e68c',
   },
-  gridAreaDropTarget: {
-    borderWidth: 2,
-    borderColor: '#3498db',
+  gridCellHitLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+    backgroundColor: 'transparent',
+  },
+  gridAreaInner: {
+    flex: 1,
+    minHeight: 0,
+    zIndex: 1,
+    padding: 12,
+  },
+  gridAreaReorder: {
+    borderWidth: 1.5,
+    borderColor: '#8e44ad',
     borderStyle: 'dashed',
-    backgroundColor: '#fff9e0',
   },
   areaHeader: {
     flexDirection: 'row',
@@ -255,8 +293,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
-  areaTitleContainer: {
-    flex: 1,
+  areaTitleTouch: {
+    alignSelf: 'flex-start',
+    maxWidth: '78%',
   },
   areaTitle: {
     fontSize: 16,
@@ -267,12 +306,6 @@ const styles = StyleSheet.create({
     textDecorationStyle: 'dashed',
     textDecorationColor: '#e74c3c',
   },
-  editHint: {
-    fontSize: 10,
-    color: '#7f8c8d',
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
   areaNameEditContainer: {
     flex: 1,
     flexDirection: 'row',
@@ -282,7 +315,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: '#2c3e50',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    backgroundColor: 'rgba(255,255,255,0.8)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 4,
@@ -297,26 +330,16 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     marginRight: 4,
   },
-  saveAreaNameButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
+  saveAreaNameButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
   cancelAreaNameButton: {
     backgroundColor: '#e74c3c',
     borderRadius: 12,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  cancelAreaNameButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  areaProgress: {
-    fontSize: 12,
-    color: '#666',
-  },
+  cancelAreaNameButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  areaProgressWrap: { marginLeft: 8 },
+  areaProgress: { fontSize: 12, color: '#666' },
   progressBar: {
     height: 4,
     backgroundColor: '#f5f5dc',
@@ -326,31 +349,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d4af37',
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#ff6b6b',
-    borderRadius: 1,
-  },
-  dropHintBar: {
-    backgroundColor: 'rgba(52, 152, 219, 0.15)',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-    marginBottom: 6,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#3498db',
-    borderStyle: 'dashed',
-  },
-  dropHintText: {
-    fontSize: 11,
-    color: '#3498db',
-    fontWeight: '600',
-  },
-  todoList: {
+  progressFill: { height: '100%', backgroundColor: '#ff6b6b', borderRadius: 1 },
+  todoListWrap: {
     flex: 1,
-    marginBottom: 0,
+    minHeight: 0,
   },
+  todoList: { flex: 1 },
   inlineAddInput: {
     fontSize: 12,
     color: '#2c3e50',

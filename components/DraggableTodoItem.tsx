@@ -1,11 +1,21 @@
-import { useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, Modal } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
+import { useEffect, useRef, useState } from 'react';
+import {
+  View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, Modal, Pressable,
+} from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+  cancelAnimation,
+} from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { Bell, Trash2, Pencil } from 'lucide-react-native';
+import { Bell, Trash2, Pencil, GripVertical, MoveRight } from 'lucide-react-native';
 import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
+
+const AREA_ORDER: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 
 interface DraggableTodoItemProps {
   todo: Todo;
@@ -19,19 +29,17 @@ interface DraggableTodoItemProps {
   onStartEdit: (todo: Todo) => void;
   onToggle: (todo: Todo) => void;
   onDelete: (todoId: string) => void;
-  onDragEnd: (todoId: string, sourceArea: GridArea, targetArea: GridArea, absoluteY: number) => void;
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
-  onDragStart?: (todo: Todo, area: GridArea, absoluteX: number, absoluteY: number) => void;
-  onDragMove?: (absoluteX: number, absoluteY: number) => void;
-  onDragDrop?: (todo: Todo, sourceArea: GridArea, absoluteX: number, absoluteY: number) => void;
+  isReorderMode?: boolean;
   isDragging?: boolean;
+  onDragHandle?: () => void;
+  gridTitles?: Record<GridArea, string>;
+  onMoveToArea?: (todo: Todo, targetArea: GridArea) => void;
 }
 
 export default function DraggableTodoItem({
   todo,
-  area,
-  index,
   isEditing,
   editingText,
   onEditTextChange,
@@ -40,20 +48,45 @@ export default function DraggableTodoItem({
   onStartEdit,
   onToggle,
   onDelete,
-  onDragEnd,
   onReminderPress,
   onClearReminder,
-  onDragStart,
-  onDragMove,
-  onDragDrop,
-  isDragging,
+  isReorderMode = false,
+  isDragging = false,
+  onDragHandle,
+  area,
+  gridTitles,
+  onMoveToArea,
 }: DraggableTodoItemProps) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const [areaPickerVisible, setAreaPickerVisible] = useState(false);
+  const [areaPickerPosition, setAreaPickerPosition] = useState({ x: 0, y: 0 });
   const itemRef = useRef<View>(null);
-  const hasMoved = useSharedValue(false);
-  const startAbsX = useSharedValue(0);
-  const startAbsY = useSharedValue(0);
+  const moveButtonRef = useRef<View>(null);
+
+  const wiggle = useSharedValue(0);
+
+  useEffect(() => {
+    if (isReorderMode && !isDragging) {
+      wiggle.value = withRepeat(
+        withSequence(
+          withTiming(-1.2, { duration: 90 }),
+          withTiming(1.2, { duration: 90 }),
+          withTiming(-1.0, { duration: 90 }),
+          withTiming(1.0, { duration: 90 })
+        ),
+        -1,
+        true
+      );
+    } else {
+      cancelAnimation(wiggle);
+      wiggle.value = withTiming(0, { duration: 120 });
+    }
+  }, [isReorderMode, isDragging, wiggle]);
+
+  const wiggleStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${wiggle.value}deg` }],
+  }));
 
   const showMenu = () => {
     if (itemRef.current) {
@@ -66,53 +99,40 @@ export default function DraggableTodoItem({
     }
   };
 
-  const handleDragStart = (absX: number, absY: number) => {
+  const handleLongPress = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    onDragStart?.(todo, area, absX, absY);
-  };
-
-  const handleDragMove = (absX: number, absY: number) => {
-    onDragMove?.(absX, absY);
-  };
-
-  const handleDragDrop = (absX: number, absY: number) => {
-    onDragDrop?.(todo, area, absX, absY);
-  };
-
-  const handleShowMenu = () => {
     showMenu();
   };
 
-  const panGesture = Gesture.Pan()
-    .activateAfterLongPress(400)
-    .onStart((e) => {
-      hasMoved.value = false;
-      startAbsX.value = e.absoluteX;
-      startAbsY.value = e.absoluteY;
-      runOnJS(handleDragStart)(e.absoluteX, e.absoluteY);
-    })
-    .onUpdate((e) => {
-      const dx = Math.abs(e.translationX);
-      const dy = Math.abs(e.translationY);
-      if (dx > 5 || dy > 5) {
-        hasMoved.value = true;
-      }
-      runOnJS(handleDragMove)(e.absoluteX, e.absoluteY);
-    })
-    .onEnd((e) => {
-      if (hasMoved.value) {
-        runOnJS(handleDragDrop)(e.absoluteX, e.absoluteY);
-      } else {
-        runOnJS(handleShowMenu)();
-        // Also need to cancel drag
-        runOnJS(handleDragDrop)(startAbsX.value, startAbsY.value);
-      }
-    })
-    .onFinalize(() => {
-      hasMoved.value = false;
-    });
+  const handleDragStart = () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
+    onDragHandle?.();
+  };
+
+  const showAreaPicker = () => {
+    if (moveButtonRef.current) {
+      moveButtonRef.current.measureInWindow((x, y, width, height) => {
+        setAreaPickerPosition({ x: Math.max(8, x - 140), y: y + height + 4 });
+        setAreaPickerVisible(true);
+      });
+    } else {
+      setAreaPickerVisible(true);
+    }
+    if (Platform.OS !== 'web') {
+      Haptics.selectionAsync();
+    }
+  };
+
+  const handleSelectArea = (target: GridArea) => {
+    setAreaPickerVisible(false);
+    onMoveToArea?.(todo, target);
+  };
+
+  const otherAreas = AREA_ORDER.filter(a => a !== area);
 
   if (isEditing) {
     return (
@@ -145,34 +165,69 @@ export default function DraggableTodoItem({
 
   return (
     <>
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.todoItem, isDragging && styles.todoItemDragging]}>
-          <View ref={itemRef} style={styles.todoItemInner}>
-            <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
-              {todo.is_completed && <View style={styles.checkboxFilled} />}
-            </TouchableOpacity>
+      <Animated.View
+        style={[
+          styles.todoItem,
+          isReorderMode && styles.todoItemReorder,
+          isDragging && styles.todoItemDragging,
+          wiggleStyle,
+        ]}
+      >
+        <View ref={itemRef} style={styles.todoItemInner}>
+          {isReorderMode && (
+            <Pressable
+              style={styles.gripHandle}
+              onPressIn={handleDragStart}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
+              <GripVertical size={14} color="#8e44ad" />
+            </Pressable>
+          )}
 
-            <View style={styles.todoTextContainer}>
-              <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
-                {todo.content}
-              </Text>
-            </View>
+          <TouchableOpacity
+            style={styles.checkbox}
+            onPress={() => { if (!isReorderMode) onToggle(todo); }}
+            disabled={isReorderMode}
+          >
+            {todo.is_completed && <View style={styles.checkboxFilled} />}
+          </TouchableOpacity>
 
-            {todo.reminder_at && (
-              <Bell size={10} color="#e67e22" style={styles.reminderDot} />
-            )}
-          </View>
+          <TouchableOpacity
+            style={styles.todoTextContainer}
+            onLongPress={handleLongPress}
+            delayLongPress={400}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
+              {todo.content}
+            </Text>
+          </TouchableOpacity>
 
           {todo.reminder_at && (
-            <View style={styles.reminderBadge}>
-              <Bell size={9} color="#e67e22" />
-              <Text style={styles.reminderBadgeText}>
-                {formatReminderDisplay(todo.reminder_at)}
-              </Text>
-            </View>
+            <Bell size={10} color="#e67e22" style={styles.reminderDot} />
           )}
-        </Animated.View>
-      </GestureDetector>
+
+          {isReorderMode && onMoveToArea && (
+            <TouchableOpacity
+              ref={moveButtonRef}
+              style={styles.moveAreaButton}
+              onPress={showAreaPicker}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <MoveRight size={14} color="#8e44ad" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {todo.reminder_at && (
+          <View style={styles.reminderBadge}>
+            <Bell size={9} color="#e67e22" />
+            <Text style={styles.reminderBadgeText}>
+              {formatReminderDisplay(todo.reminder_at)}
+            </Text>
+          </View>
+        )}
+      </Animated.View>
 
       <Modal
         visible={menuVisible}
@@ -188,49 +243,75 @@ export default function DraggableTodoItem({
           <View style={[styles.menu, { top: menuPosition.y, left: menuPosition.x }]}>
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => {
-                setMenuVisible(false);
-                onStartEdit(todo);
-              }}
+              onPress={() => { setMenuVisible(false); onStartEdit(todo); }}
             >
               <Pencil size={15} color="#3498db" />
               <Text style={[styles.menuItemText, { color: '#3498db' }]}>タスクを編集</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => {
-                setMenuVisible(false);
-                onReminderPress(todo);
-              }}
+              onPress={() => { setMenuVisible(false); onReminderPress(todo); }}
             >
               <Bell size={15} color="#e67e22" />
               <Text style={styles.menuItemText}>
                 {todo.reminder_at ? 'リマインダーを変更' : 'リマインダーを設定'}
               </Text>
             </TouchableOpacity>
+
             {todo.reminder_at && (
               <TouchableOpacity
                 style={styles.menuItem}
-                onPress={() => {
-                  setMenuVisible(false);
-                  onClearReminder(todo);
-                }}
+                onPress={() => { setMenuVisible(false); onClearReminder(todo); }}
               >
                 <Bell size={15} color="#999" />
                 <Text style={[styles.menuItemText, { color: '#999' }]}>リマインダーを削除</Text>
               </TouchableOpacity>
             )}
+
             <View style={styles.menuDivider} />
+
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => {
-                setMenuVisible(false);
-                onDelete(todo.id);
-              }}
+              onPress={() => { setMenuVisible(false); onDelete(todo.id); }}
             >
               <Trash2 size={15} color="#e74c3c" />
               <Text style={[styles.menuItemText, styles.menuItemDanger]}>タスクを削除</Text>
             </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={areaPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAreaPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
+          onPress={() => setAreaPickerVisible(false)}
+        >
+          <View
+            style={[
+              styles.areaPicker,
+              { top: areaPickerPosition.y, left: areaPickerPosition.x },
+            ]}
+          >
+            <Text style={styles.areaPickerTitle}>移動先のエリア</Text>
+            {otherAreas.map((a) => (
+              <TouchableOpacity
+                key={a}
+                style={styles.areaPickerItem}
+                onPress={() => handleSelectArea(a)}
+              >
+                <MoveRight size={13} color="#8e44ad" />
+                <Text style={styles.areaPickerItemText}>
+                  {gridTitles?.[a] ?? a}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </TouchableOpacity>
       </Modal>
@@ -248,12 +329,26 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#ff6b6b',
   },
+  todoItemReorder: {
+    borderLeftColor: '#8e44ad',
+    backgroundColor: 'rgba(255, 255, 255, 0.55)',
+  },
   todoItemDragging: {
-    opacity: 0.3,
+    backgroundColor: '#fffacd',
+    borderLeftColor: '#8e44ad',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 12,
   },
   todoItemInner: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  gripHandle: {
+    paddingRight: 4,
+    opacity: 0.7,
   },
   checkbox: {
     width: 18,
@@ -281,7 +376,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#2c3e50',
     lineHeight: 18,
-    fontFamily: 'System',
   },
   todoTextCompleted: {
     textDecorationLine: 'line-through',
@@ -326,22 +420,14 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingHorizontal: 10,
   },
-  todoEditInlineSaveText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '600',
-  },
+  todoEditInlineSaveText: { color: '#fff', fontSize: 11, fontWeight: '600' },
   todoEditInlineCancel: {
     backgroundColor: '#95a5a6',
     borderRadius: 4,
     paddingVertical: 3,
     paddingHorizontal: 10,
   },
-  todoEditInlineCancelText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '600',
-  },
+  todoEditInlineCancelText: { color: '#fff', fontSize: 11, fontWeight: '600' },
   menuOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.2)',
@@ -365,18 +451,52 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
-  menuItemText: {
-    fontSize: 14,
-    color: '#2c3e50',
-    fontWeight: '500',
-  },
-  menuItemDanger: {
-    color: '#e74c3c',
-  },
+  menuItemText: { fontSize: 14, color: '#2c3e50', fontWeight: '500' },
+  menuItemDanger: { color: '#e74c3c' },
   menuDivider: {
     height: 1,
     backgroundColor: '#f0f0f0',
     marginHorizontal: 12,
     marginVertical: 2,
+  },
+  moveAreaButton: {
+    marginLeft: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(142, 68, 173, 0.12)',
+  },
+  areaPicker: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingVertical: 6,
+    minWidth: 180,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(142, 68, 173, 0.2)',
+  },
+  areaPickerTitle: {
+    fontSize: 11,
+    color: '#7f8c8d',
+    fontWeight: '600',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  areaPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  areaPickerItemText: {
+    fontSize: 13,
+    color: '#2c3e50',
+    fontWeight: '500',
   },
 });

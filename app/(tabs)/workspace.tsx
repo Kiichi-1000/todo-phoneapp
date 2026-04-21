@@ -9,6 +9,8 @@ import {
   Dimensions,
   Modal,
   AppState,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
@@ -270,7 +272,7 @@ export default function WorkspaceScreen() {
           .from('todos')
           .select('*')
           .eq('workspace_id', ws.id)
-          .order('created_at', { ascending: true }) as { data: Todo[] | null; error: any };
+          .order('order', { ascending: true }) as { data: Todo[] | null; error: any };
         let filteredTodos = td || [];
         if (ws.type === 'four_grid') {
           filteredTodos = filteredTodos.filter(todo => todo.grid_area !== null);
@@ -520,28 +522,33 @@ export default function WorkspaceScreen() {
         <Text style={styles.pageIndicator}>{todosWorkspaceCount} {'\u30DA\u30FC\u30B8'}</Text>
       </View>
 
-      <FlatList
-        ref={flatListRef}
-        data={workspaceDates}
-        renderItem={renderItem}
-        keyExtractor={(item) => item}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        getItemLayout={getItemLayout}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        initialScrollIndex={currentIndex}
-        onScrollToIndexFailed={(info) => {
-          setTimeout(() => {
-            flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
-          }, 100);
-        }}
-        maxToRenderPerBatch={3}
-        windowSize={5}
-        removeClippedSubviews={false}
+      <KeyboardAvoidingView
         style={styles.flatList}
-      />
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <FlatList
+          ref={flatListRef}
+          data={workspaceDates}
+          renderItem={renderItem}
+          keyExtractor={(item) => item}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          getItemLayout={getItemLayout}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          initialScrollIndex={currentIndex}
+          onScrollToIndexFailed={(info) => {
+            setTimeout(() => {
+              flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
+            }, 100);
+          }}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+          removeClippedSubviews={false}
+          style={styles.flatList}
+        />
+      </KeyboardAvoidingView>
 
       <Modal
         visible={isDatePickerVisible}

@@ -129,8 +129,11 @@ export type Database = {
       };
       user_settings: {
         Row: UserSettings;
-        Insert: Omit<UserSettings, 'id' | 'created_at' | 'updated_at'> & {
+        Insert: {
           id?: string;
+          user_id: string;
+          default_workspace_type?: WorkspaceType;
+          todo_schedule_sync?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -139,11 +142,21 @@ export type Database = {
       };
       todos: {
         Row: Todo;
-        Insert: Omit<Todo, 'id' | 'created_at' | 'order'> & {
+        Insert: {
           id?: string;
-          created_at?: string;
-          order?: number;
           user_id: string;
+          workspace_id: string;
+          content: string;
+          is_completed?: boolean;
+          due_date?: string | null;
+          grid_area?: GridArea | null;
+          position_x?: number | null;
+          position_y?: number | null;
+          order?: number;
+          created_at?: string;
+          completed_at?: string | null;
+          reminder_at?: string | null;
+          notification_id?: string | null;
         };
         Update: Partial<Omit<Todo, 'id'>>;
         Relationships: [
