@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
-import { getLegalPrivacyUrl, getLegalTermsUrl } from '@/lib/legalUrls';
+import { getLegalDocumentsHubUrl } from '@/lib/legalUrls';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
 
@@ -452,15 +452,9 @@ export default function SettingsScreen() {
             <Text style={styles.legalWebHintTitle}>Web掲載版（ブラウザ）</Text>
             <TouchableOpacity
               style={styles.legalWebLinkWrap}
-              onPress={() => Linking.openURL(getLegalTermsUrl())}
+              onPress={() => Linking.openURL(getLegalDocumentsHubUrl())}
             >
-              <Text style={styles.legalWebLink}>{getLegalTermsUrl()}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.legalWebLinkWrap}
-              onPress={() => Linking.openURL(getLegalPrivacyUrl())}
-            >
-              <Text style={styles.legalWebLink}>{getLegalPrivacyUrl()}</Text>
+              <Text style={styles.legalWebLink}>{getLegalDocumentsHubUrl()}</Text>
             </TouchableOpacity>
           </View>
 

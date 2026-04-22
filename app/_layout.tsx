@@ -78,7 +78,8 @@ function RootNavigator() {
     }
   }, [session, loading, isPasswordRecovery, consentAccepted]);
 
-  if (consentAccepted === null || loading) {
+  // 同意はログイン前に必須。Supabase のセッション復元（loading）を待たずに同意画面を出す。
+  if (consentAccepted === null) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#1a1a2e" />
@@ -88,6 +89,14 @@ function RootNavigator() {
 
   if (!consentAccepted) {
     return <ConsentScreen onAccept={handleAcceptConsent} />;
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#1a1a2e" />
+      </View>
+    );
   }
 
   return (

@@ -94,7 +94,7 @@ export default function ConsentScreen({ onAccept }: Props) {
         </TouchableOpacity>
 
         <Text style={styles.footerNote}>
-          上記リンクはブラウザで全文を開きます。同意後は設定画面からアプリ内表示・同じURLのいずれでもご確認いただけます。
+          上記リンクはブラウザで掲載ページを開きます。同意後は設定画面からアプリ内表示・同じ掲載先からもご確認いただけます。
         </Text>
       </ScrollView>
     </SafeAreaView>

@@ -45,8 +45,7 @@
       "router": {},
       "supportPageBaseUrl": "https://synthera.jp/contact",
       "supportEmail": "support@synthera.jp",
-      "legalTermsUrl": "https://www.synthera.jp/legal/tosche/terms.html",
-      "legalPrivacyUrl": "https://www.synthera.jp/legal/tosche/privacy.html"
+      "legalDocsHubUrl": "https://todo-phoneapp.pages.dev/legal/tosche/"
     },
     "owner": "kiichi.2022222"
   }
