@@ -4,6 +4,8 @@ import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 
 interface AuthContextType {
   session: Session | null;
@@ -12,6 +14,7 @@ interface AuthContextType {
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
+  signInWithApple: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: string | null }>;
   updatePassword: (password: string) => Promise<{ error: string | null }>;
@@ -25,6 +28,7 @@ const AuthContext = createContext<AuthContextType>({
   signUp: async () => ({ error: null }),
   signIn: async () => ({ error: null }),
   signInWithGoogle: async () => ({ error: null }),
+  signInWithApple: async () => ({ error: null }),
   signOut: async () => {},
   resetPassword: async () => ({ error: null }),
   updatePassword: async () => ({ error: null }),
@@ -105,6 +109,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signInWithApple = async () => {
+    try {
+      if (Platform.OS === 'web') {
+        const redirectUrl = `${window.location.origin}/(auth)/callback`;
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'apple',
+          options: {
+            redirectTo: redirectUrl,
+          },
+        });
+        if (error) return { error: error.message };
+        return { error: null };
+      }
+
+      const rawNonce = Crypto.randomUUID();
+      const hashedNonce = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        rawNonce
+      );
+
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashedNonce,
+      });
+
+      if (!credential.identityToken) {
+        return { error: 'Apple認証からトークンを取得できませんでした' };
+      }
+
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+        nonce: rawNonce,
+      });
+
+      if (error) return { error: error.message };
+      return { error: null };
+    } catch (e: any) {
+      if (e.code === 'ERR_REQUEST_CANCELED') {
+        return { error: null };
+      }
+      return { error: e.message || 'Apple認証に失敗しました' };
+    }
+  };
+
   const resetPassword = async (email: string) => {
     const redirectUrl = Platform.OS === 'web'
       ? `${window.location.origin}/(auth)/reset-password`
@@ -133,6 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signUp,
         signIn,
         signInWithGoogle,
+        signInWithApple,
         signOut,
         resetPassword,
         updatePassword,

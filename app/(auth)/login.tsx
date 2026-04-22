@@ -13,10 +13,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
+import { BookOpen, Mail, Lock, Eye, EyeOff, Apple } from 'lucide-react-native';
 
 export default function LoginScreen() {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp, signInWithGoogle, signInWithApple } = useAuth();
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -26,6 +26,7 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubmit = async () => {
@@ -91,6 +92,17 @@ export default function LoginScreen() {
       setError(err);
     }
     setGoogleLoading(false);
+  };
+
+  const handleAppleSignIn = async () => {
+    setError(null);
+    setSuccessMessage(null);
+    setAppleLoading(true);
+    const { error: err } = await signInWithApple();
+    if (err) {
+      setError(err);
+    }
+    setAppleLoading(false);
   };
 
   const switchMode = () => {
@@ -212,9 +224,24 @@ export default function LoginScreen() {
             </View>
 
             <TouchableOpacity
+              style={[styles.appleButton, appleLoading && styles.submitButtonDisabled]}
+              onPress={handleAppleSignIn}
+              disabled={loading || appleLoading || googleLoading}
+            >
+              {appleLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <Apple size={18} color="#fff" />
+                  <Text style={styles.appleButtonText}>Appleで続ける</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={[styles.googleButton, googleLoading && styles.submitButtonDisabled]}
               onPress={handleGoogleSignIn}
-              disabled={loading || googleLoading}
+              disabled={loading || googleLoading || appleLoading}
             >
               {googleLoading ? (
                 <ActivityIndicator color="#1a1a2e" size="small" />
@@ -412,6 +439,21 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     fontSize: 13,
     color: '#8a8a9a',
+  },
+  appleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000',
+    borderRadius: 12,
+    height: 52,
+    gap: 10,
+    marginBottom: 12,
+  },
+  appleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
   googleButton: {
     flexDirection: 'row',

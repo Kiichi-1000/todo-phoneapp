@@ -11,6 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.synthera.tosche",
       "buildNumber": "1",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -26,6 +27,7 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
+      "expo-apple-authentication",
       [
         "expo-notifications",
         {
