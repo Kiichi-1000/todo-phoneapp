@@ -538,12 +538,17 @@ const styles = StyleSheet.create({
   daysGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
   },
   dayCell: {
     width: '14.28%',
     aspectRatio: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    maxWidth: 50,
+    maxHeight: 50,
   },
   dayCellSelected: {
     backgroundColor: '#007AFF',

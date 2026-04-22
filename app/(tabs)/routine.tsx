@@ -45,7 +45,6 @@ import ScheduleCalendarModal from '@/components/ScheduleCalendarModal';
 import DraggableRoutineList from '@/components/DraggableRoutineList';
 
 const SWIPE_THRESHOLD = 50;
-const SCREEN_WIDTH = Dimensions.get('window').width;
 
 const SLOTS: RoutineSlot[] = ['morning', 'daytime', 'evening'];
 const SLOT_LABELS: Record<RoutineSlot, string> = {
@@ -132,10 +131,11 @@ export default function RoutineScreen() {
     if (isAnimating) return;
     const idx = SLOTS.indexOf(currentSlot);
     if (idx >= SLOTS.length - 1) return;
+    const w = Dimensions.get('window').width;
     setIsAnimating(true);
-    translateX.value = withTiming(-SCREEN_WIDTH, { duration: 200 }, () => {
+    translateX.value = withTiming(-w, { duration: 200 }, () => {
       runOnJS(setCurrentSlot)(SLOTS[idx + 1]);
-      translateX.value = SCREEN_WIDTH;
+      translateX.value = w;
       translateX.value = withTiming(0, { duration: 200 }, () => {
         runOnJS(setIsAnimating)(false);
       });
@@ -146,10 +146,11 @@ export default function RoutineScreen() {
     if (isAnimating) return;
     const idx = SLOTS.indexOf(currentSlot);
     if (idx <= 0) return;
+    const w = Dimensions.get('window').width;
     setIsAnimating(true);
-    translateX.value = withTiming(SCREEN_WIDTH, { duration: 200 }, () => {
+    translateX.value = withTiming(w, { duration: 200 }, () => {
       runOnJS(setCurrentSlot)(SLOTS[idx - 1]);
-      translateX.value = -SCREEN_WIDTH;
+      translateX.value = -w;
       translateX.value = withTiming(0, { duration: 200 }, () => {
         runOnJS(setIsAnimating)(false);
       });

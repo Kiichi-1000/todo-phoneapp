@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -6,6 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import ConsentScreen from '@/components/ConsentScreen';
 import 'react-native-url-polyfill/auto';
 import {
   requestNotificationPermissions,
@@ -13,12 +15,26 @@ import {
   addNotificationResponseListener,
 } from '@/lib/notifications';
 
+const CONSENT_KEY = 'tosche_consent_accepted';
+
 function RootNavigator() {
   const { session, loading, isPasswordRecovery } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const notificationListenerRef = useRef<any>(null);
   const responseListenerRef = useRef<any>(null);
+  const [consentAccepted, setConsentAccepted] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(CONSENT_KEY).then(value => {
+      setConsentAccepted(value === 'true');
+    });
+  }, []);
+
+  const handleAcceptConsent = async () => {
+    await AsyncStorage.setItem(CONSENT_KEY, 'true');
+    setConsentAccepted(true);
+  };
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -41,7 +57,7 @@ function RootNavigator() {
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || consentAccepted !== true) return;
 
     if (isPasswordRecovery && session) {
       router.replace('/(auth)/reset-password');
@@ -60,14 +76,18 @@ function RootNavigator() {
         router.replace('/(tabs)/workspace');
       }
     }
-  }, [session, loading, isPasswordRecovery]);
+  }, [session, loading, isPasswordRecovery, consentAccepted]);
 
-  if (loading) {
+  if (consentAccepted === null || loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#1a1a2e" />
       </View>
     );
+  }
+
+  if (!consentAccepted) {
+    return <ConsentScreen onAccept={handleAcceptConsent} />;
   }
 
   return (

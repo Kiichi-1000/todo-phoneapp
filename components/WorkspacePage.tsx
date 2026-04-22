@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  Dimensions,
   Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -18,8 +17,6 @@ import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
 import { scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
 import PostitMenu from '@/components/PostitMenu';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface WorkspacePageProps {
   workspace: Workspace;
@@ -664,7 +661,6 @@ export default function WorkspacePage({
 
 const styles = StyleSheet.create({
   pageContainer: {
-    width: SCREEN_WIDTH,
     flex: 1,
     backgroundColor: '#f5f5dc',
   },

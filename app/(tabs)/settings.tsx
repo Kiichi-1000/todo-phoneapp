@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+import { getLegalPrivacyUrl, getLegalTermsUrl } from '@/lib/legalUrls';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
 
@@ -399,8 +400,8 @@ export default function SettingsScreen() {
           <View style={styles.infoCard}>
             <Info size={20} color="#666" />
             <View style={styles.infoContent}>
-              <Text style={styles.infoTitle}>FreeTask</Text>
-              <Text style={styles.infoText}>Version 1.0.0 (Phase 1 MVP)</Text>
+              <Text style={styles.infoTitle}>ToSche</Text>
+              <Text style={styles.infoText}>Version 1.0.0</Text>
               <Text style={styles.infoText}>
                 ノートのように使える日次ToDoアプリ
               </Text>
@@ -425,15 +426,43 @@ export default function SettingsScreen() {
 
           <TouchableOpacity
             style={styles.settingItem}
-            onPress={() => router.push('/support/privacy-policy')}
+            onPress={() => router.push('/support/terms')}
           >
             <View style={styles.settingRowBetween}>
               <View style={styles.settingLeft}>
-                <Text style={styles.settingTextNoIcon}>プライバシー（プライバシーポリシー）</Text>
+                <Text style={styles.settingTextNoIcon}>利用規約</Text>
               </View>
               <ChevronRight size={18} color="#999" />
             </View>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/support/privacy-policy')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingTextNoIcon}>プライバシーポリシー</Text>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <View style={styles.legalWebHint}>
+            <Text style={styles.legalWebHintTitle}>Web掲載版（ブラウザ）</Text>
+            <TouchableOpacity
+              style={styles.legalWebLinkWrap}
+              onPress={() => Linking.openURL(getLegalTermsUrl())}
+            >
+              <Text style={styles.legalWebLink}>{getLegalTermsUrl()}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.legalWebLinkWrap}
+              onPress={() => Linking.openURL(getLegalPrivacyUrl())}
+            >
+              <Text style={styles.legalWebLink}>{getLegalPrivacyUrl()}</Text>
+            </TouchableOpacity>
+          </View>
 
           <TouchableOpacity
             style={styles.settingItem}
@@ -508,6 +537,9 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
   },
   section: {
     marginBottom: 24,
@@ -631,6 +663,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     lineHeight: 20,
+  },
+  legalWebHint: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+  },
+  legalWebHintTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#444',
+    marginBottom: 8,
+  },
+  legalWebLinkWrap: {
+    marginBottom: 8,
+  },
+  legalWebLink: {
+    fontSize: 12,
+    color: '#2563eb',
+    lineHeight: 18,
   },
   syncCard: {
     backgroundColor: '#fff',

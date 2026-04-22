@@ -172,6 +172,9 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: 48,
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
   },
   timeline: {
     flexDirection: 'row',

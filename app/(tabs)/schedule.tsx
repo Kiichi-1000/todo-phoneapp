@@ -24,7 +24,6 @@ import ScheduleCalendarModal from '@/components/ScheduleCalendarModal';
 type ViewMode = 'list' | 'circle';
 
 const SWIPE_THRESHOLD = 50;
-const SCREEN_WIDTH = Dimensions.get('window').width;
 
 function generateDates(): string[] {
   const dates: string[] = [];
@@ -66,6 +65,9 @@ export default function ScheduleScreen() {
   const currentDate = allDates[currentIndex];
   const isToday = currentDate === formatDate(new Date());
 
+  const goToNextDateRef = useRef<() => void>(() => {});
+  const goToPrevDateRef = useRef<() => void>(() => {});
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -73,9 +75,9 @@ export default function ScheduleScreen() {
         Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5,
       onPanResponderRelease: (_, gs) => {
         if (gs.dx > SWIPE_THRESHOLD) {
-          goToPrevDate();
+          goToPrevDateRef.current();
         } else if (gs.dx < -SWIPE_THRESHOLD) {
-          goToNextDate();
+          goToNextDateRef.current();
         }
       },
     })
@@ -84,13 +86,14 @@ export default function ScheduleScreen() {
   const goToNextDate = useCallback(() => {
     if (currentIndex >= allDates.length - 1 || isAnimating.current) return;
     isAnimating.current = true;
+    const w = Dimensions.get('window').width;
     Animated.timing(translateX, {
-      toValue: -SCREEN_WIDTH,
+      toValue: -w,
       duration: 200,
       useNativeDriver: true,
     }).start(() => {
       setCurrentIndex(prev => prev + 1);
-      translateX.setValue(SCREEN_WIDTH);
+      translateX.setValue(w);
       Animated.timing(translateX, {
         toValue: 0,
         duration: 200,
@@ -104,13 +107,14 @@ export default function ScheduleScreen() {
   const goToPrevDate = useCallback(() => {
     if (currentIndex <= 0 || isAnimating.current) return;
     isAnimating.current = true;
+    const w = Dimensions.get('window').width;
     Animated.timing(translateX, {
-      toValue: SCREEN_WIDTH,
+      toValue: w,
       duration: 200,
       useNativeDriver: true,
     }).start(() => {
       setCurrentIndex(prev => prev - 1);
-      translateX.setValue(-SCREEN_WIDTH);
+      translateX.setValue(-w);
       Animated.timing(translateX, {
         toValue: 0,
         duration: 200,
@@ -120,6 +124,9 @@ export default function ScheduleScreen() {
       });
     });
   }, [currentIndex, translateX]);
+
+  goToNextDateRef.current = goToNextDate;
+  goToPrevDateRef.current = goToPrevDate;
 
   const loadSchedules = useCallback(async () => {
     if (!user || !currentDate) return;

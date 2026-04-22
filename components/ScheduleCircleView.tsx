@@ -5,20 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Dimensions,
+  useWindowDimensions,
 } from 'react-native';
 import Svg, { Circle, Path, G, Text as SvgText, Line } from 'react-native-svg';
 import { Plus } from 'lucide-react-native';
 import { Schedule } from '@/types/database';
 import { minutesToTimeString } from '@/lib/scheduleUtils';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const CHART_SIZE = Math.min(SCREEN_WIDTH - 32, 380);
-const CENTER = CHART_SIZE / 2;
-const OUTER_RADIUS = CHART_SIZE / 2 - 4;
-const LABEL_RADIUS = OUTER_RADIUS + 1;
-const TICK_OUTER = OUTER_RADIUS;
-const TICK_INNER = OUTER_RADIUS - 10;
 
 interface Props {
   schedules: Schedule[];
@@ -60,6 +52,14 @@ function createPieSlicePath(
 }
 
 export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress, isToday = false }: Props) {
+  const { width: screenWidth } = useWindowDimensions();
+  const CHART_SIZE = Math.min(screenWidth - 32, 380);
+  const CENTER = CHART_SIZE / 2;
+  const OUTER_RADIUS = CHART_SIZE / 2 - 4;
+  const LABEL_RADIUS = OUTER_RADIUS + 1;
+  const TICK_OUTER = OUTER_RADIUS;
+  const TICK_INNER = OUTER_RADIUS - 10;
+
   const [now, setNow] = useState(new Date());
   const [tappedHour, setTappedHour] = useState<number | null>(null);
   const legendScrollRef = useRef<ScrollView>(null);

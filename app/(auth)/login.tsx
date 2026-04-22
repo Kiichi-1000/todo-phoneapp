@@ -250,6 +250,24 @@ export default function LoginScreen() {
                 {isLogin ? '新規登録' : 'ログイン'}
               </Text>
             </TouchableOpacity>
+
+            <View style={styles.legalFooter}>
+              <Text style={styles.legalFooterText}>
+                <Text
+                  style={styles.legalFooterLink}
+                  onPress={() => router.push('/support/terms')}
+                >
+                  利用規約
+                </Text>
+                <Text style={styles.legalFooterText}>・</Text>
+                <Text
+                  style={styles.legalFooterLink}
+                  onPress={() => router.push('/support/privacy-policy')}
+                >
+                  プライバシーポリシー
+                </Text>
+              </Text>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -441,6 +459,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1a1a2e',
+    textDecorationLine: 'underline',
+  },
+  legalFooter: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  legalFooterText: {
+    fontSize: 13,
+    color: '#6b6b7b',
+    textAlign: 'center',
+  },
+  legalFooterLink: {
+    fontSize: 13,
+    color: '#2563eb',
+    fontWeight: '600',
     textDecorationLine: 'underline',
   },
 });

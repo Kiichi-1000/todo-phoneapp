@@ -6,11 +6,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   FlatList,
-  Dimensions,
   Modal,
   AppState,
   Platform,
   KeyboardAvoidingView,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
@@ -18,8 +18,6 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, UserSettings, WorkspaceType } from '@/types/database';
 import WorkspacePage from '@/components/WorkspacePage';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface PageData {
   workspace: Workspace | null;
@@ -29,6 +27,7 @@ interface PageData {
 
 export default function WorkspaceScreen() {
   const { user } = useAuth();
+  const { width: screenWidth } = useWindowDimensions();
   const [workspaceDates, setWorkspaceDates] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -341,16 +340,16 @@ export default function WorkspaceScreen() {
   }, []);
 
   const getItemLayout = useCallback((_: any, index: number) => ({
-    length: SCREEN_WIDTH,
-    offset: SCREEN_WIDTH * index,
+    length: screenWidth,
+    offset: screenWidth * index,
     index,
-  }), []);
+  }), [screenWidth]);
 
   const renderItem = useCallback(({ item: dateStr, index }: { item: string; index: number }) => {
     const pageData = pagesData.get(dateStr);
 
     return (
-      <View style={styles.pageWrapper}>
+      <View style={[styles.pageWrapper, { width: screenWidth }]}>
         <View style={styles.pageContent}>
           {pageData?.workspace && settings ? (
             <WorkspacePage
@@ -653,7 +652,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pageWrapper: {
-    width: SCREEN_WIDTH,
     flex: 1,
   },
   pageContent: {
@@ -736,6 +734,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     padding: 16,
+    maxWidth: 500,
+    alignSelf: 'center',
+    width: '100%',
   },
   calendarDay: {
     width: '14.28%',
@@ -743,6 +744,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
+    maxWidth: 50,
+    maxHeight: 50,
   },
   calendarDayText: {
     fontSize: 16,

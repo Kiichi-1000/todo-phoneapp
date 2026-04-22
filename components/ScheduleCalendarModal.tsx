@@ -5,7 +5,6 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
-  Dimensions,
 } from 'react-native';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { formatDate } from '@/lib/scheduleUtils';
@@ -17,8 +16,6 @@ interface Props {
   onClose: () => void;
 }
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const DAY_SIZE = Math.floor((SCREEN_WIDTH - 80) / 7);
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
 export default function ScheduleCalendarModal({ visible, currentDate, onSelectDate, onClose }: Props) {
