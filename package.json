@@ -9,6 +9,7 @@
     "go:tunnel": "EXPO_HOST=tunnel ./scripts/start-expo-go.zsh",
     "go:lan": "EXPO_HOST=lan ./scripts/start-expo-go.zsh",
     "build:web": "expo export --platform web",
+    "legal:dist": "sh scripts/build-legal-dist.sh",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },

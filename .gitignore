@@ -4,6 +4,7 @@ node_modules/
 # expo
 .expo/
 dist/
+legal-pages-dist/
 web-build/
 expo-env.d.ts
 
