@@ -113,9 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: 'セッションが無効です。再ログインしてください。' };
       }
 
-      const { data, error } = await supabase.functions.invoke('delete-account', {
-        method: 'POST',
-      });
+      const { data, error } = await supabase.functions.invoke('delete-account');
 
       if (error) {
         const message =

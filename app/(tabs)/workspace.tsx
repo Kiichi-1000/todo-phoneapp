@@ -111,7 +111,7 @@ export default function WorkspaceScreen() {
         if (!user) return;
         const { data: newSettings, error: insertError } = await supabase
           .from('user_settings')
-          .insert({ default_workspace_type: 'four_grid', user_id: user.id })
+          .upsert({ default_workspace_type: 'four_grid', user_id: user.id }, { onConflict: 'user_id' })
           .select()
           .single() as { data: UserSettings | null; error: any };
         if (insertError) throw insertError;
