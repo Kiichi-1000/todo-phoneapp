@@ -253,24 +253,7 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            {Platform.OS === 'ios' && (
-              <View style={styles.appleButtonWrap}>
-                <AppleAuthentication.AppleAuthenticationButton
-                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-                  cornerRadius={12}
-                  style={styles.appleButton}
-                  onPress={async () => {
-                    setError(null);
-                    setSuccessMessage(null);
-                    setAppleLoading(true);
-                    const { error: err } = await signInWithApple();
-                    if (err) setError(err);
-                    setAppleLoading(false);
-                  }}
-                />
-              </View>
-            )}
+
 
             {isLogin && (
               <TouchableOpacity
@@ -494,13 +477,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1a1a2e',
-  },
-  appleButtonWrap: {
-    marginTop: 10,
-  },
-  appleButton: {
-    width: '100%',
-    height: 52,
   },
   forgotButton: {
     alignSelf: 'center',

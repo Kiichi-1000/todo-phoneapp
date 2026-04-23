@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Platform } from 'react-native';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseUrl } from '@/lib/supabase';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -89,7 +89,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: 'セッションが無効です。再ログインしてください。' };
       }
 
-      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
       const apiUrl = `${supabaseUrl}/functions/v1/delete-account`;
 
       const response = await fetch(apiUrl, {
