@@ -14,7 +14,7 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
-import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { getLegalDocumentsHubUrl } from '@/lib/legalUrls';
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,7 +40,7 @@ const WORKSPACE_TYPES = [
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, signOut, updatePassword } = useAuth();
+  const { user, signOut, deleteAccount, updatePassword } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
@@ -50,6 +50,7 @@ export default function SettingsScreen() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -221,6 +222,41 @@ export default function SettingsScreen() {
     setPasswordError(null);
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'アカウント削除',
+      'アカウントを完全に削除しますか？全てのデータが削除され、この操作は取り消せません。',
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        {
+          text: '削除する',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              '最終確認',
+              '本当にアカウントを削除しますか？この操作は元に戻せません。',
+              [
+                { text: 'キャンセル', style: 'cancel' },
+                {
+                  text: 'アカウントを削除',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setDeleteLoading(true);
+                    const { error: err } = await deleteAccount();
+                    setDeleteLoading(false);
+                    if (err) {
+                      Alert.alert('エラー', err);
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header} />
@@ -390,6 +426,23 @@ export default function SettingsScreen() {
             <View style={styles.settingLeft}>
               <LogOut size={20} color="#ff3b30" />
               <Text style={[styles.settingText, styles.dangerText]}>ログアウト</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.deleteAccountItem}
+            onPress={handleDeleteAccount}
+            disabled={deleteLoading}
+          >
+            <View style={styles.settingLeft}>
+              {deleteLoading ? (
+                <ActivityIndicator color="#ff3b30" size="small" />
+              ) : (
+                <UserX size={20} color="#ff3b30" />
+              )}
+              <Text style={[styles.settingText, styles.dangerText]}>
+                {deleteLoading ? 'アカウント削除中...' : 'アカウントを削除'}
+              </Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -615,6 +668,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderWidth: 1,
     borderColor: '#e5e5e5',
+  },
+  deleteAccountItem: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
   },
   infoCard: {
     backgroundColor: '#fff',

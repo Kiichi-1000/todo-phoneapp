@@ -16,6 +16,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signInWithApple: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<{ error: string | null }>;
   resetPassword: (email: string) => Promise<{ error: string | null }>;
   updatePassword: (password: string) => Promise<{ error: string | null }>;
   isPasswordRecovery: boolean;
@@ -30,6 +31,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => ({ error: null }),
   signInWithApple: async () => ({ error: null }),
   signOut: async () => {},
+  deleteAccount: async () => ({ error: null }),
   resetPassword: async () => ({ error: null }),
   updatePassword: async () => ({ error: null }),
   isPasswordRecovery: false,
@@ -77,6 +79,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut();
     } catch {
       setSession(null);
+    }
+  };
+
+  const deleteAccount = async () => {
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession?.access_token) {
+        return { error: 'セッションが無効です。再ログインしてください。' };
+      }
+
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+      const apiUrl = `${supabaseUrl}/functions/v1/delete-account`;
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${currentSession.access_token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        return { error: result.error || 'アカウントの削除に失敗しました' };
+      }
+
+      setSession(null);
+      return { error: null };
+    } catch (e: any) {
+      return { error: e.message || 'アカウントの削除に失敗しました' };
     }
   };
 
@@ -187,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signInWithGoogle,
         signInWithApple,
         signOut,
+        deleteAccount,
         resetPassword,
         updatePassword,
         isPasswordRecovery,
