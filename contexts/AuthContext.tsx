@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Platform } from 'react-native';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase, supabaseUrl } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -89,26 +89,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: 'セッションが無効です。再ログインしてください。' };
       }
 
-      const apiUrl = `${supabaseUrl}/functions/v1/delete-account`;
-
-      const response = await fetch(apiUrl, {
+      const { data, error } = await supabase.functions.invoke('delete-account', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${currentSession.access_token}`,
-          'Content-Type': 'application/json',
-        },
       });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        return { error: result.error || 'アカウントの削除に失敗しました' };
+      if (error) {
+        const message =
+          (data as { error?: string } | null)?.error ||
+          error.message ||
+          'アカウントの削除に失敗しました';
+        return { error: message };
       }
 
+      await supabase.auth.signOut().catch(() => {});
       setSession(null);
       return { error: null };
     } catch (e: any) {
-      return { error: e.message || 'アカウントの削除に失敗しました' };
+      return { error: e?.message || 'アカウントの削除に失敗しました' };
     }
   };
 
