@@ -16,6 +16,8 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signInWithApple: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  reauthenticateWithPassword: (password: string) => Promise<{ error: string | null }>;
+  reauthenticateWithProvider: (provider: 'google' | 'apple') => Promise<{ error: string | null }>;
   deleteAccount: () => Promise<{ error: string | null }>;
   resetPassword: (email: string) => Promise<{ error: string | null }>;
   updatePassword: (password: string) => Promise<{ error: string | null }>;
@@ -31,6 +33,8 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => ({ error: null }),
   signInWithApple: async () => ({ error: null }),
   signOut: async () => {},
+  reauthenticateWithPassword: async () => ({ error: null }),
+  reauthenticateWithProvider: async () => ({ error: null }),
   deleteAccount: async () => ({ error: null }),
   resetPassword: async () => ({ error: null }),
   updatePassword: async () => ({ error: null }),
@@ -80,6 +84,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setSession(null);
     }
+  };
+
+  const reauthenticateWithPassword = async (password: string) => {
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    const email = currentSession?.user?.email;
+    if (!email) {
+      return { error: 'メールアドレスが取得できません。再ログインしてください。' };
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      return { error: 'パスワードが正しくありません' };
+    }
+    return { error: null };
+  };
+
+  const reauthenticateWithProvider = async (provider: 'google' | 'apple') => {
+    if (provider === 'google') {
+      return signInWithGoogle();
+    }
+    return signInWithApple();
   };
 
   const deleteAccount = async () => {
@@ -216,6 +240,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signInWithGoogle,
         signInWithApple,
         signOut,
+        reauthenticateWithPassword,
+        reauthenticateWithProvider,
         deleteAccount,
         resetPassword,
         updatePassword,

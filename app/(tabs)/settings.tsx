@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase';
 import { getLegalDocumentsHubUrl } from '@/lib/legalUrls';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType, UserSettings } from '@/types/database';
+import { DeleteAccountModal } from '@/components/DeleteAccountModal';
 
 const WORKSPACE_TYPES = [
   {
@@ -40,7 +41,7 @@ const WORKSPACE_TYPES = [
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, signOut, deleteAccount, updatePassword } = useAuth();
+  const { user, signOut, updatePassword } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
@@ -50,7 +51,7 @@ export default function SettingsScreen() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -223,38 +224,7 @@ export default function SettingsScreen() {
   };
 
   const handleDeleteAccount = () => {
-    Alert.alert(
-      'アカウント削除',
-      'アカウントを完全に削除しますか？全てのデータが削除され、この操作は取り消せません。',
-      [
-        { text: 'キャンセル', style: 'cancel' },
-        {
-          text: '削除する',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              '最終確認',
-              '本当にアカウントを削除しますか？この操作は元に戻せません。',
-              [
-                { text: 'キャンセル', style: 'cancel' },
-                {
-                  text: 'アカウントを削除',
-                  style: 'destructive',
-                  onPress: async () => {
-                    setDeleteLoading(true);
-                    const { error: err } = await deleteAccount();
-                    setDeleteLoading(false);
-                    if (err) {
-                      Alert.alert('エラー', err);
-                    }
-                  },
-                },
-              ]
-            );
-          },
-        },
-      ]
-    );
+    setDeleteModalVisible(true);
   };
 
   return (
@@ -432,16 +402,11 @@ export default function SettingsScreen() {
           <TouchableOpacity
             style={styles.deleteAccountItem}
             onPress={handleDeleteAccount}
-            disabled={deleteLoading}
           >
             <View style={styles.settingLeft}>
-              {deleteLoading ? (
-                <ActivityIndicator color="#ff3b30" size="small" />
-              ) : (
-                <UserX size={20} color="#ff3b30" />
-              )}
+              <UserX size={20} color="#ff3b30" />
               <Text style={[styles.settingText, styles.dangerText]}>
-                {deleteLoading ? 'アカウント削除中...' : 'アカウントを削除'}
+                アカウントを削除
               </Text>
             </View>
           </TouchableOpacity>
@@ -558,6 +523,12 @@ export default function SettingsScreen() {
           </View>
         </View>
       </ScrollView>
+
+      <DeleteAccountModal
+        visible={deleteModalVisible}
+        onClose={() => setDeleteModalVisible(false)}
+        onDeleted={() => setDeleteModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
