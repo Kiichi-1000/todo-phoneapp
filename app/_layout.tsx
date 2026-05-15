@@ -20,21 +20,6 @@ import {
 import { scheduleGoalReminders } from '@/lib/goalReminders';
 import { supabase } from '@/lib/supabase';
 
-// #region agent log
-const __dbg_b9137e = (location: string, message: string, data: Record<string, unknown> = {}, hypothesisId = '') => {
-  try {
-    console.log('[DEBUG-b9137e]', location, message, data);
-  } catch {}
-  try {
-    fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
-      body: JSON.stringify({ sessionId: 'b9137e', hypothesisId, location, message, data, timestamp: Date.now() }),
-    }).catch(() => {});
-  } catch {}
-};
-__dbg_b9137e('app/_layout.tsx:module-top', 'JS module loaded', {}, 'H4');
-// #endregion
 
 const CONSENT_KEY = 'tosche_consent_accepted';
 
@@ -48,40 +33,13 @@ function RootNavigator() {
   const [consentAccepted, setConsentAccepted] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // #region agent log
-    __dbg_b9137e('app/_layout.tsx:RootNavigator-mount', 'AsyncStorage.getItem(CONSENT_KEY) start', {}, 'H1');
-    // #endregion
     AsyncStorage.getItem(CONSENT_KEY).then(value => {
-      // #region agent log
-      __dbg_b9137e('app/_layout.tsx:RootNavigator-mount', 'AsyncStorage.getItem resolved', { value, accepted: value === 'true' }, 'H1');
-      // #endregion
       setConsentAccepted(value === 'true');
     }).catch((err) => {
-      // #region agent log
-      __dbg_b9137e('app/_layout.tsx:RootNavigator-mount', 'AsyncStorage.getItem rejected', { err: String(err) }, 'H1');
-      // #endregion
       setConsentAccepted(false);
     });
   }, []);
 
-  // #region agent log
-  useEffect(() => {
-    __dbg_b9137e(
-      'app/_layout.tsx:RootNavigator-render',
-      'state snapshot',
-      {
-        loading,
-        hasSession: !!session,
-        isPasswordRecovery,
-        langLoaded,
-        hasSelectedLanguage,
-        consentAccepted,
-        segments: segments.join('/'),
-      },
-      'H1+H2+H3'
-    );
-  }, [loading, session, isPasswordRecovery, langLoaded, hasSelectedLanguage, consentAccepted, segments]);
-  // #endregion
 
   const handleAcceptConsent = async () => {
     await AsyncStorage.setItem(CONSENT_KEY, 'true');
@@ -165,12 +123,14 @@ function RootNavigator() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="support" />
-        {/* paywall は modal だが、下スワイプ閉じを無効化。
-            理由: スワイプで閉じると handleClose が走らず、元タブに戻って useFocusEffect が
-            再度 paywall を push する無限ループになる。X ボタンで明示的に閉じてもらう。 */}
+        {/* paywall は modal。ヘッダー左の「閉じる」ボタン、RC Paywall 内蔵 X、下スワイプ、
+            の 3 経路すべてから dismiss 可能。onDismiss が handleClose を呼んで
+            /(tabs)/workspace に router.replace する設計のため、無限ループの心配はない
+            (= router.back() ではなく router.replace なので、元タブ AI の useFocusEffect は再判定されない)。
+            ユーザーが「閉じられない」と感じるリスクを最小化するため、swipe 含め全経路を有効化。 */}
         <Stack.Screen
           name="paywall"
-          options={{ presentation: 'modal', gestureEnabled: false }}
+          options={{ presentation: 'modal', gestureEnabled: true }}
         />
         <Stack.Screen
           name="statistics"

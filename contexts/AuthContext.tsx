@@ -48,27 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   useEffect(() => {
-    // #region agent log
-    try {
-      console.log('[DEBUG-b9137e]', 'AuthContext:useEffect', 'getSession start');
-      fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
-        body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H3', location: 'contexts/AuthContext.tsx:useEffect', message: 'getSession start', data: {}, timestamp: Date.now() }),
-      }).catch(() => {});
-    } catch {}
-    // #endregion
     supabase.auth.getSession().then(({ data: { session: s }, error }) => {
-      // #region agent log
-      try {
-        console.log('[DEBUG-b9137e]', 'AuthContext:useEffect', 'getSession resolved', { hasSession: !!s, error: error?.message });
-        fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
-          body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H3', location: 'contexts/AuthContext.tsx:useEffect', message: 'getSession resolved', data: { hasSession: !!s, error: error?.message ?? null }, timestamp: Date.now() }),
-        }).catch(() => {});
-      } catch {}
-      // #endregion
       if (error) {
         // リフレッシュトークンが無効な場合はストレージから削除してサインアウト
         supabase.auth.signOut().catch(() => {});
@@ -78,16 +58,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setLoading(false);
     }).catch((err) => {
-      // #region agent log
-      try {
-        console.log('[DEBUG-b9137e]', 'AuthContext:useEffect', 'getSession rejected', { err: String(err) });
-        fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
-          body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H3', location: 'contexts/AuthContext.tsx:useEffect', message: 'getSession rejected', data: { err: String(err) }, timestamp: Date.now() }),
-        }).catch(() => {});
-      } catch {}
-      // #endregion
       setSession(null);
       setLoading(false);
     });
@@ -118,15 +88,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Supabase の onAuthStateChange は通常 setSession を反映してくれるが、
+  // ごく稀に (特に Cold start 直後の Google/Apple OAuth で) 発火が遅れる/取りこぼされる
+  // ケースがあり、その結果「ログイン成功したのにアプリ側の user が null のまま
+  // タブ画面に到達 → データが読み込まれない → アプリ再起動でやっと session が
+  // 反映される」というバグになる。各 sign-in メソッドの末尾で明示的に
+  // getSession() を呼び、強制的に React 側 state を同期しておく。
+  const forceSyncSession = async () => {
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      setSession(s);
+      setLoading(false);
+    } catch {
+      // 取得失敗時は触らない (onAuthStateChange に委ねる)
+    }
+  };
+
   const signUp = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({ email, password });
     if (error) return { error: error.message };
+    await forceSyncSession();
     return { error: null };
   };
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
+    await forceSyncSession();
     return { error: null };
   };
 
@@ -218,6 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (code) {
         const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
         if (exchangeError) return { error: exchangeError.message };
+        await forceSyncSession();
         return { error: null };
       }
 
@@ -232,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refresh_token: refreshToken,
         });
         if (sessionError) return { error: sessionError.message };
+        await forceSyncSession();
         return { error: null };
       }
 
@@ -284,6 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) return { error: error.message };
+      await forceSyncSession();
       return { error: null };
     } catch (e: any) {
       if (e.code === 'ERR_REQUEST_CANCELED') {

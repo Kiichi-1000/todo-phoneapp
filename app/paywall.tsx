@@ -20,9 +20,18 @@
 //   → router.push('/paywall')
 //   → このスクリーンが modal で開く
 //   → ensureRevenueCat() で SDK init を待つ
+//   → ヘッダーに「閉じる」ボタンを明示表示 (RC template が X を出さなくても確実に脱出可能)
 //   → <RevenueCatUI.Paywall> が現在の Offering の Paywall を全画面表示
 //   → 購入完了 / 復元完了 → サブスク状態を即時同期 → /(tabs)/ai に遷移
-//   → 閉じる (X タップ / 購入せず終了) → /(tabs)/workspace に遷移 (= 無限ループ防止)
+//   → 閉じる (ヘッダー閉じる / X タップ / swipe down / 購入せず終了) → /(tabs)/workspace に遷移
+//
+// dismissal 経路 (= 全て workspace に集約):
+//   1. ヘッダー左の「閉じる」ボタン (常時表示)
+//   2. RC Paywall の X ボタン (displayCloseButton: true)
+//   3. iOS modal の下スワイプ (gestureEnabled: true)
+//   いずれも onDismiss / handleClose を経由して /(tabs)/workspace へ replace。
+//   元タブ (AI / Goals) に router.back() で戻すと useFocusEffect が再判定して
+//   paywall を再 push する無限ループになるため、必ず replace で切る。
 //
 // 購入後の「即時解放」について:
 //   購入の正本反映は RevenueCat Webhook (Edge Function: revenuecat-webhook) が
@@ -31,15 +40,19 @@
 //   → 購入/復元成功時に syncSubscriptionAfterPurchase() を呼び、クライアントが
 //     掴んでいる customerInfo を Edge Function (sync-subscription) に渡して
 //     user_subscriptions を即 active にしてからタブ遷移する。
-//   方式 (a): 即時同期 Edge Function を選んだ理由 —
-//     方式 (b) の「checkAiAccess をリトライ」だけだと、Webhook が来るまで
-//     user_subscriptions が空のままなので何回リトライしても active にならず、
-//     Webhook 到着までの数秒〜十数秒ユーザーを待たせることになる。
-//     (a) なら購入直後にこちら起点で確定的に解放できる。
 
-import { useEffect, useState } from 'react';
-import { StyleSheet, View, ActivityIndicator, Text } from 'react-native';
+import { useEffect, useState, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  ActivityIndicator,
+  Text,
+  TouchableOpacity,
+  Platform,
+} from 'react-native';
 import { useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { X } from 'lucide-react-native';
 import RevenueCatUI from 'react-native-purchases-ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -55,6 +68,11 @@ export default function PaywallScreen() {
   const { lang } = useLanguage();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 二重発火防止フラグ。 X タップ / swipe / ヘッダー閉じる が同時にトリガーされたとき、
+  // router.replace を 2 回呼ぶと navigation state が破綻するので、最初の dismiss だけ
+  // 処理する。
+  const dismissingRef = useRef(false);
 
   // SDK 初期化を待つ。configure が未完で <Paywall> をレンダすると getOfferings が
   // 空を返して「商品が見つかりません」エラーが出るため、必ず ready=true 待ち。
@@ -93,6 +111,8 @@ export default function PaywallScreen() {
   // 元タブの useFocusEffect が再判定 → 再度 paywall push の無限ループになる。
   // → workspace タブに replace してループを断つ。
   const handleClose = () => {
+    if (dismissingRef.current) return;
+    dismissingRef.current = true;
     router.replace('/(tabs)/workspace');
   };
 
@@ -105,6 +125,8 @@ export default function PaywallScreen() {
     customerInfo: unknown;
     storeTransaction?: { productIdentifier?: string } | null;
   }) => {
+    if (dismissingRef.current) return;
+    dismissingRef.current = true;
     try {
       const productId = info?.storeTransaction?.productIdentifier;
       await syncSubscriptionAfterPurchase(info?.customerInfo, productId);
@@ -115,59 +137,106 @@ export default function PaywallScreen() {
     router.replace('/(tabs)/ai');
   };
 
+  // 共通ヘッダー: 左に「閉じる」ボタンを必ず表示。RC Paywall の template が
+  // X を出さない場合の救済線。loading / error / paywall 表示中いずれの状態でも見える。
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <TouchableOpacity
+        onPress={handleClose}
+        style={styles.closeButton}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={lang === 'ja' ? '閉じる' : 'Close'}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      >
+        <X size={22} color="#0F172A" strokeWidth={2.3} />
+        <Text style={styles.closeText}>
+          {lang === 'ja' ? '閉じる' : 'Close'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   if (!ready) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#0F172A" />
-      </View>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {renderHeader()}
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#0F172A" />
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>{error}</Text>
-        <Text style={styles.errorHint} onPress={handleClose}>
-          {lang === 'ja' ? '閉じる' : 'Close'}
-        </Text>
-      </View>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {renderHeader()}
+        <View style={styles.center}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={handleClose} style={styles.errorButton} activeOpacity={0.7}>
+            <Text style={styles.errorButtonText}>
+              {lang === 'ja' ? '戻る' : 'Back'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <RevenueCatUI.Paywall
-      style={styles.paywall}
-      options={{
-        // 閉じるボタンを表示。下スワイプは _layout.tsx 側で gestureEnabled:false にしてあるので
-        // X タップが唯一の脱出経路 → handleClose で必ず workspace に遷移する。
-        displayCloseButton: true,
-      }}
-      onPurchaseCompleted={({ customerInfo, storeTransaction }) => {
-        // 購入成功 → サブスク状態を即時同期 → AI タブへ。同期で
-        // user_subscriptions が active になるので、AI タブの useFocusEffect
-        // 再判定で paywall は出ない (Webhook 反映ラグを待たない)。
-        void handlePurchaseOrRestore({ customerInfo, storeTransaction });
-      }}
-      onRestoreCompleted={({ customerInfo }) => {
-        // 復元成功 (機種変等で過去購入を取り戻すケース)。
-        // restore では storeTransaction が無いため product_id は customerInfo
-        // 由来で sync 側が既存値を温存する。
-        void handlePurchaseOrRestore({ customerInfo });
-      }}
-      onPurchaseError={({ error: e }) => {
-        if (__DEV__) console.warn('[Paywall] purchase error', e);
-        // ユーザーキャンセルは通常エラー扱いせず、SDK が握り潰す。
-      }}
-      onDismiss={() => {
-        // X タップまたは内蔵 close で閉じられたとき
-        handleClose();
-      }}
-    />
+    <SafeAreaView style={styles.container} edges={['top']}>
+      {renderHeader()}
+      <RevenueCatUI.Paywall
+        style={styles.paywall}
+        options={{
+          // RC template 内蔵の X ボタンも併用。表示するかは template 次第だが、
+          // 出るならユーザーの選択肢が増えるので有効化したまま。
+          displayCloseButton: true,
+        }}
+        onPurchaseCompleted={({ customerInfo, storeTransaction }) => {
+          void handlePurchaseOrRestore({ customerInfo, storeTransaction });
+        }}
+        onRestoreCompleted={({ customerInfo }) => {
+          void handlePurchaseOrRestore({ customerInfo });
+        }}
+        onPurchaseError={({ error: e }) => {
+          if (__DEV__) console.warn('[Paywall] purchase error', e);
+        }}
+        onDismiss={() => {
+          handleClose();
+        }}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#FAFBFF' },
   paywall: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FAFBFF',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+  },
+  closeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  closeText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
   center: {
     flex: 1,
     alignItems: 'center',
@@ -180,12 +249,17 @@ const styles = StyleSheet.create({
     color: '#475569',
     textAlign: 'center',
     marginBottom: 16,
+    lineHeight: 20,
   },
-  errorHint: {
+  errorButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    backgroundColor: '#0F172A',
+  },
+  errorButtonText: {
     fontSize: 14,
-    color: '#1D4ED8',
-    fontWeight: '600',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

@@ -8,41 +8,11 @@ interface Props {
   onComplete: () => void;
 }
 
-// #region agent log
-const __dbgLPM = (location: string, message: string, data: Record<string, unknown> = {}) => {
-  try {
-    console.log('[DEBUG-b9137e]', location, message, data);
-  } catch {}
-  try {
-    fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
-      body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H6+H7+H8', location, message, data, timestamp: Date.now() }),
-    }).catch(() => {});
-  } catch {}
-};
-// #endregion
 
 export default function LanguagePickerModal({ visible, onComplete }: Props) {
-  // #region agent log
-  __dbgLPM('LanguagePickerModal:render', 'function body entered', { visible });
-  // #endregion
   const { t, lang, setLang, markLanguageSelected } = useLanguage();
   const [selected, setSelected] = useState<Language>(lang);
 
-  // #region agent log
-  useEffect(() => {
-    __dbgLPM('LanguagePickerModal:mount', 'mounted', {
-      visible,
-      lang,
-      titleResolved: t('languagePicker.title'),
-      continueResolved: t('languagePicker.continue'),
-    });
-    return () => {
-      __dbgLPM('LanguagePickerModal:unmount', 'unmounted', {});
-    };
-  }, []);
-  // #endregion
 
   const handleContinue = async () => {
     await setLang(selected);
