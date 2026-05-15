@@ -10,20 +10,34 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { X, Trash2, Clock, History } from 'lucide-react-native';
+import { X, Trash2, Clock, History, ListChecks } from 'lucide-react-native';
 import { Schedule } from '@/types/database';
 import { SCHEDULE_COLORS, minutesToTimeString } from '@/lib/scheduleUtils';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import WheelPicker from '@/components/WheelPicker';
 
 interface Props {
   visible: boolean;
   schedule: Partial<Schedule> | null;
-  onSave: (data: { title: string; start_minutes: number; end_minutes: number; color: string }) => void;
+  currentDate: string;
+  onSave: (data: {
+    title: string;
+    start_minutes: number;
+    end_minutes: number;
+    color: string;
+    source_todo_id?: string | null;
+  }) => void;
   onDelete?: () => void;
   onClose: () => void;
   isNew: boolean;
+}
+
+interface WorkspaceTask {
+  id: string;
+  content: string;
+  is_completed: boolean;
 }
 
 interface SuggestionItem {
@@ -47,8 +61,9 @@ function formatDuration(minutes: number): string {
   return `${m}\u5206`;
 }
 
-export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete, onClose, isNew }: Props) {
+export default function ScheduleItemEditor({ visible, schedule, currentDate, onSave, onDelete, onClose, isNew }: Props) {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [title, setTitle] = useState('');
   const [startHour, setStartHour] = useState(0);
   const [startMin, setStartMin] = useState(0);
@@ -58,6 +73,9 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
   const [suggestions, setSuggestions] = useState<SuggestionItem[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [titleFocused, setTitleFocused] = useState(false);
+  const [historyItems, setHistoryItems] = useState<SuggestionItem[]>([]);
+  const [workspaceTasks, setWorkspaceTasks] = useState<WorkspaceTask[]>([]);
+  const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null);
   const historyCache = useRef<SuggestionItem[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -73,6 +91,7 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
       setColor(schedule.color || SCHEDULE_COLORS[0]);
       setSuggestions([]);
       setShowSuggestions(false);
+      setLinkedTaskId(schedule.source_todo_id ?? null);
     }
   }, [schedule]);
 
@@ -81,10 +100,43 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
       loadHistory();
     } else {
       historyCache.current = [];
+      setHistoryItems([]);
       setSuggestions([]);
       setShowSuggestions(false);
     }
   }, [visible, user]);
+
+  useEffect(() => {
+    if (visible && user && currentDate) {
+      loadWorkspaceTasks();
+    } else {
+      setWorkspaceTasks([]);
+    }
+  }, [visible, user, currentDate]);
+
+  const loadWorkspaceTasks = async () => {
+    if (!user || !currentDate) return;
+    try {
+      const { data, error } = await supabase
+        .from('todos')
+        .select('id, content, is_completed, workspaces!inner(date)')
+        .eq('user_id', user.id)
+        .eq('workspaces.date', currentDate)
+        .order('created_at', { ascending: true }) as {
+          data: WorkspaceTask[] | null;
+          error: any;
+        };
+      if (error || !data) return;
+      setWorkspaceTasks(data.filter(t => t.content && t.content.trim().length > 0));
+    } catch (e) {
+      console.error('Error loading workspace tasks:', e);
+    }
+  };
+
+  const applyWorkspaceTask = (task: WorkspaceTask) => {
+    setTitle(task.content);
+    setLinkedTaskId(task.id);
+  };
 
   const loadHistory = async () => {
     if (!user) return;
@@ -131,6 +183,7 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
       }
 
       historyCache.current = result;
+      setHistoryItems(result.slice(0, 12));
     } catch (e) {
       console.error('Error loading schedule history:', e);
     }
@@ -167,6 +220,12 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
     setShowSuggestions(false);
   };
 
+  const applyHistoryItem = (item: SuggestionItem) => {
+    setTitle(item.title);
+    setColor(item.color);
+    setLinkedTaskId(null);
+  };
+
   const startTotal = startHour * 60 + startMin;
   const endTotal = endHour * 60 + endMin;
   const duration = endTotal > startTotal ? endTotal - startTotal : 0;
@@ -184,7 +243,13 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
     let end = endHour * 60 + endMin;
     if (end <= start) end = start + 30;
     if (end > 1440) end = 1440;
-    onSave({ title: title || '(\u7121\u984C)', start_minutes: start, end_minutes: end, color });
+    onSave({
+      title: title || '(\u7121\u984C)',
+      start_minutes: start,
+      end_minutes: end,
+      color,
+      source_todo_id: linkedTaskId,
+    });
   };
 
   const hasError = endTotal <= startTotal;
@@ -308,6 +373,61 @@ export default function ScheduleItemEditor({ visible, schedule, onSave, onDelete
                 </Text>
               </View>
             </View>
+
+            {historyItems.length > 0 && (
+              <View style={styles.historySection}>
+                <View style={styles.historyHeader}>
+                  <History size={14} color="#888" />
+                  <Text style={styles.historyTitle}>{t('scheduleEditor.addFromHistory')}</Text>
+                </View>
+                <Text style={styles.historyHint}>{t('scheduleEditor.addFromHistoryHint')}</Text>
+                <View style={styles.historyChipsWrap}>
+                  {historyItems.map((item, idx) => (
+                    <TouchableOpacity
+                      key={`${item.title}-${idx}`}
+                      style={styles.historyChip}
+                      onPress={() => applyHistoryItem(item)}
+                      activeOpacity={0.75}
+                    >
+                      <View style={[styles.historyChipDot, { backgroundColor: item.color }]} />
+                      <Text style={styles.historyChipText} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {workspaceTasks.length > 0 && (
+              <View style={styles.historySection}>
+                <View style={styles.historyHeader}>
+                  <ListChecks size={14} color="#888" />
+                  <Text style={styles.historyTitle}>{t('scheduleEditor.addFromTasks')}</Text>
+                </View>
+                <Text style={styles.historyHint}>{t('scheduleEditor.addFromTasksHint')}</Text>
+                <View style={styles.historyChipsWrap}>
+                  {workspaceTasks.map(task => (
+                    <TouchableOpacity
+                      key={task.id}
+                      style={[styles.taskChip, task.is_completed && styles.taskChipCompleted]}
+                      onPress={() => applyWorkspaceTask(task)}
+                      activeOpacity={0.75}
+                    >
+                      <Text
+                        style={[
+                          styles.taskChipText,
+                          task.is_completed && styles.taskChipTextCompleted,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {task.content}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
           </ScrollView>
 
           <View style={styles.footer}>
@@ -404,6 +524,82 @@ const styles = StyleSheet.create({
   colorDot: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   colorDotActive: { borderWidth: 3, borderColor: '#000' },
   colorCheck: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff' },
+  historySection: {
+    marginTop: 24,
+    marginBottom: 12,
+    backgroundColor: '#fafafa',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+    padding: 12,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  historyTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+  },
+  historyHint: {
+    fontSize: 11,
+    color: '#888',
+    marginBottom: 10,
+  },
+  historyChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  historyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+    maxWidth: '100%',
+  },
+  historyChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  historyChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#333',
+    maxWidth: 160,
+  },
+  taskChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dcecff',
+    maxWidth: '100%',
+  },
+  taskChipCompleted: {
+    backgroundColor: '#f3f3f3',
+    borderColor: '#e5e5e5',
+  },
+  taskChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#1f4a8a',
+    maxWidth: 200,
+  },
+  taskChipTextCompleted: {
+    color: '#999',
+    textDecorationLine: 'line-through',
+  },
   previewCard: { flexDirection: 'row', marginTop: 24, marginBottom: 8, backgroundColor: '#f9f9f9', borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#eee' },
   previewBar: { width: 4 },
   previewContent: { flex: 1, paddingVertical: 14, paddingHorizontal: 14 },

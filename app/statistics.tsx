@@ -13,6 +13,7 @@ import { CircleCheck as CheckCircle2, TrendingUp, Sunrise, Sun, Moon, ListChecks
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Todo, UserSettings, RoutineSlot } from '@/types/database';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface StatsSummary {
   todayCompleted: number;
@@ -41,12 +42,6 @@ interface RoutineOverallStat {
 
 const SLOTS_ORDER: RoutineSlot[] = ['morning', 'daytime', 'evening'];
 
-const SLOT_LABELS: Record<RoutineSlot, string> = {
-  morning: '朝',
-  daytime: '日中',
-  evening: '夜',
-};
-
 const SLOT_ICONS: Record<RoutineSlot, any> = {
   morning: Sunrise,
   daytime: Sun,
@@ -66,6 +61,11 @@ function formatDateLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+function parseDateLocal(dateString: string): Date {
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
 function getRateColor(rate: number): string {
   if (rate >= 80) return '#22c55e';
   if (rate >= 60) return '#eab308';
@@ -75,6 +75,12 @@ function getRateColor(rate: number): string {
 
 export default function StatisticsScreen() {
   const { user } = useAuth();
+  const { t } = useLanguage();
+  const SLOT_LABELS: Record<RoutineSlot, string> = {
+    morning: t('routine.morning'),
+    daytime: t('routine.daytime'),
+    evening: t('routine.evening'),
+  };
   const [stats, setStats] = useState<StatsSummary>({
     todayCompleted: 0,
     weekCompleted: 0,
@@ -256,6 +262,7 @@ export default function StatisticsScreen() {
       let overallTotal = 0;
       let overallCompleted = 0;
 
+      const untitledLabel = t('statistics.untitled');
       const itemStats: RoutineItemStat[] = templateItems.map((item: any) => {
         const startDate = formatDateLocal(new Date(item.created_at));
         const itemCompletions = completionMap.get(item.id) || new Set();
@@ -264,8 +271,8 @@ export default function StatisticsScreen() {
         let totalDays = 0;
         let completedDays = 0;
 
-        const start = new Date(startDate);
-        const end = new Date(todayStr);
+        const start = parseDateLocal(startDate);
+        const end = parseDateLocal(todayStr);
         const cursor = new Date(start);
 
         while (cursor <= end) {
@@ -284,7 +291,7 @@ export default function StatisticsScreen() {
 
         return {
           id: item.id,
-          title: item.title || '(無題)',
+          title: item.title || untitledLabel,
           slot: item.slot as RoutineSlot,
           is_active: item.is_active,
           totalDays,
@@ -315,10 +322,10 @@ export default function StatisticsScreen() {
     setRefreshing(false);
   };
 
+  // Stack navigator now provides the header — no need for an empty placeholder.
+  // SafeAreaView only pads bottom edge since Stack handles the top inset.
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header} />
-
+    <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}
@@ -327,48 +334,48 @@ export default function StatisticsScreen() {
         <View style={styles.summaryCard}>
           <View style={styles.summaryHeader}>
             <CheckCircle2 size={24} color="#fff" />
-            <Text style={styles.summaryTitle}>ToDo達成率</Text>
+            <Text style={styles.summaryTitle}>{t('statistics.todoRate')}</Text>
           </View>
           <Text style={styles.summaryValue}>{Math.round(stats.completionRate)}%</Text>
           <Text style={styles.summarySubtext}>
-            {stats.totalCompleted} / {stats.totalCompleted + stats.totalPending} 完了
+            {t('statistics.completedRatio', { done: stats.totalCompleted, total: stats.totalCompleted + stats.totalPending })}
           </Text>
         </View>
 
         <View style={styles.statsGrid}>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>今日</Text>
+            <Text style={styles.statLabel}>{t('statistics.today')}</Text>
             <Text style={styles.statValue}>{stats.todayCompleted}</Text>
-            <Text style={styles.statUnit}>完了</Text>
+            <Text style={styles.statUnit}>{t('statistics.completedShort')}</Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>今週</Text>
+            <Text style={styles.statLabel}>{t('statistics.thisWeek')}</Text>
             <Text style={styles.statValue}>{stats.weekCompleted}</Text>
-            <Text style={styles.statUnit}>完了</Text>
+            <Text style={styles.statUnit}>{t('statistics.completedShort')}</Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>今月</Text>
+            <Text style={styles.statLabel}>{t('statistics.thisMonth')}</Text>
             <Text style={styles.statValue}>{stats.monthCompleted}</Text>
-            <Text style={styles.statUnit}>完了</Text>
+            <Text style={styles.statUnit}>{t('statistics.completedShort')}</Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>合計</Text>
+            <Text style={styles.statLabel}>{t('statistics.total')}</Text>
             <Text style={styles.statValue}>{stats.totalCompleted}</Text>
-            <Text style={styles.statUnit}>完了</Text>
+            <Text style={styles.statUnit}>{t('statistics.completedShort')}</Text>
           </View>
         </View>
 
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <TrendingUp size={20} color="#000" />
-            <Text style={styles.cardTitle}>現在の状況</Text>
+            <Text style={styles.cardTitle}>{t('statistics.currentStatus')}</Text>
           </View>
           <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>完了済み</Text>
+            <Text style={styles.statusLabel}>{t('statistics.doneCount')}</Text>
             <Text style={styles.statusValue}>{stats.totalCompleted}</Text>
           </View>
           <View style={[styles.statusRow, { borderBottomWidth: 0 }]}>
-            <Text style={styles.statusLabel}>未完了</Text>
+            <Text style={styles.statusLabel}>{t('statistics.pendingCount')}</Text>
             <Text style={styles.statusValue}>{stats.totalPending}</Text>
           </View>
         </View>
@@ -381,7 +388,7 @@ export default function StatisticsScreen() {
           >
             <View style={styles.routineSectionTitleRow}>
               <ListChecks size={22} color="#000" />
-              <Text style={styles.routineSectionTitle}>ルーティン完遂率</Text>
+              <Text style={styles.routineSectionTitle}>{t('statistics.routineRate')}</Text>
             </View>
             {routineExpanded ? (
               <ChevronUp size={20} color="#999" />
@@ -395,7 +402,7 @@ export default function StatisticsScreen() {
               {routineItems.length > 0 ? (
                 <>
                   <View style={styles.routineOverallCard}>
-                    <Text style={styles.routineOverallLabel}>全体の完遂率</Text>
+                    <Text style={styles.routineOverallLabel}>{t('statistics.overallRate')}</Text>
                     <View style={styles.routineOverallRow}>
                       <Text
                         style={[
@@ -406,7 +413,7 @@ export default function StatisticsScreen() {
                         {routineOverall.rate}%
                       </Text>
                       <Text style={styles.routineOverallSub}>
-                        {routineOverall.totalCompleted} / {routineOverall.totalPossible} 回
+                        {t('statistics.timesUnit', { done: routineOverall.totalCompleted, total: routineOverall.totalPossible })}
                       </Text>
                     </View>
                     <View style={styles.routineOverallBarBg}>
@@ -454,7 +461,7 @@ export default function StatisticsScreen() {
                                 {item.title}
                               </Text>
                               <Text style={styles.routineItemDays}>
-                                {item.completedDays}/{item.totalDays}日
+                                {t('statistics.daysUnit', { done: item.completedDays, total: item.totalDays })}
                               </Text>
                             </View>
                             <View style={styles.routineItemBarContainer}>
@@ -488,7 +495,7 @@ export default function StatisticsScreen() {
                 <View style={styles.routineEmptyCard}>
                   <ListChecks size={32} color="#ccc" />
                   <Text style={styles.routineEmptyText}>
-                    ルーティンを作成するとここに完遂率が表示されます
+                    {t('statistics.noRoutineYet')}
                   </Text>
                 </View>
               )}

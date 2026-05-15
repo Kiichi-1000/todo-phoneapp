@@ -10,12 +10,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BookOpen, Square, CheckSquare } from 'lucide-react-native';
 import { getLegalPrivacyUrl, getLegalTermsUrl } from '@/lib/legalUrls';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface Props {
   onAccept: () => void;
 }
 
 export default function ConsentScreen({ onAccept }: Props) {
+  const { t } = useLanguage();
   const [termsChecked, setTermsChecked] = useState(false);
   const [privacyChecked, setPrivacyChecked] = useState(false);
 
@@ -29,13 +31,12 @@ export default function ConsentScreen({ onAccept }: Props) {
             <BookOpen size={40} color="#1a1a2e" />
           </View>
           <Text style={styles.appName}>ToSche</Text>
-          <Text style={styles.appTagline}>ご利用にあたって</Text>
+          <Text style={styles.appTagline}>{t('consent.tagline')}</Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardText}>
-            ToScheをご利用いただくには、以下の利用規約およびプライバシーポリシーへの同意が必要です。内容をご確認の上、チェックを入れてください。{"\n\n"}
-            利用規約は将来改定されることがあり、その内容に応じてアプリ上で再度同意をお願いすることがあります（利用規約第12条）。
+            {t('consent.cardBody')}
           </Text>
         </View>
 
@@ -51,13 +52,14 @@ export default function ConsentScreen({ onAccept }: Props) {
           )}
           <View style={styles.checkTextWrap}>
             <Text style={styles.checkLabel}>
+              {t('consent.agreeToTermsPrefix')}
               <Text
                 style={styles.link}
                 onPress={() => Linking.openURL(getLegalTermsUrl())}
               >
-                利用規約
+                {t('consent.termsLinkText')}
               </Text>
-              に同意する
+              {t('consent.agreeToTermsSuffix')}
             </Text>
           </View>
         </TouchableOpacity>
@@ -74,13 +76,14 @@ export default function ConsentScreen({ onAccept }: Props) {
           )}
           <View style={styles.checkTextWrap}>
             <Text style={styles.checkLabel}>
+              {t('consent.agreeToPrivacyPrefix')}
               <Text
                 style={styles.link}
                 onPress={() => Linking.openURL(getLegalPrivacyUrl())}
               >
-                プライバシーポリシー
+                {t('consent.privacyLinkText')}
               </Text>
-              に同意する
+              {t('consent.agreeToPrivacySuffix')}
             </Text>
           </View>
         </TouchableOpacity>
@@ -90,11 +93,11 @@ export default function ConsentScreen({ onAccept }: Props) {
           onPress={onAccept}
           disabled={!canAccept}
         >
-          <Text style={styles.acceptButtonText}>同意して始める</Text>
+          <Text style={styles.acceptButtonText}>{t('consent.acceptStart')}</Text>
         </TouchableOpacity>
 
         <Text style={styles.footerNote}>
-          上記リンクはブラウザで掲載ページを開きます。同意後は設定画面からアプリ内表示・同じ掲載先からもご確認いただけます。
+          {t('consent.footerNote')}
         </Text>
       </ScrollView>
     </SafeAreaView>

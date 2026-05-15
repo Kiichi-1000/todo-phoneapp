@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,24 @@ import {
   TouchableOpacity,
   TextInput,
   Platform,
+  ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
+import Svg, { Defs, Pattern, Rect, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { Plus, Bell, Check } from 'lucide-react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Workspace, Todo, GridArea, UserSettings } from '@/types/database';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { Workspace, Todo, GridArea, UserSettings, DEFAULT_FOUR_GRID_TODO_BORDER_COLORS } from '@/types/database';
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
-import { scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
 import PostitMenu from '@/components/PostitMenu';
+import TodoSchedulePicker from '@/components/TodoSchedulePicker';
+import { getThemeForSkin, useFourGridSkin } from '@/lib/fourGridSkin';
+import { scheduleTaskNotification, scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
+import { upsertScheduleFromTodoSchedule, deleteScheduleFromTodo } from '@/lib/todoScheduleSync';
 
 interface WorkspacePageProps {
   workspace: Workspace;
@@ -38,11 +45,14 @@ export default function WorkspacePage({
   isCurrentPage,
 }: WorkspacePageProps) {
   const { user } = useAuth();
+  const { t: tr } = useLanguage();
+  const { skin: fourGridSkin } = useFourGridSkin();
+  const fourGridTheme = getThemeForSkin(fourGridSkin);
   const [gridTitles, setGridTitles] = useState<Record<GridArea, string>>({
-    top_left: workspace.area_titles?.top_left || '\u5DE6\u4E0A\u30A8\u30EA\u30A2',
-    top_right: workspace.area_titles?.top_right || '\u53F3\u4E0A\u30A8\u30EA\u30A2',
-    bottom_left: workspace.area_titles?.bottom_left || '\u5DE6\u4E0B\u30A8\u30EA\u30A2',
-    bottom_right: workspace.area_titles?.bottom_right || '\u53F3\u4E0B\u30A8\u30EA\u30A2',
+    top_left: workspace.area_titles?.top_left || tr('workspace.areaTopLeft'),
+    top_right: workspace.area_titles?.top_right || tr('workspace.areaTopRight'),
+    bottom_left: workspace.area_titles?.bottom_left || tr('workspace.areaBottomLeft'),
+    bottom_right: workspace.area_titles?.bottom_right || tr('workspace.areaBottomRight'),
   });
   const [newTodoContent, setNewTodoContent] = useState<Record<GridArea, string>>({
     top_left: '',
@@ -52,11 +62,11 @@ export default function WorkspacePage({
   });
   const [editingArea, setEditingArea] = useState<GridArea | null>(null);
   const [editingAreaName, setEditingAreaName] = useState('');
-  const [isAddingPostit, setIsAddingPostit] = useState(false);
   const [newTaskText, setNewTaskText] = useState('');
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editingTodoText, setEditingTodoText] = useState('');
   const [reminderTodo, setReminderTodo] = useState<Todo | null>(null);
+  const [schedulingTodo, setSchedulingTodo] = useState<Todo | null>(null);
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
   const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
@@ -164,19 +174,33 @@ export default function WorkspacePage({
       setGridTitles(prev => ({ ...prev, [editingArea]: newAreaName }));
       try {
         const currentAreaTitles = workspace.area_titles || {
-          top_left: '\u5DE6\u4E0A\u30A8\u30EA\u30A2',
-          top_right: '\u53F3\u4E0A\u30A8\u30EA\u30A2',
-          bottom_left: '\u5DE6\u4E0B\u30A8\u30EA\u30A2',
-          bottom_right: '\u53F3\u4E0B\u30A8\u30EA\u30A2',
+          top_left: tr('workspace.areaTopLeft'),
+          top_right: tr('workspace.areaTopRight'),
+          bottom_left: tr('workspace.areaBottomLeft'),
+          bottom_right: tr('workspace.areaBottomRight'),
         };
         const updatedAreaTitles = { ...currentAreaTitles, [editingArea]: newAreaName };
-        const { data: updateData, error } = await supabase
+
+        // Sync grid names from the current workspace's date FORWARD so past
+        // workspaces keep their historical names. Future-dated workspaces
+        // (already created or to be created) pick up the new name.
+        // Fall back to single-row update if user / type are unavailable.
+        const baseUpdate = supabase
           .from('workspaces')
-          .update({ area_titles: updatedAreaTitles })
-          .eq('id', workspace.id)
-          .select();
-        if (!error && updateData && updateData[0]) {
-          onWorkspaceChange({ ...workspace, area_titles: updateData[0].area_titles });
+          .update({ area_titles: updatedAreaTitles });
+        const query =
+          user && workspace.type === 'four_grid'
+            ? baseUpdate
+                .eq('user_id', user.id)
+                .eq('type', 'four_grid')
+                .gte('date', workspace.date)
+            : baseUpdate.eq('id', workspace.id);
+
+        const { data: updateData, error } = await query.select();
+        if (!error && updateData && updateData.length > 0) {
+          const matchingRow =
+            updateData.find((w: any) => w.id === workspace.id) || updateData[0];
+          onWorkspaceChange({ ...workspace, area_titles: matchingRow.area_titles });
         }
       } catch (error) {
         console.error('Error saving area name:', error);
@@ -199,14 +223,30 @@ export default function WorkspacePage({
 
   const saveEditingTodo = async () => {
     if (!editingTodo || !editingTodoText.trim()) return;
+    const newContent = editingTodoText.trim();
     try {
       const { error } = await supabase
         .from('todos')
-        .update({ content: editingTodoText.trim() })
+        .update({ content: newContent })
         .eq('id', editingTodo.id);
       if (error) throw error;
+      if (
+        user &&
+        editingTodo.schedule_start_minutes != null &&
+        editingTodo.schedule_end_minutes != null
+      ) {
+        await upsertScheduleFromTodoSchedule(
+          user.id,
+          editingTodo.id,
+          newContent,
+          workspace.date,
+          editingTodo.schedule_start_minutes,
+          editingTodo.schedule_end_minutes,
+          editingTodo.schedule_color,
+        );
+      }
       const updated = todos.map(t =>
-        t.id === editingTodo.id ? { ...t, content: editingTodoText.trim() } : t
+        t.id === editingTodo.id ? { ...t, content: newContent } : t
       );
       onTodosChange(workspace.id, updated);
       setEditingTodo(null);
@@ -274,7 +314,6 @@ export default function WorkspacePage({
         onTodosChange(workspace.id, [...todos, newTodo]);
         onDataChanged();
       }
-      setIsAddingPostit(false);
       setNewTaskText('');
     } catch (error) {
       console.error('Error adding postit:', error);
@@ -309,6 +348,9 @@ export default function WorkspacePage({
       if (todoToDelete?.notification_id) {
         await cancelReminderNotification(todoToDelete.notification_id);
       }
+      if (user && todoToDelete) {
+        await deleteScheduleFromTodo(user.id, todoToDelete.id);
+      }
       const { error } = await supabase.from('todos').delete().eq('id', todoId);
       if (error) throw error;
       const newTodos = todos.filter(t => t.id !== todoId);
@@ -322,6 +364,88 @@ export default function WorkspacePage({
   const openReminderPicker = (todo: Todo) => {
     setIsReorderMode(false);
     setReminderTodo(todo);
+  };
+
+  const openSchedulePicker = (todo: Todo) => {
+    setIsReorderMode(false);
+    setSchedulingTodo(todo);
+  };
+
+  const handleSaveTodoSchedule = async (startMin: number, endMin: number, notifyBefore: number | null, color: string) => {
+    if (!schedulingTodo) return;
+    if (schedulingTodo.notification_id) {
+      await cancelReminderNotification(schedulingTodo.notification_id);
+    }
+    let newNotificationId: string | null = null;
+    if (notifyBefore !== null) {
+      const [year, month, day] = workspace.date.split('-').map(Number);
+      const notifyMinutes = startMin - notifyBefore;
+      if (notifyMinutes >= 0) {
+        const notifyAt = new Date(year, month - 1, day, Math.floor(notifyMinutes / 60), notifyMinutes % 60, 0);
+        if (notifyAt > new Date()) {
+          newNotificationId = await scheduleTaskNotification(
+            schedulingTodo.id,
+            schedulingTodo.content,
+            notifyAt
+          );
+        }
+      }
+    }
+    const patch = {
+      schedule_start_minutes: startMin,
+      schedule_end_minutes: endMin,
+      schedule_notify_before: notifyBefore,
+      schedule_color: color,
+      notification_id: newNotificationId,
+    };
+    try {
+      const { error } = await supabase.from('todos').update(patch).eq('id', schedulingTodo.id);
+      if (!error) {
+        if (user) {
+          await upsertScheduleFromTodoSchedule(
+            user.id,
+            schedulingTodo.id,
+            schedulingTodo.content,
+            workspace.date,
+            startMin,
+            endMin,
+            color,
+          );
+        }
+        const updated = todos.map(t => t.id === schedulingTodo.id ? { ...t, ...patch } : t);
+        onTodosChange(workspace.id, updated);
+      }
+    } catch (e) {
+      console.error('Error saving todo schedule:', e);
+    }
+    setSchedulingTodo(null);
+  };
+
+  const handleRemoveTodoSchedule = async () => {
+    if (!schedulingTodo) return;
+    if (schedulingTodo.notification_id) {
+      await cancelReminderNotification(schedulingTodo.notification_id);
+    }
+    const patch = {
+      schedule_start_minutes: null,
+      schedule_end_minutes: null,
+      schedule_notify_before: null,
+      schedule_color: null,
+      notification_id: null,
+    };
+    try {
+      const { error } = await supabase.from('todos').update(patch).eq('id', schedulingTodo.id);
+      if (!error) {
+        if (user) {
+          await deleteScheduleFromTodo(user.id, schedulingTodo.id);
+        }
+        const updated = todos.map(t => t.id === schedulingTodo.id ? { ...t, ...patch } : t);
+        onTodosChange(workspace.id, updated);
+      }
+    } catch (e) {
+      console.error('Error removing todo schedule:', e);
+    }
+    setSchedulingTodo(null);
   };
 
   const clearReminder = async (todo: Todo) => {
@@ -418,9 +542,12 @@ export default function WorkspacePage({
   const renderGridArea = (area: GridArea) => {
     const areaTodos = getTodosForArea(area);
     const progress = getProgressForArea(area);
+    const borderColors = settings.four_grid_todo_border_colors ?? DEFAULT_FOUR_GRID_TODO_BORDER_COLORS;
+    const todoBorderLeftColor = borderColors[area];
     return (
       <GridAreaDropTarget
         area={area}
+        todoBorderLeftColor={todoBorderLeftColor}
         gridTitles={gridTitles}
         editingArea={editingArea}
         editingAreaName={editingAreaName}
@@ -441,31 +568,37 @@ export default function WorkspacePage({
         onQuickAdd={addTodo}
         onReminderPress={openReminderPicker}
         onClearReminder={clearReminder}
+        onSchedulePress={openSchedulePicker}
         isReorderMode={isReorderMode}
         onReorderEnd={persistAreaOrder}
         onMoveToArea={moveTodoToArea}
         onActivateReorderMode={enterReorderMode}
+        skin={fourGridSkin}
       />
     );
   };
 
-  const reorderActivationGesture = Gesture.LongPress()
-    .minDuration(300)
-    .maxDistance(10)
-    .runOnJS(true)
-    .onStart(() => {
-      if (!isReorderMode) {
-        enterReorderMode();
-      }
-    });
+  const reorderActivationGesture = useMemo(
+    () =>
+      Gesture.LongPress()
+        .minDuration(300)
+        .maxDistance(10)
+        .runOnJS(true)
+        .onStart(() => {
+          if (!isReorderMode) {
+            enterReorderMode();
+          }
+        }),
+    [isReorderMode, enterReorderMode]
+  );
 
   const renderFourGrid = () => (
-    <View style={styles.fourGridContainer}>
+    <View style={[styles.fourGridContainer, { backgroundColor: fourGridTheme.pageBg }]}>
       {isReorderMode && (
         <View style={styles.reorderBar}>
           <TouchableOpacity style={styles.reorderDoneButton} onPress={exitReorderMode}>
             <Check size={14} color="#fff" />
-            <Text style={styles.reorderDoneText}>完了</Text>
+            <Text style={styles.reorderDoneText}>{tr('common.done')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -474,16 +607,38 @@ export default function WorkspacePage({
         前面: 4エリアのタスクグリッドは常にタッチを奪う → 長押しはタスクメニュー用
       */}
       <View style={styles.gridWorkspace}>
+        {fourGridTheme.showGridPattern && (
+          <Svg
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+            width="100%"
+            height="100%"
+          >
+            <Defs>
+              <Pattern
+                id="wbDots"
+                x="0"
+                y="0"
+                width="20"
+                height="20"
+                patternUnits="userSpaceOnUse"
+              >
+                <Circle cx="10" cy="10" r="0.9" fill={fourGridTheme.gridPatternDotColor} />
+              </Pattern>
+            </Defs>
+            <Rect x="0" y="0" width="100%" height="100%" fill="url(#wbDots)" opacity={0.7} />
+          </Svg>
+        )}
         <GestureDetector gesture={reorderActivationGesture}>
           <View style={styles.reorderHitLayer} collapsable={false} />
         </GestureDetector>
-        <View style={styles.gridForeground} collapsable={false}>
-          <View style={styles.grid}>
-            <View style={styles.gridRow}>
+        <View pointerEvents="box-none" style={styles.gridForeground} collapsable={false}>
+          <View pointerEvents="box-none" style={styles.grid}>
+            <View pointerEvents="box-none" style={styles.gridRow}>
               {renderGridArea('top_left')}
               {renderGridArea('top_right')}
             </View>
-            <View style={styles.gridRow}>
+            <View pointerEvents="box-none" style={styles.gridRow}>
               {renderGridArea('bottom_left')}
               {renderGridArea('bottom_right')}
             </View>
@@ -497,129 +652,147 @@ export default function WorkspacePage({
     const sortedPostits = todos
       .filter(t => t.grid_area === null)
       .sort((a, b) => a.order - b.order);
+    const completedCount = sortedPostits.filter(t => t.is_completed).length;
+    const total = sortedPostits.length;
+    const progressPct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
     return (
-      <View style={styles.individualContainer}>
-        {sortedPostits.length === 0 && !isAddingPostit ? (
-          <View style={styles.emptyPostitsContainer}>
-            <Text style={styles.emptyPostitsText}>
-              {'\u53F3\u4E0B\u306E\uFF0B\u30DC\u30BF\u30F3\u3067\u30DD\u30B9\u30C8\u30A4\u30C3\u30C8\u3092\u8FFD\u52A0'}
-            </Text>
+      <KeyboardAvoidingView
+        style={styles.individualContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
+        {total > 0 && (
+          <View style={styles.indHeader}>
+            <Text style={styles.indHeaderCount}>{tr('workspace.completedCount', { completed: completedCount, total })}</Text>
+            <View style={styles.indProgressTrack}>
+              <View style={[styles.indProgressFill, { width: `${progressPct}%` as any }]} />
+            </View>
+            <Text style={styles.indHeaderPct}>{progressPct}%</Text>
           </View>
-        ) : (
-          <View style={styles.postitsContent}>
-            {sortedPostits.map((todo) => (
-              <View key={todo.id}>
-                {editingTodo?.id === todo.id ? (
-                  <View style={styles.postit}>
-                    <View style={styles.postitEditing}>
-                      <TextInput
-                        style={styles.postitEditInput}
-                        value={editingTodoText}
-                        onChangeText={setEditingTodoText}
-                        multiline
-                        autoFocus
-                        maxLength={100}
-                      />
-                      <View style={styles.postitEditButtons}>
-                        <TouchableOpacity style={styles.postitEditSaveButton} onPress={saveEditingTodo}>
-                          <Text style={styles.postitEditSaveText}>{'\u2713'}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.postitEditCancelButton} onPress={cancelEditingTodo}>
-                          <Text style={styles.postitEditCancelText}>{'\u2715'}</Text>
-                        </TouchableOpacity>
-                      </View>
+        )}
+
+        <ScrollView
+          style={styles.indScroll}
+          contentContainerStyle={[
+            styles.indScrollContent,
+            total === 0 && styles.indScrollContentEmpty,
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {total === 0 ? (
+            <View style={styles.indEmpty}>
+              <Text style={styles.indEmptyTitle}>{tr('workspace.noTodos')}</Text>
+              <Text style={styles.indEmptyHint}>{tr('workspace.noTodosHint')}</Text>
+            </View>
+          ) : (
+            sortedPostits.map(todo => {
+              if (editingTodo?.id === todo.id) {
+                return (
+                  <View key={todo.id} style={styles.indTodoEditing}>
+                    <TextInput
+                      style={styles.indTodoEditInput}
+                      value={editingTodoText}
+                      onChangeText={setEditingTodoText}
+                      multiline
+                      autoFocus
+                      maxLength={100}
+                      returnKeyType="done"
+                      blurOnSubmit
+                      onSubmitEditing={saveEditingTodo}
+                    />
+                    <View style={styles.indTodoEditActions}>
+                      <TouchableOpacity style={styles.indTodoEditCancel} onPress={cancelEditingTodo}>
+                        <Text style={styles.indTodoEditCancelText}>{tr('common.cancel')}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.indTodoEditSave} onPress={saveEditingTodo}>
+                        <Text style={styles.indTodoEditSaveText}>{tr('common.save')}</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
-                ) : (
-                  <View style={styles.postit}>
-                    <View style={styles.postitRow}>
-                      <TouchableOpacity style={styles.postitCheckbox} onPress={() => toggleTodo(todo)}>
-                        {todo.is_completed && <View style={styles.postitCheckboxFilled} />}
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.postitTextContainer}
-                        onPress={() => startEditingTodo(todo)}
-                        onLongPress={(e) => {
-                          setLongPressedTodo(todo.id);
-                          setPostitMenuTodo(todo);
-                          setPostitMenuPosition({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
-                          if (Platform.OS !== 'web') {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                          }
-                        }}
-                        delayLongPress={400}
-                      >
-                        <Text style={[styles.postitText, todo.is_completed && styles.postitTextCompleted]}>
-                          {todo.content}
-                        </Text>
-                      </TouchableOpacity>
-                      {todo.reminder_at && (
-                        <Bell size={10} color="#e67e22" style={{ marginLeft: 4 }} />
-                      )}
+                );
+              }
+              return (
+                <TouchableOpacity
+                  key={todo.id}
+                  style={[styles.indTodoRow, todo.is_completed && styles.indTodoRowDone]}
+                  onPress={() => startEditingTodo(todo)}
+                  onLongPress={e => {
+                    setLongPressedTodo(todo.id);
+                    setPostitMenuTodo(todo);
+                    setPostitMenuPosition({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    }
+                  }}
+                  delayLongPress={400}
+                  activeOpacity={0.75}
+                >
+                  <View style={styles.indTodoAccent} />
+                  <TouchableOpacity
+                    style={styles.indTodoCheckWrap}
+                    onPress={() => toggleTodo(todo)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <View style={[styles.indTodoCheck, todo.is_completed && styles.indTodoCheckFilled]}>
+                      {todo.is_completed && <Check size={11} color="#fff" strokeWidth={3} />}
                     </View>
+                  </TouchableOpacity>
+                  <View style={styles.indTodoBody}>
+                    <Text
+                      style={[styles.indTodoText, todo.is_completed && styles.indTodoTextDone]}
+                      numberOfLines={4}
+                    >
+                      {todo.content}
+                    </Text>
                     {todo.reminder_at && (
-                      <View style={styles.postitReminderBadge}>
-                        <Bell size={9} color="#e67e22" />
-                        <Text style={styles.postitReminderBadgeText}>
+                      <View style={styles.indTodoReminder}>
+                        <Bell size={10} color="#f59e0b" />
+                        <Text style={styles.indTodoReminderText}>
                           {(() => {
                             const d = new Date(todo.reminder_at);
                             const h = d.getHours().toString().padStart(2, '0');
                             const m = d.getMinutes().toString().padStart(2, '0');
                             const now = new Date();
-                            if (d.toDateString() === now.toDateString()) return `\u4ECA\u65E5 ${h}:${m}`;
+                            if (d.toDateString() === now.toDateString()) return `${tr('common.today')} ${h}:${m}`;
                             const tmr = new Date(now);
                             tmr.setDate(tmr.getDate() + 1);
-                            if (d.toDateString() === tmr.toDateString()) return `\u660E\u65E5 ${h}:${m}`;
+                            if (d.toDateString() === tmr.toDateString()) return `${tr('common.tomorrow')} ${h}:${m}`;
                             return `${d.getMonth() + 1}/${d.getDate()} ${h}:${m}`;
                           })()}
                         </Text>
                       </View>
                     )}
                   </View>
-                )}
-              </View>
-            ))}
-            {isAddingPostit && (
-              <View style={styles.postitInputCard}>
-                <TextInput
-                  style={styles.postitInputCardText}
-                  value={newTaskText}
-                  onChangeText={setNewTaskText}
-                  placeholder={'\u30DD\u30B9\u30C8\u30A4\u30C3\u30C8\u3092\u5165\u529B...'}
-                  placeholderTextColor="#bdc3c7"
-                  multiline
-                  autoFocus
-                  maxLength={100}
-                />
-                <View style={styles.postitInputCardButtons}>
-                  <TouchableOpacity
-                    style={styles.postitInputCardCancelButton}
-                    onPress={() => { setIsAddingPostit(false); setNewTaskText(''); }}
-                  >
-                    <Text style={styles.postitInputCardCancelText}>{'\u2715'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.postitInputCardSaveButton, !newTaskText.trim() && styles.postitInputCardSaveButtonDisabled]}
-                    onPress={handleAddPostit}
-                    disabled={!newTaskText.trim()}
-                  >
-                    <Text style={styles.postitInputCardSaveText}>{'\u2713'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </View>
-        )}
-        {!isAddingPostit && (
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </ScrollView>
+
+        <View style={styles.indAddBar}>
+          <TextInput
+            style={styles.indAddInput}
+            value={newTaskText}
+            onChangeText={setNewTaskText}
+            placeholder={tr('workspace.addTaskInputPlaceholder')}
+            placeholderTextColor="#bbb"
+            returnKeyType="done"
+            onSubmitEditing={handleAddPostit}
+            blurOnSubmit={false}
+            maxLength={100}
+          />
           <TouchableOpacity
-            style={styles.addPostitButton}
-            onPress={() => { setIsAddingPostit(true); setNewTaskText(''); }}
+            style={[styles.indAddSend, !newTaskText.trim() && styles.indAddSendOff]}
+            onPress={handleAddPostit}
+            disabled={!newTaskText.trim()}
+            activeOpacity={0.7}
           >
-            <Plus size={24} color="#fff" />
+            <Plus size={18} color={newTaskText.trim() ? '#fff' : '#ccc'} />
           </TouchableOpacity>
-        )}
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     );
   };
 
@@ -627,7 +800,7 @@ export default function WorkspacePage({
     <View style={styles.pageContainer}>
       {workspace.type === 'four_grid' ? renderFourGrid() : workspace.type === 'individual' ? renderIndividual() : (
         <View style={styles.individualContainer}>
-          <Text style={styles.notePlaceholder}>{'\u30CE\u30FC\u30C8\u30E2\u30FC\u30C9\uFF08\u958B\u767A\u4E2D\uFF09'}</Text>
+          <Text style={styles.notePlaceholder}>{tr('workspace.noteDesc')}</Text>
         </View>
       )}
 
@@ -645,15 +818,19 @@ export default function WorkspacePage({
         position={postitMenuPosition}
         todos={todos}
         onClose={() => { setPostitMenuTodo(null); setLongPressedTodo(null); }}
-        onReminderPress={(t) => { setPostitMenuTodo(null); setLongPressedTodo(null); openReminderPicker(t); }}
-        onClearReminder={async (t) => {
-          setPostitMenuTodo(null);
-          setLongPressedTodo(null);
-          await clearReminder(t);
-        }}
+        onSchedulePress={t => { setPostitMenuTodo(null); setLongPressedTodo(null); openSchedulePicker(t); }}
         onMoveUp={(t) => { setPostitMenuTodo(null); setLongPressedTodo(null); movePostit(t, 'up'); }}
         onMoveDown={(t) => { setPostitMenuTodo(null); setLongPressedTodo(null); movePostit(t, 'down'); }}
         onDelete={(id) => { setPostitMenuTodo(null); setLongPressedTodo(null); deleteTodo(id); }}
+      />
+
+      <TodoSchedulePicker
+        visible={schedulingTodo !== null}
+        todo={schedulingTodo}
+        workspaceDate={workspace.date}
+        onSave={handleSaveTodoSchedule}
+        onRemove={handleRemoveTodoSchedule}
+        onClose={() => setSchedulingTodo(null)}
       />
     </View>
   );
@@ -679,19 +856,16 @@ const styles = StyleSheet.create({
   gridForeground: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1,
-    pointerEvents: 'box-none',
   },
   grid: {
     flex: 1,
     padding: 12,
     rowGap: 8,
-    pointerEvents: 'box-none',
   },
   gridRow: {
     flex: 1,
     flexDirection: 'row',
     columnGap: 8,
-    pointerEvents: 'box-none',
   },
   reorderBar: {
     flexDirection: 'row',
@@ -717,195 +891,217 @@ const styles = StyleSheet.create({
   },
   individualContainer: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-    position: 'relative',
+    backgroundColor: '#f7f7f5',
   },
-  emptyPostitsContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 100,
-  },
-  emptyPostitsText: {
-    fontSize: 16,
-    color: '#999',
-    textAlign: 'center',
-  },
-  postitsContent: {
-    paddingHorizontal: 8,
-    paddingTop: 8,
-    paddingBottom: 6,
-  },
-  postit: {
-    backgroundColor: '#fffacd',
-    width: '100%',
-    padding: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ffd700',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 8,
-  },
-  postitRow: {
+  // ── progress header ──
+  indHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e8e8e8',
   },
-  postitCheckbox: {
-    width: 16,
-    height: 16,
-    borderWidth: 1,
-    borderColor: '#666',
-    borderRadius: 3,
-    marginRight: 8,
+  indHeaderCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888',
+    minWidth: 52,
+  },
+  indProgressTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: '#efefef',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  indProgressFill: {
+    height: 4,
+    backgroundColor: '#3b82f6',
+    borderRadius: 2,
+  },
+  indHeaderPct: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3b82f6',
+    minWidth: 32,
+    textAlign: 'right',
+  },
+  // ── scroll list ──
+  indScroll: {
+    flex: 1,
+  },
+  indScrollContent: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  indScrollContentEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  // ── empty state ──
+  indEmpty: {
+    alignItems: 'center',
+    paddingVertical: 48,
+  },
+  indEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ccc',
+    marginBottom: 6,
+  },
+  indEmptyHint: {
+    fontSize: 13,
+    color: '#ddd',
+  },
+  // ── todo row ──
+  indTodoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    marginBottom: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
+    overflow: 'hidden',
+    minHeight: 52,
+  },
+  indTodoRowDone: {
+    opacity: 0.6,
+  },
+  indTodoAccent: {
+    width: 3,
+    alignSelf: 'stretch',
+    backgroundColor: '#3b82f6',
+  },
+  indTodoCheckWrap: {
+    paddingHorizontal: 12,
+    alignSelf: 'center',
+  },
+  indTodoCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#d0d0d0',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  postitCheckboxFilled: {
-    width: 10,
-    height: 10,
-    backgroundColor: '#2ecc71',
-    borderRadius: 2,
+  indTodoCheckFilled: {
+    backgroundColor: '#3b82f6',
+    borderColor: '#3b82f6',
   },
-  postitText: {
+  indTodoBody: {
     flex: 1,
+    paddingVertical: 13,
+    paddingRight: 14,
+  },
+  indTodoText: {
     fontSize: 14,
-    color: '#333',
+    color: '#1a1a1a',
+    lineHeight: 20,
   },
-  postitTextCompleted: {
+  indTodoTextDone: {
     textDecorationLine: 'line-through',
-    color: '#999',
+    color: '#bbb',
   },
-  postitTextContainer: {
-    flex: 1,
-  },
-  postitReminderBadge: {
+  indTodoReminder: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    marginLeft: 24,
     marginTop: 4,
   },
-  postitReminderBadgeText: {
+  indTodoReminderText: {
     fontSize: 11,
-    color: '#e67e22',
+    color: '#f59e0b',
   },
-  postitEditing: {
-    flex: 1,
+  // ── inline editing ──
+  indTodoEditing: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
-  postitEditInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 6,
-    padding: 10,
+  indTodoEditInput: {
     fontSize: 14,
-    color: '#333',
-    minHeight: 80,
+    color: '#1a1a1a',
+    minHeight: 56,
     textAlignVertical: 'top',
+    backgroundColor: '#f8f8f8',
+    borderRadius: 8,
+    padding: 10,
     borderWidth: 1,
-    borderColor: '#d4af37',
+    borderColor: '#e8e8e8',
     marginBottom: 8,
   },
-  postitEditButtons: {
+  indTodoEditActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 8,
   },
-  postitEditSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+  indTodoEditCancel: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
   },
-  postitEditSaveText: {
+  indTodoEditCancelText: {
+    fontSize: 13,
+    color: '#888',
+  },
+  indTodoEditSave: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#3b82f6',
+  },
+  indTodoEditSaveText: {
+    fontSize: 13,
     color: '#fff',
-    fontSize: 14,
     fontWeight: '600',
   },
-  postitEditCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
+  // ── bottom add bar ──
+  indAddBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+    backgroundColor: '#fff',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e8e8e8',
+  },
+  indAddInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: '#f5f5f3',
+    borderRadius: 20,
     paddingHorizontal: 16,
-  },
-  postitEditCancelText: {
-    color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
+    color: '#1a1a1a',
   },
-  addPostitButton: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#3498db',
+  indAddSend: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#3b82f6',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
   },
-  postitInputCard: {
-    backgroundColor: '#fffacd',
-    width: '100%',
-    padding: 14,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ffd700',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-    marginBottom: 8,
-  },
-  postitInputCardText: {
-    fontSize: 14,
-    color: '#333',
-    minHeight: 80,
-    textAlignVertical: 'top',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 6,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#d4af37',
-    marginBottom: 8,
-  },
-  postitInputCardButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  postitInputCardCancelButton: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitInputCardCancelText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  postitInputCardSaveButton: {
-    backgroundColor: '#27ae60',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postitInputCardSaveButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  postitInputCardSaveText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+  indAddSendOff: {
+    backgroundColor: '#efefef',
   },
   notePlaceholder: {
     fontSize: 24,

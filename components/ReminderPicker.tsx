@@ -10,6 +10,7 @@ import {
 import { Bell, BellOff, X, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import WheelPicker from './WheelPicker';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface ReminderPickerProps {
   visible: boolean;
@@ -23,17 +24,17 @@ function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function buildQuickOptions(targetDate: Date) {
+function buildQuickOptions(targetDate: Date, t: (k: string, p?: any) => string) {
   const now = new Date();
   const isToday = isSameDay(targetDate, now);
 
   if (isToday) {
     return [
-      { label: '5\u5206\u5F8C', minutes: 5 },
-      { label: '15\u5206\u5F8C', minutes: 15 },
-      { label: '30\u5206\u5F8C', minutes: 30 },
-      { label: '1\u6642\u9593\u5F8C', minutes: 60 },
-      { label: '3\u6642\u9593\u5F8C', minutes: 180 },
+      { label: t('reminder.minutesAfter', { n: 5 }), minutes: 5 },
+      { label: t('reminder.minutesAfter', { n: 15 }), minutes: 15 },
+      { label: t('reminder.minutesAfter', { n: 30 }), minutes: 30 },
+      { label: t('reminder.hoursAfter', { n: 1 }), minutes: 60 },
+      { label: t('reminder.hoursAfter', { n: 3 }), minutes: 180 },
     ];
   }
 
@@ -64,16 +65,16 @@ function getTargetDate(workspaceDate?: string): Date {
   return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
 }
 
-function formatTargetDateLabel(targetDate: Date): string {
+function formatTargetDateLabel(targetDate: Date, t: (k: string, p?: any) => string): string {
   const now = new Date();
-  if (isSameDay(targetDate, now)) return '\u4ECA\u65E5';
+  if (isSameDay(targetDate, now)) return t('common.today');
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  if (isSameDay(targetDate, tomorrow)) return '\u660E\u65E5';
-  return `${targetDate.getMonth() + 1}\u6708${targetDate.getDate()}\u65E5`;
+  if (isSameDay(targetDate, tomorrow)) return t('common.tomorrow');
+  return t('reminder.monthDayLabel', { month: targetDate.getMonth() + 1, day: targetDate.getDate() });
 }
 
-function formatReminderDisplay(dateStr: string): string {
+function formatReminderDisplay(dateStr: string, t?: (k: string, p?: any) => string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
@@ -85,8 +86,11 @@ function formatReminderDisplay(dateStr: string): string {
   const m = date.getMinutes().toString().padStart(2, '0');
   const timeStr = `${h}:${m}`;
 
-  if (isToday) return `今日 ${timeStr}`;
-  if (isTomorrow) return `明日 ${timeStr}`;
+  const todayLabel = t ? t('common.today') : '今日';
+  const tomorrowLabel = t ? t('common.tomorrow') : '明日';
+
+  if (isToday) return `${todayLabel} ${timeStr}`;
+  if (isTomorrow) return `${tomorrowLabel} ${timeStr}`;
 
   const month = date.getMonth() + 1;
   const day = date.getDate();
@@ -102,6 +106,7 @@ export default function ReminderPicker({
   onClose,
   workspaceDate,
 }: ReminderPickerProps) {
+  const { t, lang } = useLanguage();
   const [mode, setMode] = useState<'quick' | 'calendar'>('quick');
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -110,8 +115,8 @@ export default function ReminderPicker({
 
   const targetDate = getTargetDate(workspaceDate);
   const isTargetToday = isSameDay(targetDate, new Date());
-  const targetDateLabel = formatTargetDateLabel(targetDate);
-  const quickOptions = buildQuickOptions(targetDate);
+  const targetDateLabel = formatTargetDateLabel(targetDate, t);
+  const quickOptions = buildQuickOptions(targetDate, t);
 
   const now = new Date();
   const defaultHour = isTargetToday ? (now.getHours() + 1 > 23 ? 23 : now.getHours() + 1) : 9;
@@ -183,13 +188,13 @@ export default function ReminderPicker({
     setCalendarMonth(d);
   };
 
-  const monthLabel = `${calendarMonth.getFullYear()}年${calendarMonth.getMonth() + 1}月`;
+  const monthLabel = t('dateFormat.yearMonth', { year: calendarMonth.getFullYear(), month: calendarMonth.getMonth() + 1 });
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>リマインダー</Text>
+          <Text style={styles.headerTitle}>{t('reminder.title')}</Text>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
             <X size={20} color="#666" />
           </TouchableOpacity>
@@ -199,11 +204,11 @@ export default function ReminderPicker({
           <View style={styles.currentReminder}>
             <Bell size={14} color="#e67e22" />
             <Text style={styles.currentReminderText}>
-              {formatReminderDisplay(currentReminder)}
+              {formatReminderDisplay(currentReminder, t)}
             </Text>
             <TouchableOpacity onPress={handleRemoveReminder} style={styles.removeBtn}>
               <BellOff size={14} color="#e74c3c" />
-              <Text style={styles.removeBtnText}>解除</Text>
+              <Text style={styles.removeBtnText}>{t('reminder.removeReminder')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -213,20 +218,20 @@ export default function ReminderPicker({
             style={[styles.tab, mode === 'quick' && styles.tabActive]}
             onPress={() => setMode('quick')}
           >
-            <Text style={[styles.tabText, mode === 'quick' && styles.tabTextActive]}>かんたん設定</Text>
+            <Text style={[styles.tabText, mode === 'quick' && styles.tabTextActive]}>{t('reminder.quick')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tab, mode === 'calendar' && styles.tabActive]}
             onPress={() => setMode('calendar')}
           >
-            <Text style={[styles.tabText, mode === 'calendar' && styles.tabTextActive]}>日時指定</Text>
+            <Text style={[styles.tabText, mode === 'calendar' && styles.tabTextActive]}>{t('reminder.calendar')}</Text>
           </TouchableOpacity>
         </View>
 
         {mode === 'quick' ? (
           <ScrollView style={styles.quickContainer} showsVerticalScrollIndicator={false}>
             <View style={styles.todayTimeSection}>
-              <Text style={styles.todayTimeSectionTitle}>{targetDateLabel}{'\u306E\u6642\u9593\u3092\u6307\u5B9A'}</Text>
+              <Text style={styles.todayTimeSectionTitle}>{t('reminder.specifyTimeFor', { label: targetDateLabel })}</Text>
               <View style={styles.wheelRow}>
                 <WheelPicker
                   items={HOUR_ITEMS}
@@ -250,10 +255,10 @@ export default function ReminderPicker({
                 disabled={!isTimeValid()}
                 onPress={handleTimeConfirm}
               >
-                <Text style={styles.confirmBtnText}>{'\u3053\u306E\u6642\u9593\u306B\u8A2D\u5B9A'}</Text>
+                <Text style={styles.confirmBtnText}>{t('reminder.setThisTime')}</Text>
               </TouchableOpacity>
               {!isTimeValid() && (
-                <Text style={styles.pastWarning}>{'\u904E\u53BB\u306E\u6642\u9593\u306F\u8A2D\u5B9A\u3067\u304D\u307E\u305B\u3093'}</Text>
+                <Text style={styles.pastWarning}>{t('reminder.errorPast')}</Text>
               )}
             </View>
 
@@ -287,8 +292,8 @@ export default function ReminderPicker({
             </View>
 
             <View style={styles.weekRow}>
-              {['日', '月', '火', '水', '木', '金', '土'].map((d) => (
-                <Text key={d} style={styles.weekDay}>{d}</Text>
+              {(['sun','mon','tue','wed','thu','fri','sat'] as const).map((k) => (
+                <Text key={k} style={styles.weekDay}>{t(`weekdays.${k}`)}</Text>
               ))}
             </View>
 
@@ -323,7 +328,7 @@ export default function ReminderPicker({
               })}
             </View>
 
-            <Text style={styles.timeLabel}>時刻</Text>
+            <Text style={styles.timeLabel}>{t('reminder.timeLabel')}</Text>
             <View style={styles.wheelRow}>
               <WheelPicker
                 items={HOUR_ITEMS}
@@ -342,7 +347,7 @@ export default function ReminderPicker({
 
             {selectedDate && (
               <Text style={styles.calendarTimePreview}>
-                {selectedDate.getMonth() + 1}月{selectedDate.getDate()}日 {calendarHour.toString().padStart(2, '0')}:{calendarMinute.toString().padStart(2, '0')}
+                {t('reminder.monthDayLabel', { month: selectedDate.getMonth() + 1, day: selectedDate.getDate() })} {calendarHour.toString().padStart(2, '0')}:{calendarMinute.toString().padStart(2, '0')}
               </Text>
             )}
 
@@ -351,7 +356,7 @@ export default function ReminderPicker({
               disabled={!selectedDate}
               onPress={handleCalendarConfirm}
             >
-              <Text style={styles.confirmBtnText}>設定する</Text>
+              <Text style={styles.confirmBtnText}>{t('reminder.confirm')}</Text>
             </TouchableOpacity>
           </ScrollView>
         )}

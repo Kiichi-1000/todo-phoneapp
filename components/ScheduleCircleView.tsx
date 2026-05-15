@@ -11,6 +11,7 @@ import Svg, { Circle, Path, G, Text as SvgText, Line } from 'react-native-svg';
 import { Plus } from 'lucide-react-native';
 import { Schedule } from '@/types/database';
 import { minutesToTimeString } from '@/lib/scheduleUtils';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface Props {
   schedules: Schedule[];
@@ -51,7 +52,162 @@ function createPieSlicePath(
   ].join(' ');
 }
 
+type SegmentLayout =
+  | {
+      mode: 'horizontal';
+      radiusFrac: number;
+      lines: string[];
+      fontSize: number;
+    }
+  | {
+      mode: 'radial';
+      fontSize: number;
+      titleText: string;
+      titleRadius: number;
+      flipped: boolean;
+    };
+
+function computeHorizontalLayout(
+  title: string,
+  durationMin: number,
+  outerRadius: number
+): { radiusFrac: number; lines: string[]; fontSize: number } {
+  const displayTitle = title || '—';
+  const sweepRad = (durationMin / 1440) * 2 * Math.PI;
+  const halfSin = Math.max(Math.sin(sweepRad / 2), 0.001);
+
+  const fontCandidates = [12, 11, 10, 9, 8, 7, 6];
+  const maxLines = durationMin >= 120 ? 3 : durationMin >= 45 ? 2 : 1;
+  const showDuration = durationMin >= 60;
+  const safetyMargin = 16;
+  const charWFactor = 0.95;
+  const lineHeightFactor = 1.15;
+  const minRFrac = 0.26;
+  const chordSafety = 0.96;
+
+  const wrap = (n: number, charsPerLine: number): string[] => {
+    const out: string[] = [];
+    let rem = displayTitle;
+    for (let i = 0; i < n; i++) {
+      const take = Math.min(charsPerLine, rem.length);
+      out.push(rem.slice(0, take));
+      rem = rem.slice(take);
+      if (rem.length === 0) break;
+    }
+    return out;
+  };
+
+  for (let nLines = 1; nLines <= maxLines; nLines++) {
+    for (const fs of fontCandidates) {
+      const charW = fs * charWFactor;
+      const lineHeight = fs * lineHeightFactor;
+      const durFs = Math.max(8, fs - 2);
+      const durLineHeight = showDuration ? durFs * lineHeightFactor : 0;
+      const totalHeight = nLines * lineHeight + durLineHeight;
+      const targetCenterRadius = outerRadius - safetyMargin - totalHeight / 2;
+      const radiusFrac = targetCenterRadius / outerRadius;
+      if (radiusFrac < minRFrac) continue;
+      const chordAtTarget = 2 * targetCenterRadius * halfSin * chordSafety;
+      const charsPerLine = Math.ceil(displayTitle.length / nLines);
+      if (charsPerLine * charW <= chordAtTarget) {
+        return { radiusFrac, lines: wrap(nLines, charsPerLine), fontSize: fs };
+      }
+    }
+  }
+
+  const fs = fontCandidates[fontCandidates.length - 1];
+  const charW = fs * charWFactor;
+  const lineHeight = fs * lineHeightFactor;
+  const durFs = Math.max(8, fs - 2);
+  const durLineHeight = showDuration ? durFs * lineHeightFactor : 0;
+  const totalHeight = maxLines * lineHeight + durLineHeight;
+  const targetCenterRadius = Math.max(outerRadius * minRFrac, outerRadius - safetyMargin - totalHeight / 2);
+  const radiusFrac = targetCenterRadius / outerRadius;
+  const cpl = Math.max(1, Math.floor(2 * targetCenterRadius * halfSin * chordSafety / charW));
+  const lines: string[] = [];
+  let rem = displayTitle;
+  for (let i = 0; i < maxLines; i++) {
+    const isLast = i === maxLines - 1;
+    if (isLast && rem.length > cpl) {
+      lines.push(rem.slice(0, Math.max(1, cpl - 1)) + '…');
+      break;
+    }
+    const take = Math.min(cpl, rem.length);
+    lines.push(rem.slice(0, take));
+    rem = rem.slice(take);
+    if (rem.length === 0) break;
+  }
+  return { radiusFrac, lines, fontSize: fs };
+}
+
+function computeRadialLayout(
+  title: string,
+  durationMin: number,
+  outerRadius: number,
+  midAngle: number
+): { fontSize: number; titleText: string; titleRadius: number; flipped: boolean } {
+  const displayTitle = title || '—';
+  const sweepRad = (durationMin / 1440) * 2 * Math.PI;
+  const halfSin = Math.max(Math.sin(sweepRad / 2), 0.001);
+
+  const innerMargin = 26;
+  const outerMargin = 18;
+  const charWFactor = 0.95;
+  const heightFactor = 0.55;
+  const fontCandidates = [13, 12, 11, 10, 9, 8, 7, 6];
+
+  const flipped = midAngle > 180;
+  const innerR = innerMargin;
+  const outerR = outerRadius - outerMargin;
+
+  for (const fs of fontCandidates) {
+    const halfH = fs * heightFactor;
+    const charW = fs * charWFactor;
+    const textW = displayTitle.length * charW;
+    const minR = halfH / halfSin;
+    const textInnerEdge = Math.max(innerR, minR);
+    const textOuterEdge = textInnerEdge + textW;
+    if (textOuterEdge <= outerR) {
+      const titleRadius = (textInnerEdge + textOuterEdge) / 2;
+      return { fontSize: fs, titleText: displayTitle, titleRadius, flipped };
+    }
+  }
+
+  const fs = fontCandidates[fontCandidates.length - 1];
+  const halfH = fs * heightFactor;
+  const charW = fs * charWFactor;
+  const minR = halfH / halfSin;
+  const textInnerEdge = Math.max(innerR, minR);
+  const availableLen = Math.max(charW * 2, outerR - textInnerEdge);
+  const maxChars = Math.max(2, Math.floor(availableLen / charW));
+  const truncated = displayTitle.length > maxChars
+    ? displayTitle.slice(0, Math.max(1, maxChars - 1)) + '…'
+    : displayTitle;
+  const textW = truncated.length * charW;
+  return {
+    fontSize: fs,
+    titleText: truncated,
+    titleRadius: textInnerEdge + textW / 2,
+    flipped,
+  };
+}
+
+function computeSegmentLayout(
+  title: string,
+  durationMin: number,
+  outerRadius: number,
+  midAngle: number
+): SegmentLayout {
+  const RADIAL_THRESHOLD_DEG = 45;
+  const sweepDeg = (durationMin / 1440) * 360;
+  if (sweepDeg < RADIAL_THRESHOLD_DEG) {
+    return { mode: 'radial', ...computeRadialLayout(title, durationMin, outerRadius, midAngle) };
+  }
+  return { mode: 'horizontal', ...computeHorizontalLayout(title, durationMin, outerRadius) };
+}
+
 export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress, isToday = false }: Props) {
+  const { t } = useLanguage();
   const { width: screenWidth } = useWindowDimensions();
   const CHART_SIZE = Math.min(screenWidth - 32, 380);
   const CENTER = CHART_SIZE / 2;
@@ -100,14 +256,14 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
       const durationMin = s.end_minutes - s.start_minutes;
       const midMin = s.start_minutes + durationMin / 2;
       const midAngle = minutesToAngle(midMin);
-      const labelPos = polarToCartesian(CENTER, CENTER, OUTER_RADIUS * 0.5, midAngle);
+      const layout = computeSegmentLayout(s.title || t('schedule.untitled'), durationMin, OUTER_RADIUS, midAngle);
       const dH = Math.floor(durationMin / 60);
       const dM = durationMin % 60;
       const durationLabel = dH > 0 && dM > 0 ? `${dH}h${dM}m` : dH > 0 ? `${dH}h` : `${dM}m`;
 
-      return { ...s, path, labelPos, durationLabel };
+      return { ...s, path, midAngle, durationLabel, layout, durationMin };
     });
-  }, [schedules]);
+  }, [schedules, CENTER, OUTER_RADIUS]);
 
   const emptyHourSlots = useMemo(() => {
     const occupied = new Set<number>();
@@ -176,48 +332,135 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
           ))}
 
           {scheduleSegments.map(seg => {
-            const durationMin = seg.end_minutes - seg.start_minutes;
-            const displayTitle = seg.title || '(無題)';
-            const maxChars = durationMin >= 120 ? 8 : durationMin >= 60 ? 6 : 4;
-            const truncTitle = displayTitle.length > maxChars ? displayTitle.slice(0, maxChars - 1) + '…' : displayTitle;
-            const showBothLines = durationMin >= 90;
-            const showTitle = durationMin >= 30;
-            const cx = seg.labelPos.x;
-            const cy = seg.labelPos.y;
+            const durationMin = seg.durationMin;
+
+            let labelContent: React.ReactNode = null;
+
+            if (durationMin >= 15 && seg.layout.mode === 'horizontal' && seg.layout.lines.length > 0) {
+              const showDuration = durationMin >= 60;
+              const titleFontSize = seg.layout.fontSize;
+              const durationFontSize = Math.max(8, titleFontSize - 2);
+              const titleLines = seg.layout.lines;
+              const labelPos = polarToCartesian(CENTER, CENTER, OUTER_RADIUS * seg.layout.radiusFrac, seg.midAngle);
+              const cx = labelPos.x;
+              const cy = labelPos.y;
+              const titleLineHeight = titleFontSize * 1.2;
+              const durLineHeight = durationFontSize * 1.2;
+              const titleBlockHeight = titleLines.length * titleLineHeight;
+              const totalHeight = titleBlockHeight + (showDuration ? durLineHeight : 0);
+              const blockTop = cy - totalHeight / 2;
+
+              labelContent = (
+                <>
+                  {titleLines.map((line, i) => {
+                    const yPos = blockTop + i * titleLineHeight + titleLineHeight / 2;
+                    return (
+                      <G key={`t-${seg.id}-${i}`}>
+                        <SvgText
+                          x={cx}
+                          y={yPos}
+                          fill="none"
+                          stroke="rgba(0,0,0,0.55)"
+                          strokeWidth={2.4}
+                          strokeLinejoin="round"
+                          fontSize={titleFontSize}
+                          fontWeight="700"
+                          textAnchor="middle"
+                          alignmentBaseline="central"
+                        >
+                          {line}
+                        </SvgText>
+                        <SvgText
+                          x={cx}
+                          y={yPos}
+                          fill="#fff"
+                          fontSize={titleFontSize}
+                          fontWeight="700"
+                          textAnchor="middle"
+                          alignmentBaseline="central"
+                        >
+                          {line}
+                        </SvgText>
+                      </G>
+                    );
+                  })}
+                  {showDuration && (
+                    <G>
+                      <SvgText
+                        x={cx}
+                        y={blockTop + titleBlockHeight + durLineHeight / 2}
+                        fill="none"
+                        stroke="rgba(0,0,0,0.5)"
+                        strokeWidth={2}
+                        strokeLinejoin="round"
+                        fontSize={durationFontSize}
+                        fontWeight="600"
+                        textAnchor="middle"
+                        alignmentBaseline="central"
+                      >
+                        {seg.durationLabel}
+                      </SvgText>
+                      <SvgText
+                        x={cx}
+                        y={blockTop + titleBlockHeight + durLineHeight / 2}
+                        fill="rgba(255,255,255,0.95)"
+                        fontSize={durationFontSize}
+                        fontWeight="600"
+                        textAnchor="middle"
+                        alignmentBaseline="central"
+                      >
+                        {seg.durationLabel}
+                      </SvgText>
+                    </G>
+                  )}
+                </>
+              );
+            } else if (durationMin >= 15 && seg.layout.mode === 'radial' && seg.layout.titleText.length > 0) {
+              const { fontSize, titleText, titleRadius, flipped } = seg.layout;
+              const titlePos = polarToCartesian(CENTER, CENTER, titleRadius, seg.midAngle);
+              const baseRotation = seg.midAngle - 90;
+              const rotation = flipped ? baseRotation + 180 : baseRotation;
+
+              labelContent = (
+                <G transform={`rotate(${rotation}, ${titlePos.x}, ${titlePos.y})`}>
+                  <SvgText
+                    x={titlePos.x}
+                    y={titlePos.y}
+                    fill="none"
+                    stroke="rgba(0,0,0,0.55)"
+                    strokeWidth={2.4}
+                    strokeLinejoin="round"
+                    fontSize={fontSize}
+                    fontWeight="700"
+                    textAnchor="middle"
+                    alignmentBaseline="central"
+                  >
+                    {titleText}
+                  </SvgText>
+                  <SvgText
+                    x={titlePos.x}
+                    y={titlePos.y}
+                    fill="#fff"
+                    fontSize={fontSize}
+                    fontWeight="700"
+                    textAnchor="middle"
+                    alignmentBaseline="central"
+                  >
+                    {titleText}
+                  </SvgText>
+                </G>
+              );
+            }
+
             return (
               <G key={seg.id}>
                 <Path
                   d={seg.path}
                   fill={seg.color}
-                  opacity={0.7}
+                  opacity={0.88}
                   onPress={() => onSchedulePress(seg as unknown as Schedule)}
                 />
-                {showTitle && (
-                  <SvgText
-                    x={cx}
-                    y={showBothLines ? cy - 6 : cy}
-                    fill="#fff"
-                    fontSize={10}
-                    fontWeight="700"
-                    textAnchor="middle"
-                    alignmentBaseline="central"
-                  >
-                    {truncTitle}
-                  </SvgText>
-                )}
-                {showBothLines && (
-                  <SvgText
-                    x={cx}
-                    y={cy + 7}
-                    fill="rgba(255,255,255,0.7)"
-                    fontSize={9}
-                    fontWeight="500"
-                    textAnchor="middle"
-                    alignmentBaseline="central"
-                  >
-                    {seg.durationLabel}
-                  </SvgText>
-                )}
+                {labelContent}
               </G>
             );
           })}
@@ -300,8 +543,8 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
       >
         {schedules.length === 0 ? (
           <View style={styles.emptyLegend}>
-            <Text style={styles.emptyText}>予定がありません</Text>
-            <Text style={styles.emptySubText}>+ ボタンまたは円グラフをタップして追加</Text>
+            <Text style={styles.emptyText}>{t('schedule.emptyTitle')}</Text>
+            <Text style={styles.emptySubText}>{t('schedule.emptyHint')}</Text>
           </View>
         ) : (
           orderedLegendSchedules

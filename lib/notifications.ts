@@ -4,7 +4,7 @@ import { NativeModulesProxy } from 'expo-modules-core';
 let Notifications: typeof import('expo-notifications') | null = null;
 let notificationModuleChecked = false;
 let notificationHandlerInitialized = false;
-const notificationsEnabled = false;
+const notificationsEnabled = true;
 
 function hasNativeNotificationSupport() {
   if (!notificationsEnabled) return false;
@@ -143,6 +143,39 @@ export async function scheduleReminderNotification(
     });
 
     return notificationId;
+  } catch {
+    return null;
+  }
+}
+
+export async function scheduleTaskNotification(
+  todoId: string,
+  content: string,
+  notifyAt: Date
+): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
+  await ensureNotificationHandlerInitialized();
+  const mod = await getNotifications();
+  if (!mod) return null;
+  const hasPermission = await requestNotificationPermissions();
+  if (!hasPermission) return null;
+  const secondsUntil = Math.floor((notifyAt.getTime() - Date.now()) / 1000);
+  if (secondsUntil <= 0) return null;
+  try {
+    return await mod.scheduleNotificationAsync({
+      content: {
+        title: 'タスク開始のお知らせ',
+        body: content,
+        data: { todoId },
+        sound: 'default',
+        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+      },
+      trigger: {
+        type: mod.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: secondsUntil,
+        repeats: false,
+      },
+    });
   } catch {
     return null;
   }

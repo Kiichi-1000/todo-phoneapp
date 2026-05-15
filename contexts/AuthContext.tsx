@@ -48,8 +48,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
+    // #region agent log
+    try {
+      console.log('[DEBUG-b9137e]', 'AuthContext:useEffect', 'getSession start');
+      fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
+        body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H3', location: 'contexts/AuthContext.tsx:useEffect', message: 'getSession start', data: {}, timestamp: Date.now() }),
+      }).catch(() => {});
+    } catch {}
+    // #endregion
+    supabase.auth.getSession().then(({ data: { session: s }, error }) => {
+      // #region agent log
+      try {
+        console.log('[DEBUG-b9137e]', 'AuthContext:useEffect', 'getSession resolved', { hasSession: !!s, error: error?.message });
+        fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
+          body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H3', location: 'contexts/AuthContext.tsx:useEffect', message: 'getSession resolved', data: { hasSession: !!s, error: error?.message ?? null }, timestamp: Date.now() }),
+        }).catch(() => {});
+      } catch {}
+      // #endregion
+      if (error) {
+        // リフレッシュトークンが無効な場合はストレージから削除してサインアウト
+        supabase.auth.signOut().catch(() => {});
+        setSession(null);
+      } else {
+        setSession(s);
+      }
+      setLoading(false);
+    }).catch((err) => {
+      // #region agent log
+      try {
+        console.log('[DEBUG-b9137e]', 'AuthContext:useEffect', 'getSession rejected', { err: String(err) });
+        fetch('http://127.0.0.1:7260/ingest/233848d3-ee49-4e11-b914-cf2c146394ee', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b9137e' },
+          body: JSON.stringify({ sessionId: 'b9137e', hypothesisId: 'H3', location: 'contexts/AuthContext.tsx:useEffect', message: 'getSession rejected', data: { err: String(err) }, timestamp: Date.now() }),
+        }).catch(() => {});
+      } catch {}
+      // #endregion
+      setSession(null);
       setLoading(false);
     });
 
@@ -57,6 +96,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'PASSWORD_RECOVERY') {
         isPasswordRecoveryRef.current = true;
         setIsPasswordRecovery(true);
+      }
+      // トークンリフレッシュ失敗時は強制サインアウト
+      if (event === 'TOKEN_REFRESHED' && !s) {
+        supabase.auth.signOut().catch(() => {});
+        setSession(null);
+        setLoading(false);
+        return;
+      }
+      if ((event as string) === 'SIGNED_OUT' || (event as string) === 'USER_DELETED') {
+        setSession(null);
+        isPasswordRecoveryRef.current = false;
+        setIsPasswordRecovery(false);
+        setLoading(false);
+        return;
       }
       setSession(s);
       setLoading(false);
@@ -80,9 +133,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try {
       setSession(null);
+      isPasswordRecoveryRef.current = false;
+      setIsPasswordRecovery(false);
       await supabase.auth.signOut();
     } catch {
       setSession(null);
+      isPasswordRecoveryRef.current = false;
+      setIsPasswordRecovery(false);
     }
   };
 
@@ -142,19 +199,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       });
       if (error) return { error: error.message };
-      if (data?.url) {
-        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-        if (result.type === 'success' && result.url) {
-          const url = new URL(result.url);
-          const params = new URLSearchParams(url.hash.substring(1));
-          const accessToken = params.get('access_token');
-          const refreshToken = params.get('refresh_token');
-          if (accessToken && refreshToken) {
-            await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-          }
-        }
+      if (!data?.url) {
+        return { error: 'Google認証の初期化に失敗しました' };
       }
-      return { error: null };
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+      if (result.type !== 'success' || !result.url) {
+        if (result.type === 'cancel' || result.type === 'dismiss') {
+          return { error: null };
+        }
+        return { error: 'Google認証が完了しませんでした' };
+      }
+
+      const callbackUrl = new URL(result.url);
+
+      // PKCE flow (Supabase v2 default): authorization code in query params
+      const code = callbackUrl.searchParams.get('code');
+      if (code) {
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+        if (exchangeError) return { error: exchangeError.message };
+        return { error: null };
+      }
+
+      // Implicit flow fallback: tokens in URL hash
+      const hash = callbackUrl.hash.startsWith('#') ? callbackUrl.hash.substring(1) : callbackUrl.hash;
+      const hashParams = new URLSearchParams(hash);
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      if (accessToken && refreshToken) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (sessionError) return { error: sessionError.message };
+        return { error: null };
+      }
+
+      const oauthError = callbackUrl.searchParams.get('error_description')
+        ?? callbackUrl.searchParams.get('error')
+        ?? hashParams.get('error_description')
+        ?? hashParams.get('error');
+      return { error: oauthError ? decodeURIComponent(oauthError) : 'Google認証のレスポンスを解析できませんでした' };
     } catch (e: any) {
       return { error: e.message || 'Google認証に失敗しました' };
     }

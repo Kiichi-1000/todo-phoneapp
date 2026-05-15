@@ -10,6 +10,8 @@ import DraggableFlatList, {
 } from 'react-native-draggable-flatlist';
 import { Todo, GridArea } from '@/types/database';
 import DraggableTodoItem from './DraggableTodoItem';
+import { FourGridSkin, FourGridTheme, getThemeForSkin } from '@/lib/fourGridSkin';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface GridAreaDropTargetProps {
   area: GridArea;
@@ -33,20 +35,26 @@ interface GridAreaDropTargetProps {
   onQuickAdd: (area: GridArea, content: string) => void;
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
+  onSchedulePress?: (todo: Todo) => void;
   isReorderMode?: boolean;
   onReorderEnd?: (area: GridArea, reorderedAreaTodos: Todo[]) => void;
   onMoveToArea?: (todo: Todo, targetArea: GridArea) => void;
   onActivateReorderMode?: () => void;
+  skin?: FourGridSkin;
+  todoBorderLeftColor?: string;
 }
 
 function InlineAddInput({
   area,
   onQuickAdd,
+  theme,
 }: {
   area: GridArea;
   onQuickAdd: (area: GridArea, content: string) => void;
+  theme: FourGridTheme;
 }) {
   const [text, setText] = useState('');
+  const { t } = useLanguage();
 
   const handleSubmit = () => {
     if (text.trim()) {
@@ -58,11 +66,14 @@ function InlineAddInput({
 
   return (
     <TextInput
-      style={styles.inlineAddInput}
+      style={[
+        styles.inlineAddInput,
+        { color: theme.inlineAddColor, borderBottomColor: theme.inlineAddBorder },
+      ]}
       value={text}
       onChangeText={setText}
-      placeholder="+ タスクを追加"
-      placeholderTextColor="#bdc3c7"
+      placeholder={t('workspace.addTaskPlaceholder')}
+      placeholderTextColor={theme.inlineAddPlaceholder}
       maxLength={100}
       onSubmitEditing={handleSubmit}
       blurOnSubmit
@@ -93,12 +104,17 @@ export default function GridAreaDropTarget({
   onQuickAdd,
   onReminderPress,
   onClearReminder,
+  onSchedulePress,
   isReorderMode = false,
   onReorderEnd,
   onMoveToArea,
   onActivateReorderMode,
+  skin = 'postit',
+  todoBorderLeftColor,
 }: GridAreaDropTargetProps) {
   const [dragSession, setDragSession] = useState(0);
+  const theme = useMemo(() => getThemeForSkin(skin), [skin]);
+  const { t } = useLanguage();
 
   const activateReorderGesture = useMemo(
     () =>
@@ -132,11 +148,14 @@ export default function GridAreaDropTarget({
             onDelete={deleteTodo}
             onReminderPress={onReminderPress}
             onClearReminder={onClearReminder}
+            onSchedulePress={onSchedulePress}
             isReorderMode={isReorderMode}
             isDragging={isActive}
             onDragHandle={drag}
             gridTitles={gridTitles}
             onMoveToArea={onMoveToArea}
+            skin={skin}
+            borderLeftColorOverride={todoBorderLeftColor}
           />
         </ScaleDecorator>
       </View>
@@ -153,9 +172,12 @@ export default function GridAreaDropTarget({
       deleteTodo,
       onReminderPress,
       onClearReminder,
+      onSchedulePress,
       isReorderMode,
       gridTitles,
       onMoveToArea,
+      skin,
+      todoBorderLeftColor,
     ]
   );
 
@@ -181,6 +203,17 @@ export default function GridAreaDropTarget({
     <View
       style={[
         styles.gridAreaOuter,
+        {
+          backgroundColor: theme.cellBg,
+          borderColor: theme.cellBorderColor,
+          borderWidth: theme.cellBorderWidth,
+          borderRadius: theme.cellBorderRadius,
+          shadowColor: theme.cellShadowColor,
+          shadowOffset: theme.cellShadowOffset,
+          shadowOpacity: theme.cellShadowOpacity,
+          shadowRadius: theme.cellShadowRadius,
+          elevation: theme.cellElevation,
+        },
         isReorderMode && styles.gridAreaReorder,
       ]}
     >
@@ -199,7 +232,7 @@ export default function GridAreaDropTarget({
                 onBlur={saveAreaName}
                 autoFocus
                 maxLength={20}
-                placeholder="エリア名を入力"
+                placeholder={t('workspace.areaNamePlaceholder')}
                 placeholderTextColor="#999"
               />
               <TouchableOpacity style={styles.saveAreaNameButton} onPress={saveAreaName}>
@@ -216,7 +249,26 @@ export default function GridAreaDropTarget({
               disabled={isReorderMode}
               activeOpacity={0.7}
             >
-              <Text style={styles.areaTitle}>{gridTitles[area]}</Text>
+              <Text
+                style={[
+                  styles.areaTitle,
+                  {
+                    color: theme.titleColor,
+                    fontStyle: theme.titleFontStyle,
+                    fontWeight: theme.titleFontWeight,
+                    letterSpacing: theme.titleLetterSpacing,
+                  },
+                  theme.titleUnderline
+                    ? {
+                        textDecorationLine: 'underline',
+                        textDecorationStyle: theme.titleUnderlineStyle,
+                        textDecorationColor: theme.titleUnderlineColor,
+                      }
+                    : { textDecorationLine: 'none' },
+                ]}
+              >
+                {gridTitles[area]}
+              </Text>
             </TouchableOpacity>
           )}
           <View pointerEvents="auto" style={styles.areaProgressWrap}>
@@ -224,8 +276,29 @@ export default function GridAreaDropTarget({
           </View>
         </View>
 
-        <View pointerEvents="box-none" style={styles.progressBar}>
-          <View pointerEvents="auto" style={[styles.progressFill, { width: `${progress}%` }]} />
+        <View
+          pointerEvents="box-none"
+          style={[
+            styles.progressBar,
+            {
+              backgroundColor: theme.progressTrack,
+              borderColor: theme.progressTrackBorder,
+              borderWidth: theme.progressTrackBorderWidth,
+              borderRadius: theme.progressBarRadius,
+            },
+          ]}
+        >
+          <View
+            pointerEvents="auto"
+            style={[
+              styles.progressFill,
+              {
+                width: `${progress}%`,
+                backgroundColor: theme.progressFill,
+                borderRadius: Math.max(theme.progressBarRadius - 1, 0),
+              },
+            ]}
+          />
         </View>
 
         <View style={styles.todoListWrap} pointerEvents="box-none">
@@ -242,13 +315,12 @@ export default function GridAreaDropTarget({
             autoscrollThreshold={36}
             containerStyle={styles.todoList}
             keyboardShouldPersistTaps="handled"
-            pointerEvents="box-none"
           />
         </View>
 
         {!isReorderMode && (
           <View pointerEvents="auto">
-            <InlineAddInput area={area} onQuickAdd={onQuickAdd} />
+            <InlineAddInput area={area} onQuickAdd={onQuickAdd} theme={theme} />
           </View>
         )}
       </View>

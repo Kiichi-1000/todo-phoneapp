@@ -1,7 +1,9 @@
 import { Tabs } from 'expo-router';
-import { BookOpen, ChartBar as BarChart3, Settings, Clock, ListChecks } from 'lucide-react-native';
+import { BookOpen, Settings, Clock, ListChecks, Sparkles } from 'lucide-react-native';
+import { useT } from '@/contexts/LanguageContext';
 
 export default function TabLayout() {
+  const t = useT();
   return (
     <Tabs
       screenOptions={{
@@ -16,35 +18,35 @@ export default function TabLayout() {
       <Tabs.Screen
         name="workspace"
         options={{
-          title: 'ワークスペース',
+          title: t('tabs.workspace'),
           tabBarIcon: ({ size, color }) => <BookOpen size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="schedule"
         options={{
-          title: 'スケジュール',
+          title: t('tabs.schedule'),
           tabBarIcon: ({ size, color }) => <Clock size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="routine"
         options={{
-          title: 'ルーティン',
+          title: t('tabs.routine'),
           tabBarIcon: ({ size, color }) => <ListChecks size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="statistics"
+        name="ai"
         options={{
-          title: '統計',
-          tabBarIcon: ({ size, color }) => <BarChart3 size={size} color={color} />,
+          title: t('tabs.ai'),
+          tabBarIcon: ({ size, color }) => <Sparkles size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: '設定',
+          title: t('tabs.settings'),
           tabBarIcon: ({ size, color }) => <Settings size={size} color={color} />,
         }}
       />

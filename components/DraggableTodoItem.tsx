@@ -11,9 +11,12 @@ import Animated, {
   cancelAnimation,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { Bell, Trash2, Pencil, GripVertical, MoveRight } from 'lucide-react-native';
+import { Bell, Trash2, Pencil, GripVertical, MoveRight, CalendarClock } from 'lucide-react-native';
+import { minutesToTimeString } from '@/lib/scheduleUtils';
 import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
+import { FourGridSkin, getThemeForSkin } from '@/lib/fourGridSkin';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 const AREA_ORDER: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 
@@ -31,11 +34,14 @@ interface DraggableTodoItemProps {
   onDelete: (todoId: string) => void;
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
+  onSchedulePress?: (todo: Todo) => void;
   isReorderMode?: boolean;
   isDragging?: boolean;
   onDragHandle?: () => void;
   gridTitles?: Record<GridArea, string>;
   onMoveToArea?: (todo: Todo, targetArea: GridArea) => void;
+  skin?: FourGridSkin;
+  borderLeftColorOverride?: string;
 }
 
 export default function DraggableTodoItem({
@@ -50,13 +56,19 @@ export default function DraggableTodoItem({
   onDelete,
   onReminderPress,
   onClearReminder,
+  onSchedulePress,
   isReorderMode = false,
   isDragging = false,
   onDragHandle,
   area,
   gridTitles,
   onMoveToArea,
+  skin = 'postit',
+  borderLeftColorOverride,
 }: DraggableTodoItemProps) {
+  const { t } = useLanguage();
+  const theme = getThemeForSkin(skin);
+  const effectiveBorderLeftColor = borderLeftColorOverride ?? theme.todoBorderLeftColor;
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const [areaPickerVisible, setAreaPickerVisible] = useState(false);
@@ -136,13 +148,19 @@ export default function DraggableTodoItem({
 
   if (isEditing) {
     return (
-      <View style={[styles.todoItem, styles.todoItemEditingInline]}>
+      <View
+        style={[
+          styles.todoItem,
+          { borderRadius: theme.todoBorderRadius, borderLeftWidth: theme.todoBorderLeftWidth },
+          styles.todoItemEditingInline,
+        ]}
+      >
         <View style={styles.todoItemInner}>
           <TouchableOpacity style={styles.checkbox} onPress={() => onToggle(todo)}>
             {todo.is_completed && <View style={styles.checkboxFilled} />}
           </TouchableOpacity>
           <TextInput
-            style={[styles.todoText, styles.todoEditInlineInput]}
+            style={[styles.todoText, { color: theme.todoTextColor }, styles.todoEditInlineInput]}
             value={editingText}
             onChangeText={onEditTextChange}
             multiline
@@ -153,10 +171,10 @@ export default function DraggableTodoItem({
         </View>
         <View style={styles.todoEditInlineButtons}>
           <TouchableOpacity style={styles.todoEditInlineSave} onPress={onSaveEdit}>
-            <Text style={styles.todoEditInlineSaveText}>保存</Text>
+            <Text style={styles.todoEditInlineSaveText}>{t('common.save')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.todoEditInlineCancel} onPress={onCancelEdit}>
-            <Text style={styles.todoEditInlineCancelText}>取消</Text>
+            <Text style={styles.todoEditInlineCancelText}>{t('common.cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -168,8 +186,14 @@ export default function DraggableTodoItem({
       <Animated.View
         style={[
           styles.todoItem,
+          {
+            backgroundColor: theme.todoBg,
+            borderLeftColor: effectiveBorderLeftColor,
+            borderLeftWidth: theme.todoBorderLeftWidth,
+            borderRadius: theme.todoBorderRadius,
+          },
           isReorderMode && styles.todoItemReorder,
-          isDragging && styles.todoItemDragging,
+          isDragging && [styles.todoItemDragging, { backgroundColor: theme.todoDraggingBg }],
           wiggleStyle,
         ]}
       >
@@ -198,7 +222,13 @@ export default function DraggableTodoItem({
             delayLongPress={400}
             activeOpacity={0.7}
           >
-            <Text style={[styles.todoText, todo.is_completed && styles.todoTextCompleted]}>
+            <Text
+              style={[
+                styles.todoText,
+                { color: theme.todoTextColor },
+                todo.is_completed && [styles.todoTextCompleted, { color: theme.todoTextCompletedColor }],
+              ]}
+            >
               {todo.content}
             </Text>
           </TouchableOpacity>
@@ -219,11 +249,12 @@ export default function DraggableTodoItem({
           )}
         </View>
 
-        {todo.reminder_at && (
-          <View style={styles.reminderBadge}>
-            <Bell size={9} color="#e67e22" />
-            <Text style={styles.reminderBadgeText}>
-              {formatReminderDisplay(todo.reminder_at)}
+        {todo.schedule_start_minutes != null && (
+          <View style={styles.scheduleBadge}>
+            <CalendarClock size={9} color="#3b82f6" />
+            <Text style={styles.scheduleBadgeText}>
+              {minutesToTimeString(todo.schedule_start_minutes)}
+              {todo.schedule_end_minutes != null ? `〜${minutesToTimeString(todo.schedule_end_minutes)}` : ''}
             </Text>
           </View>
         )}
@@ -246,28 +277,18 @@ export default function DraggableTodoItem({
               onPress={() => { setMenuVisible(false); onStartEdit(todo); }}
             >
               <Pencil size={15} color="#3498db" />
-              <Text style={[styles.menuItemText, { color: '#3498db' }]}>タスクを編集</Text>
+              <Text style={[styles.menuItemText, { color: '#3498db' }]}>{t('workspace.editTask')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => { setMenuVisible(false); onReminderPress(todo); }}
+              onPress={() => { setMenuVisible(false); onSchedulePress?.(todo); }}
             >
-              <Bell size={15} color="#e67e22" />
-              <Text style={styles.menuItemText}>
-                {todo.reminder_at ? 'リマインダーを変更' : 'リマインダーを設定'}
+              <CalendarClock size={15} color="#3b82f6" />
+              <Text style={[styles.menuItemText, { color: '#3b82f6' }]}>
+                {todo.schedule_start_minutes != null ? t('workspace.scheduleChange') : t('workspace.scheduleSet')}
               </Text>
             </TouchableOpacity>
-
-            {todo.reminder_at && (
-              <TouchableOpacity
-                style={styles.menuItem}
-                onPress={() => { setMenuVisible(false); onClearReminder(todo); }}
-              >
-                <Bell size={15} color="#999" />
-                <Text style={[styles.menuItemText, { color: '#999' }]}>リマインダーを削除</Text>
-              </TouchableOpacity>
-            )}
 
             <View style={styles.menuDivider} />
 
@@ -276,7 +297,7 @@ export default function DraggableTodoItem({
               onPress={() => { setMenuVisible(false); onDelete(todo.id); }}
             >
               <Trash2 size={15} color="#e74c3c" />
-              <Text style={[styles.menuItemText, styles.menuItemDanger]}>タスクを削除</Text>
+              <Text style={[styles.menuItemText, styles.menuItemDanger]}>{t('workspace.deleteTask')}</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -299,7 +320,7 @@ export default function DraggableTodoItem({
               { top: areaPickerPosition.y, left: areaPickerPosition.x },
             ]}
           >
-            <Text style={styles.areaPickerTitle}>移動先のエリア</Text>
+            <Text style={styles.areaPickerTitle}>{t('workspace.moveToAreaTitle')}</Text>
             {otherAreas.map((a) => (
               <TouchableOpacity
                 key={a}
@@ -391,6 +412,18 @@ const styles = StyleSheet.create({
     gap: 3,
     marginLeft: 26,
     marginTop: 2,
+  },
+  scheduleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 26,
+    marginTop: 2,
+  },
+  scheduleBadgeText: {
+    fontSize: 10,
+    color: '#3b82f6',
+    fontWeight: '500',
   },
   reminderBadgeText: {
     fontSize: 10,

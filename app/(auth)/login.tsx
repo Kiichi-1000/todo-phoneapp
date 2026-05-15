@@ -13,10 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { BookOpen, Mail, Lock, Eye, EyeOff, Apple } from 'lucide-react-native';
 
 export default function LoginScreen() {
   const { signIn, signUp, signInWithGoogle, signInWithApple } = useAuth();
+  const { t } = useLanguage();
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -34,17 +36,17 @@ export default function LoginScreen() {
     setSuccessMessage(null);
 
     if (!email.trim() || !password.trim()) {
-      setError('メールアドレスとパスワードを入力してください');
+      setError(t('auth.errorEmailPasswordRequired'));
       return;
     }
 
     if (!isLogin && password !== confirmPassword) {
-      setError('パスワードが一致しません');
+      setError(t('auth.errorPasswordsMismatch'));
       return;
     }
 
     if (!isLogin && password.length < 6) {
-      setError('パスワードは6文字以上で入力してください');
+      setError(t('auth.errorPasswordTooShort'));
       return;
     }
 
@@ -60,7 +62,7 @@ export default function LoginScreen() {
       if (err) {
         setError(getErrorMessage(err));
       } else {
-        setSuccessMessage('アカウントを作成しました。ログインしてください。');
+        setSuccessMessage(t('auth.signupSuccess'));
         setIsLogin(true);
         setPassword('');
         setConfirmPassword('');
@@ -72,13 +74,13 @@ export default function LoginScreen() {
 
   const getErrorMessage = (err: string): string => {
     if (err.includes('Invalid login credentials')) {
-      return 'メールアドレスまたはパスワードが正しくありません';
+      return t('auth.errorInvalidCredentials');
     }
     if (err.includes('User already registered')) {
-      return 'このメールアドレスは既に登録されています';
+      return t('auth.errorEmailInUse');
     }
     if (err.includes('Email rate limit')) {
-      return 'しばらく待ってからもう一度お試しください';
+      return t('auth.errorRateLimit');
     }
     return err;
   };
@@ -129,7 +131,7 @@ export default function LoginScreen() {
             </View>
             <Text style={styles.appName}>ToSche</Text>
             <Text style={styles.appTagline}>
-              {isLogin ? 'おかえりなさい' : 'はじめましょう'}
+              {isLogin ? t('auth.welcomeBack') : t('auth.getStarted')}
             </Text>
           </View>
 
@@ -151,7 +153,7 @@ export default function LoginScreen() {
                 <Mail size={18} color="#8a8a9a" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="メールアドレス"
+                  placeholder={t('auth.email')}
                   placeholderTextColor="#8a8a9a"
                   value={email}
                   onChangeText={setEmail}
@@ -166,7 +168,7 @@ export default function LoginScreen() {
                 <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="パスワード"
+                  placeholder={t('auth.password')}
                   placeholderTextColor="#8a8a9a"
                   value={password}
                   onChangeText={setPassword}
@@ -191,7 +193,7 @@ export default function LoginScreen() {
                   <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
-                    placeholder="パスワード（確認）"
+                    placeholder={t('auth.passwordConfirm')}
                     placeholderTextColor="#8a8a9a"
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
@@ -212,14 +214,14 @@ export default function LoginScreen() {
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
                 <Text style={styles.submitButtonText}>
-                  {isLogin ? 'ログイン' : 'アカウント作成'}
+                  {isLogin ? t('auth.login') : t('auth.createAccount')}
                 </Text>
               )}
             </TouchableOpacity>
 
             <View style={styles.dividerContainer}>
               <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>または</Text>
+              <Text style={styles.dividerText}>{t('auth.or')}</Text>
               <View style={styles.dividerLine} />
             </View>
 
@@ -233,7 +235,7 @@ export default function LoginScreen() {
               ) : (
                 <>
                   <Apple size={18} color="#fff" />
-                  <Text style={styles.appleButtonText}>Appleで続ける</Text>
+                  <Text style={styles.appleButtonText}>{t('auth.continueWithApple')}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -248,7 +250,7 @@ export default function LoginScreen() {
               ) : (
                 <>
                   <Text style={styles.googleIcon}>G</Text>
-                  <Text style={styles.googleButtonText}>Googleで続ける</Text>
+                  <Text style={styles.googleButtonText}>{t('auth.continueWithGoogle')}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -261,7 +263,7 @@ export default function LoginScreen() {
                 onPress={() => router.push('/(auth)/forgot-password')}
                 disabled={loading}
               >
-                <Text style={styles.forgotText}>パスワードをお忘れですか？</Text>
+                <Text style={styles.forgotText}>{t('auth.forgotPasswordPrompt')}</Text>
               </TouchableOpacity>
             )}
 
@@ -272,11 +274,11 @@ export default function LoginScreen() {
             >
               <Text style={styles.switchText}>
                 {isLogin
-                  ? 'アカウントをお持ちでない方'
-                  : '既にアカウントをお持ちの方'}
+                  ? t('auth.noAccount')
+                  : t('auth.haveAccount')}
               </Text>
               <Text style={styles.switchAction}>
-                {isLogin ? '新規登録' : 'ログイン'}
+                {isLogin ? t('auth.signupAction') : t('auth.loginAction')}
               </Text>
             </TouchableOpacity>
 
@@ -286,14 +288,14 @@ export default function LoginScreen() {
                   style={styles.legalFooterLink}
                   onPress={() => router.push('/support/terms')}
                 >
-                  利用規約
+                  {t('auth.termsLink')}
                 </Text>
                 <Text style={styles.legalFooterText}>・</Text>
                 <Text
                   style={styles.legalFooterLink}
                   onPress={() => router.push('/support/privacy-policy')}
                 >
-                  プライバシーポリシー
+                  {t('auth.privacyLink')}
                 </Text>
               </Text>
             </View>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
@@ -13,11 +14,17 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { Calendar, ChevronLeft, ChevronRight, Target, ListChecks } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, UserSettings, WorkspaceType } from '@/types/database';
 import WorkspacePage from '@/components/WorkspacePage';
+import GoalView from '@/components/goals/GoalView';
+import { parseDateString } from '@/lib/scheduleUtils';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { checkAiAccess } from '@/lib/aiAccess';
+
+type ViewMode = 'todo' | 'goals';
 
 interface PageData {
   workspace: Workspace | null;
@@ -27,9 +34,62 @@ interface PageData {
 
 export default function WorkspaceScreen() {
   const { user } = useAuth();
+  const { t, lang } = useLanguage();
+  const router = useRouter();
   const { width: screenWidth } = useWindowDimensions();
   const [workspaceDates, setWorkspaceDates] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  // Top-of-workspace tab: switch between goal view and the date-swipe ToDo
+  // grid. Defaults to 'todo' so existing behavior is preserved.
+  const [viewMode, setViewMode] = useState<ViewMode>('todo');
+
+  // 目標機能 (goals タブ) は有料機能。
+  // UX 要件:
+  //   1. タップ時に先に Goals 画面に切り替えてから、paywall モーダルを上に被せる
+  //      (= 「何が使えるのか」がチラッと見えるので「課金してまで使いたい」となりやすい)
+  //   2. paywall を購入せずに閉じた場合、useFocusEffect 側で検知して todo タブに戻す
+  //      (= 「課金しないと作業できない」状態にする)
+  //   3. 課金前にバックグラウンドで操作させない (= ロック中はタップ無効)
+  const [goalsLocked, setGoalsLocked] = useState(false); // = 「Goals 表示中だが未加入」
+  const handleSwitchToGoals = useCallback(async () => {
+    if (!user) return;
+    if (viewMode === 'goals') return;
+    // 先に表示。これで Goals 画面がチラッと見える
+    setViewMode('goals');
+    // バックグラウンドで access チェック → 未加入なら paywall を即時出す
+    const access = await checkAiAccess(user.id);
+    if (!access.allowed) {
+      setGoalsLocked(true);
+      router.push('/paywall');
+    } else {
+      setGoalsLocked(false);
+    }
+  }, [user, viewMode, router]);
+
+  // ワークスペース画面が再フォーカス (= paywall モーダルが閉じた直後など) するたびに
+  // access を再確認。Goals 表示中なのに未加入のままなら todo タブに自動で戻す。
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      if (viewMode !== 'goals') return;
+      let cancelled = false;
+      (async () => {
+        const access = await checkAiAccess(user.id);
+        if (cancelled) return;
+        if (!access.allowed) {
+          // 未加入のまま戻ってきた → todo タブへ戻す + ロック解除 (= goalsLocked リセット)
+          setViewMode('todo');
+          setGoalsLocked(false);
+        } else {
+          // 課金完了 → ロック解除して Goals そのまま使わせる
+          setGoalsLocked(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [user, viewMode]),
+  );
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [pagesData, setPagesData] = useState<Map<string, PageData>>(new Map());
   const [todosWorkspaceCount, setTodosWorkspaceCount] = useState(0);
@@ -74,10 +134,33 @@ export default function WorkspaceScreen() {
     return () => subscription.remove();
   }, []);
 
+  const settingsRef = useRef(settings);
+  const workspaceDatesRef = useRef(workspaceDates);
+  const currentIndexRef = useRef(currentIndex);
+  const loadPageDataRef = useRef<(dateStr: string, type: WorkspaceType) => Promise<void>>(async () => {});
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { workspaceDatesRef.current = workspaceDates; }, [workspaceDates]);
+  useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
+
   useFocusEffect(
     useCallback(() => {
       if (!user) return;
       loadSettings();
+      const s = settingsRef.current;
+      const dates = workspaceDatesRef.current;
+      if (!s || dates.length === 0) return;
+      loadedDates.current.clear();
+      const currentType = s.default_workspace_type || 'four_grid';
+      const rangePadding = 2;
+      const idx = currentIndexRef.current;
+      const startIdx = Math.max(0, idx - rangePadding);
+      const endIdx = Math.min(dates.length - 1, idx + rangePadding);
+      for (let i = startIdx; i <= endIdx; i++) {
+        const dateStr = dates[i];
+        if (!dateStr) continue;
+        loadedDates.current.add(dateStr);
+        loadPageDataRef.current(dateStr, currentType);
+      }
     }, [user])
   );
 
@@ -124,21 +207,29 @@ export default function WorkspaceScreen() {
     }
   };
 
-  const loadWorkspaceDates = async (preserveCurrentDate: boolean = false) => {
+  // Default `true`: preserve the user's current page when re-running on focus
+  // or app-resume. On the very first call, `workspaceDates` is still empty so
+  // the preserve branch sees `currentDateString = null` and falls back to today
+  // — initial-mount behavior is unchanged.
+  const loadWorkspaceDates = async (preserveCurrentDate: boolean = true) => {
     try {
       const currentType = settings?.default_workspace_type || 'four_grid';
       const currentDateString = preserveCurrentDate && workspaceDates[currentIndex]
         ? workspaceDates[currentIndex] : null;
 
+      if (!user) return;
+
       const { data: workspaces, error } = await supabase
         .from('workspaces')
         .select('id, date, type')
+        .eq('user_id', user.id)
         .order('date', { ascending: false }) as { data: Array<{ id: string; date: string; type: string }> | null; error: any };
       if (error) throw error;
 
       const { data: workspacesWithTodos, error: todosError } = await supabase
         .from('todos')
         .select('workspace_id')
+        .eq('user_id', user.id)
         .not('workspace_id', 'is', null) as { data: Array<{ workspace_id: string }> | null; error: any };
       if (todosError) throw todosError;
 
@@ -157,21 +248,30 @@ export default function WorkspaceScreen() {
       }
 
       const allDates = [...pastDatesWithTodos, ...futureDates];
-      const sortedDates = Array.from(new Set(allDates)).sort(
-        (a, b) => new Date(a).getTime() - new Date(b).getTime()
-      );
+      const sortedDates = Array.from(new Set(allDates)).sort();
       setWorkspaceDates(sortedDates);
       setTodosWorkspaceCount(pastDatesWithTodos.length);
 
+      // Resolve the new currentIndex.
+      //  - preserve mode + date is still in the list → keep the user's page
+      //  - preserve mode + date dropped (rare; e.g. type-switch) → fall back to today
+      //  - no preserve (initial mount) → today
       let newIndex = 0;
+      const todayIndex = sortedDates.indexOf(today);
       if (currentDateString) {
         const preservedIndex = sortedDates.indexOf(currentDateString);
-        newIndex = preservedIndex >= 0 ? preservedIndex : 0;
+        newIndex = preservedIndex >= 0
+          ? preservedIndex
+          : (todayIndex >= 0 ? todayIndex : 0);
       } else {
-        const todayIndex = sortedDates.indexOf(today);
         newIndex = todayIndex >= 0 ? todayIndex : 0;
       }
-      setCurrentIndex(newIndex);
+
+      // Only update if it actually changes — avoids triggering loadVisiblePages
+      // and other downstream effects on every focus refresh.
+      if (newIndex !== currentIndexRef.current) {
+        setCurrentIndex(newIndex);
+      }
     } catch (error) {
       console.error('Error loading workspace dates:', error);
     }
@@ -197,29 +297,37 @@ export default function WorkspaceScreen() {
       const today = formatDate(new Date());
       const isFutureDate = dateStr >= today;
 
+      if (!user) return;
+
       let ws: Workspace | null = null;
       const { data: existingWorkspace, error: fetchError } = await supabase
         .from('workspaces')
         .select('*')
+        .eq('user_id', user.id)
         .eq('date', dateStr)
         .maybeSingle() as { data: Workspace | null; error: any };
       if (fetchError) throw fetchError;
 
       if (existingWorkspace) {
         if (isFutureDate && existingWorkspace.type !== currentType) {
-          const { data: updatedWorkspace } = await supabase
+          const { data: updatedWorkspace, error: updateError } = await supabase
             .from('workspaces')
             .update({ type: currentType })
-            .eq('date', dateStr)
+            .eq('id', existingWorkspace.id)
             .select()
             .single() as { data: Workspace | null; error: any };
-          ws = updatedWorkspace;
+          if (updateError) {
+            console.error('Workspace UPDATE failed:', updateError);
+            ws = existingWorkspace;
+          } else {
+            ws = updatedWorkspace ?? existingWorkspace;
+          }
         } else {
           ws = existingWorkspace;
         }
       } else {
         if (!user) return;
-        const date = new Date(dateStr);
+        const date = parseDateString(dateStr);
         const { data: latestWs } = await supabase
           .from('workspaces')
           .select('area_titles')
@@ -231,10 +339,10 @@ export default function WorkspaceScreen() {
           .maybeSingle() as { data: { area_titles: Workspace['area_titles'] } | null; error: any };
 
         const inheritedTitles = {
-          top_left: latestWs?.area_titles?.top_left || '\u5DE6\u4E0A\u30A8\u30EA\u30A2',
-          top_right: latestWs?.area_titles?.top_right || '\u53F3\u4E0A\u30A8\u30EA\u30A2',
-          bottom_left: latestWs?.area_titles?.bottom_left || '\u5DE6\u4E0B\u30A8\u30EA\u30A2',
-          bottom_right: latestWs?.area_titles?.bottom_right || '\u53F3\u4E0B\u30A8\u30EA\u30A2',
+          top_left: latestWs?.area_titles?.top_left || t('workspace.areaTopLeft'),
+          top_right: latestWs?.area_titles?.top_right || t('workspace.areaTopRight'),
+          bottom_left: latestWs?.area_titles?.bottom_left || t('workspace.areaBottomLeft'),
+          bottom_right: latestWs?.area_titles?.bottom_right || t('workspace.areaBottomRight'),
         };
 
         const { data: newWorkspace, error: createError } = await supabase
@@ -254,8 +362,9 @@ export default function WorkspaceScreen() {
             const { data: existing } = await supabase
               .from('workspaces')
               .select('*')
+              .eq('user_id', user.id)
               .eq('date', dateStr)
-              .single() as { data: Workspace | null; error: any };
+              .maybeSingle() as { data: Workspace | null; error: any };
             ws = existing;
           } else {
             throw createError;
@@ -291,6 +400,10 @@ export default function WorkspaceScreen() {
     }
   };
 
+  useEffect(() => {
+    loadPageDataRef.current = loadPageData;
+  }, [user, t]);
+
   const handleTodosChange = useCallback((workspaceId: string, newTodos: Todo[]) => {
     setPagesData(prev => {
       const next = new Map(prev);
@@ -309,8 +422,22 @@ export default function WorkspaceScreen() {
       const next = new Map(prev);
       for (const [key, value] of next.entries()) {
         if (value.workspace?.id === updatedWorkspace.id) {
+          // Exact match — full update for the page that triggered the change
           next.set(key, { ...value, workspace: updatedWorkspace });
-          break;
+        } else if (
+          value.workspace &&
+          value.workspace.type === 'four_grid' &&
+          updatedWorkspace.type === 'four_grid'
+        ) {
+          // Propagate area_titles to every other cached four_grid page so
+          // the rename is reflected immediately without a refetch.
+          next.set(key, {
+            ...value,
+            workspace: {
+              ...value.workspace,
+              area_titles: updatedWorkspace.area_titles,
+            },
+          });
         }
       }
       return next;
@@ -363,7 +490,7 @@ export default function WorkspaceScreen() {
             />
           ) : (
             <View style={styles.pageLoading}>
-              <Text style={styles.pageLoadingText}>{'\u8AAD\u307F\u8FBC\u307F\u4E2D...'}</Text>
+              <Text style={styles.pageLoadingText}>{t('common.loading')}</Text>
             </View>
           )}
         </View>
@@ -382,8 +509,10 @@ export default function WorkspaceScreen() {
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
     const day = date.getDate();
-    const dayOfWeek = ['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'][date.getDay()];
-    return `${year}\u5E74${month}\u6708${day}\u65E5 (${dayOfWeek})`;
+    const daysJa = ['日', '月', '火', '水', '木', '金', '土'];
+    const daysEn = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayOfWeek = (lang === 'en' ? daysEn : daysJa)[date.getDay()];
+    return t('dateFormat.yearMonthDayDow', { year, month, day, dow: dayOfWeek });
   };
 
   const getDaysInMonth = (date: Date) => {
@@ -397,7 +526,7 @@ export default function WorkspaceScreen() {
   const getMonthName = (date: Date) => {
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
-    return `${year}\u5E74${month}\u6708`;
+    return t('dateFormat.yearMonth', { year, month });
   };
 
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -422,9 +551,7 @@ export default function WorkspaceScreen() {
     setSelectedDate(dateString);
     let targetIndex = workspaceDates.indexOf(dateString);
     if (targetIndex === -1) {
-      const newDates = [...workspaceDates, dateString].sort(
-        (a, b) => new Date(a).getTime() - new Date(b).getTime()
-      );
+      const newDates = [...workspaceDates, dateString].sort();
       setWorkspaceDates(newDates);
       targetIndex = newDates.indexOf(dateString);
     }
@@ -485,13 +612,16 @@ export default function WorkspaceScreen() {
   const currentPageData = workspaceDates[currentIndex]
     ? pagesData.get(workspaceDates[currentIndex])
     : null;
-  const currentTitle = currentPageData?.workspace?.title || '';
+  const currentDateStr = workspaceDates[currentIndex];
+  const currentTitle = currentDateStr
+    ? formatDateTitle(parseDateString(currentDateStr))
+    : (currentPageData?.workspace?.title || '');
 
   if (!settings || workspaceDates.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>{'\u8AAD\u307F\u8FBC\u307F\u4E2D...'}</Text>
+          <Text style={styles.loadingText}>{t('common.loading')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -499,55 +629,111 @@ export default function WorkspaceScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity style={styles.dateContainer} onPress={() => setIsDatePickerVisible(true)}>
-            <Calendar size={20} color="#000" />
-            <Text style={styles.headerTitle}>{currentTitle}</Text>
-          </TouchableOpacity>
-          {workspaceDates[currentIndex] !== formatDate(new Date()) && (
-            <TouchableOpacity
-              style={styles.todayJumpBtn}
-              onPress={() => {
-                const todayStr = formatDate(new Date());
-                const idx = workspaceDates.indexOf(todayStr);
-                if (idx >= 0) scrollToIndex(idx);
-              }}
-            >
-              <Text style={styles.todayJumpText}>{'\u4ECA\u65E5\u3078\u623B\u308B'}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <Text style={styles.pageIndicator}>{todosWorkspaceCount} {'\u30DA\u30FC\u30B8'}</Text>
+      {/* Top tab switcher: ToDo (left, primary) ↔ goals (right, secondary). */}
+      <View style={styles.topTabs}>
+        <TouchableOpacity
+          style={[styles.topTabBtn, viewMode === 'todo' && styles.topTabBtnActive]}
+          onPress={() => setViewMode('todo')}
+          activeOpacity={0.75}
+        >
+          <ListChecks
+            size={14}
+            color={viewMode === 'todo' ? '#0F172A' : '#94A3B8'}
+            strokeWidth={2.4}
+          />
+          <Text
+            style={[
+              styles.topTabText,
+              viewMode === 'todo' && styles.topTabTextActive,
+            ]}
+          >
+            {t('workspace.topTabTodo')}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.topTabBtn, viewMode === 'goals' && styles.topTabBtnActive]}
+          onPress={handleSwitchToGoals}
+          activeOpacity={0.75}
+        >
+          <Target
+            size={14}
+            color={viewMode === 'goals' ? '#0F172A' : '#94A3B8'}
+            strokeWidth={2.4}
+          />
+          <Text
+            style={[
+              styles.topTabText,
+              viewMode === 'goals' && styles.topTabTextActive,
+            ]}
+          >
+            {t('workspace.topTabGoals')}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.flatList}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <FlatList
-          ref={flatListRef}
-          data={workspaceDates}
-          renderItem={renderItem}
-          keyExtractor={(item) => item}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          getItemLayout={getItemLayout}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-          initialScrollIndex={currentIndex}
-          onScrollToIndexFailed={(info) => {
-            setTimeout(() => {
-              flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
-            }, 100);
-          }}
-          maxToRenderPerBatch={3}
-          windowSize={5}
-          removeClippedSubviews={false}
-          style={styles.flatList}
-        />
-      </KeyboardAvoidingView>
+      {viewMode === 'goals' ? (
+        // 課金前 (goalsLocked=true) はタッチを完全に遮断するラッパで囲う。
+        // pointerEvents='none' で GoalView 内の全ボタン・入力が無効になる。
+        // 視覚的にも 0.5 で薄くして「使えない」感を出す。
+        <View
+          style={{ flex: 1, opacity: goalsLocked ? 0.5 : 1 }}
+          pointerEvents={goalsLocked ? 'none' : 'auto'}
+        >
+          <GoalView />
+        </View>
+      ) : (
+        <>
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <TouchableOpacity style={styles.dateContainer} onPress={() => setIsDatePickerVisible(true)}>
+                <Calendar size={20} color="#000" />
+                <Text style={styles.headerTitle}>{currentTitle}</Text>
+              </TouchableOpacity>
+              {workspaceDates[currentIndex] !== formatDate(new Date()) && (
+                <TouchableOpacity
+                  style={styles.todayJumpBtn}
+                  onPress={() => {
+                    const todayStr = formatDate(new Date());
+                    const idx = workspaceDates.indexOf(todayStr);
+                    if (idx >= 0) scrollToIndex(idx);
+                  }}
+                >
+                  <Text style={styles.todayJumpText}>{t('workspace.backToToday')}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={styles.pageIndicator}>{t('workspace.pageCount', { count: todosWorkspaceCount })}</Text>
+          </View>
+
+          <KeyboardAvoidingView
+            style={styles.flatList}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <FlatList
+              ref={flatListRef}
+              data={workspaceDates}
+              renderItem={renderItem}
+              keyExtractor={(item) => item}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              getItemLayout={getItemLayout}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={viewabilityConfig}
+              initialScrollIndex={currentIndex}
+              onScrollToIndexFailed={(info) => {
+                setTimeout(() => {
+                  flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
+                }, 100);
+              }}
+              maxToRenderPerBatch={3}
+              windowSize={5}
+              removeClippedSubviews={false}
+              style={styles.flatList}
+            />
+          </KeyboardAvoidingView>
+        </>
+      )}
 
       <Modal
         visible={isDatePickerVisible}
@@ -557,14 +743,14 @@ export default function WorkspaceScreen() {
       >
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{'\u65E5\u4ED8\u3092\u9078\u629E'}</Text>
+            <Text style={styles.modalTitle}>{t('workspace.selectDate')}</Text>
             <TouchableOpacity style={styles.closeButton} onPress={() => setIsDatePickerVisible(false)}>
-              <Text style={styles.closeButtonText}>{'\u9589\u3058\u308B'}</Text>
+              <Text style={styles.closeButtonText}>{t('common.close')}</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.modalDescription}>
             <Text style={styles.descriptionText}>
-              {'\u672A\u6765\u306E\u65E5\u4ED8\u3092\u9078\u629E\u3057\u3066\u3001\u305D\u306E\u65E5\u306EToDo\u3092\u4F5C\u6210\u3067\u304D\u307E\u3059'}
+              {t('workspace.selectFutureDateHint')}
             </Text>
           </View>
           <View style={styles.calendarHeader}>
@@ -577,8 +763,8 @@ export default function WorkspaceScreen() {
             </TouchableOpacity>
           </View>
           <View style={styles.weekdayHeader}>
-            {['\u65E5', '\u6708', '\u706B', '\u6C34', '\u6728', '\u91D1', '\u571F'].map(day => (
-              <Text key={day} style={styles.weekdayText}>{day}</Text>
+            {(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const).map(day => (
+              <Text key={day} style={styles.weekdayText}>{t(`weekdays.${day}`)}</Text>
             ))}
           </View>
           <View style={styles.calendarGrid}>
@@ -586,6 +772,7 @@ export default function WorkspaceScreen() {
           </View>
         </SafeAreaView>
       </Modal>
+
     </SafeAreaView>
   );
 }
@@ -604,6 +791,39 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
   },
+  topTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    marginHorizontal: 14,
+    marginTop: 8,
+    marginBottom: 4,
+    borderRadius: 11,
+    padding: 3,
+    gap: 2,
+  },
+  topTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 9,
+    backgroundColor: 'transparent',
+  },
+  topTabBtnActive: {
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'ios'
+      ? {
+          shadowColor: '#0F172A',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.06,
+          shadowRadius: 2,
+        }
+      : { elevation: 1 }),
+  },
+  topTabText: { fontSize: 13, fontWeight: '600', color: '#94A3B8' },
+  topTabTextActive: { color: '#0F172A' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

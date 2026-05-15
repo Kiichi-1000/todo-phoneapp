@@ -17,6 +17,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Check, CircleCheck as CheckCircle, GripVertical, Trash2, EyeOff, CalendarOff } from 'lucide-react-native';
 import { RoutineTemplateItem } from '@/types/database';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 const ITEM_HEIGHT = 58;
 const ITEM_MARGIN = 10;
@@ -168,6 +169,7 @@ export default function DraggableRoutineList({
   onDeactivate,
   onSkipToday,
 }: Props) {
+  const { t } = useLanguage();
   const [dragIndex, setDragIndex] = useState(-1);
   const [dragTranslateY, setDragTranslateY] = useState(0);
   const [menuItem, setMenuItem] = useState<RoutineTemplateItem | null>(null);
@@ -252,8 +254,8 @@ export default function DraggableRoutineList({
                   <CalendarOff size={18} color="#1976D2" />
                 </View>
                 <View style={styles.menuActionContent}>
-                  <Text style={styles.menuActionLabel}>今日だけスキップ</Text>
-                  <Text style={styles.menuActionDesc}>今日のリストから非表示にします</Text>
+                  <Text style={styles.menuActionLabel}>{t('routine.menuSkipTodayLabel')}</Text>
+                  <Text style={styles.menuActionDesc}>{t('routine.menuSkipTodayDesc')}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -271,8 +273,8 @@ export default function DraggableRoutineList({
                   <EyeOff size={18} color="#E8954A" />
                 </View>
                 <View style={styles.menuActionContent}>
-                  <Text style={styles.menuActionLabel}>非表示にする</Text>
-                  <Text style={styles.menuActionDesc}>テンプレートから無効化します</Text>
+                  <Text style={styles.menuActionLabel}>{t('routine.menuDeactivateLabel')}</Text>
+                  <Text style={styles.menuActionDesc}>{t('routine.menuDeactivateDesc')}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -289,15 +291,15 @@ export default function DraggableRoutineList({
                 <Trash2 size={18} color="#E8654A" />
               </View>
               <View style={styles.menuActionContent}>
-                <Text style={[styles.menuActionLabel, { color: '#E8654A' }]}>削除する</Text>
+                <Text style={[styles.menuActionLabel, { color: '#E8654A' }]}>{t('routine.menuDeleteLabel')}</Text>
                 <Text style={styles.menuActionDesc}>
-                  {menuItem?.today_only_date ? 'この今日だけのタスクを削除します' : 'テンプレートから完全に削除します'}
+                  {menuItem?.today_only_date ? t('routine.menuDeleteTodayOnlyDesc') : t('routine.menuDeleteTemplateDesc')}
                 </Text>
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.menuCancelBtn} onPress={closeMenu}>
-              <Text style={styles.menuCancelText}>キャンセル</Text>
+              <Text style={styles.menuCancelText}>{t('routine.menuCancel')}</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>

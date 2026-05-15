@@ -14,27 +14,22 @@ import { ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react-na
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Workspace, Todo, GridArea } from '@/types/database';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
-
-const GRID_AREA_LABELS: Record<GridArea, string> = {
-  top_left: '左上',
-  top_right: '右上',
-  bottom_left: '左下',
-  bottom_right: '右下',
-};
 
 function WorkspaceScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [gridTitles, setGridTitles] = useState<Record<GridArea, string>>({
-    top_left: '左上エリア',
-    top_right: '右上エリア',
-    bottom_left: '左下エリア',
-    bottom_right: '右下エリア',
+    top_left: t('workspace.areaTopLeft'),
+    top_right: t('workspace.areaTopRight'),
+    bottom_left: t('workspace.areaBottomLeft'),
+    bottom_right: t('workspace.areaBottomRight'),
   });
   const [editingTitle, setEditingTitle] = useState<GridArea | null>(null);
   const [newTodoContent, setNewTodoContent] = useState<Record<GridArea, string>>({
@@ -61,10 +56,10 @@ function WorkspaceScreen() {
 
       if (workspaceData?.area_titles) {
         setGridTitles({
-          top_left: workspaceData.area_titles.top_left || '左上エリア',
-          top_right: workspaceData.area_titles.top_right || '右上エリア',
-          bottom_left: workspaceData.area_titles.bottom_left || '左下エリア',
-          bottom_right: workspaceData.area_titles.bottom_right || '右下エリア',
+          top_left: workspaceData.area_titles.top_left || t('workspace.areaTopLeft'),
+          top_right: workspaceData.area_titles.top_right || t('workspace.areaTopRight'),
+          bottom_left: workspaceData.area_titles.bottom_left || t('workspace.areaBottomLeft'),
+          bottom_right: workspaceData.area_titles.bottom_right || t('workspace.areaBottomRight'),
         });
       }
 
@@ -78,7 +73,7 @@ function WorkspaceScreen() {
       setTodos(todosData || []);
     } catch (error) {
       console.error('Error loading workspace:', error);
-      Alert.alert('エラー', 'ワークスペースの読み込みに失敗しました');
+      Alert.alert(t('common.error'), t('workspace.errorLoadFailed'));
     }
   };
 
@@ -118,7 +113,7 @@ function WorkspaceScreen() {
       setNewTodoContent({ ...newTodoContent, [gridArea]: '' });
     } catch (error) {
       console.error('Error adding todo:', error);
-      Alert.alert('エラー', 'タスクの追加に失敗しました');
+      Alert.alert(t('common.error'), t('workspace.errorAddTaskFailed'));
     }
   };
 
@@ -159,7 +154,7 @@ function WorkspaceScreen() {
       setTodos(todos.filter((t) => t.id !== todoId));
     } catch (error) {
       console.error('Error deleting todo:', error);
-      Alert.alert('エラー', 'タスクの削除に失敗しました');
+      Alert.alert(t('common.error'), t('workspace.errorDeleteTaskFailed'));
     }
   };
 
@@ -209,7 +204,7 @@ function WorkspaceScreen() {
       }
     } catch (error) {
       console.error('Error moving todo:', error);
-      Alert.alert('エラー', 'タスクの並び替えに失敗しました');
+      Alert.alert(t('common.error'), t('workspace.errorReorderFailed'));
       loadWorkspace();
     }
   };
@@ -274,10 +269,17 @@ function WorkspaceScreen() {
         [area]: newTitle,
       };
 
-      const { error } = await supabase
+      // Sync grid names across ALL of the user's four_grid workspaces so the
+      // change applies to every page (past and future), not only this one.
+      const baseUpdate = supabase
         .from('workspaces')
-        .update({ area_titles: updatedTitles })
-        .eq('id', id);
+        .update({ area_titles: updatedTitles });
+      const query =
+        user && workspace?.type === 'four_grid'
+          ? baseUpdate.eq('user_id', user.id).eq('type', 'four_grid')
+          : baseUpdate.eq('id', id);
+
+      const { error } = await query;
 
       if (error) throw error;
 
@@ -285,7 +287,7 @@ function WorkspaceScreen() {
       setEditingTitle(null);
     } catch (error) {
       console.error('Error updating area title:', error);
-      Alert.alert('エラー', 'エリア名の更新に失敗しました');
+      Alert.alert(t('common.error'), t('workspace.errorAreaTitleUpdate'));
     }
   };
 
@@ -335,7 +337,7 @@ function WorkspaceScreen() {
             onChangeText={(text) =>
               setNewTodoContent({ ...newTodoContent, [area]: text })
             }
-            placeholder="新しいタスク"
+            placeholder={t('workspace.newTaskPlaceholder')}
             placeholderTextColor="#999"
             onSubmitEditing={() => addTodo(area)}
             returnKeyType="done"
@@ -354,7 +356,7 @@ function WorkspaceScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>読み込み中...</Text>
+          <Text style={styles.loadingText}>{t('workspace.loading')}</Text>
         </View>
       </SafeAreaView>
     );

@@ -13,10 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { Lock, Eye, EyeOff, CircleCheck as CheckCircle } from 'lucide-react-native';
 
 export default function ResetPasswordScreen() {
   const { updatePassword } = useAuth();
+  const { t } = useLanguage();
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -29,17 +31,17 @@ export default function ResetPasswordScreen() {
     setError(null);
 
     if (!password.trim()) {
-      setError('新しいパスワードを入力してください');
+      setError(t('auth.errorNewPasswordRequired'));
       return;
     }
 
     if (password.length < 6) {
-      setError('パスワードは6文字以上で入力してください');
+      setError(t('auth.errorPasswordTooShort'));
       return;
     }
 
     if (password !== confirmPassword) {
-      setError('パスワードが一致しません');
+      setError(t('auth.errorPasswordsMismatch'));
       return;
     }
 
@@ -62,15 +64,15 @@ export default function ResetPasswordScreen() {
           <View style={styles.successIconWrap}>
             <CheckCircle size={48} color="#16a34a" />
           </View>
-          <Text style={styles.successTitle}>パスワードを変更しました</Text>
+          <Text style={styles.successTitle}>{t('auth.passwordChangedTitle')}</Text>
           <Text style={styles.successText}>
-            新しいパスワードでログインできます。
+            {t('auth.passwordChangedSubtitle')}
           </Text>
           <TouchableOpacity
             style={styles.submitButton}
             onPress={() => router.replace('/(auth)/login')}
           >
-            <Text style={styles.submitButtonText}>ログイン画面へ</Text>
+            <Text style={styles.submitButtonText}>{t('auth.goToLogin')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -88,9 +90,9 @@ export default function ResetPasswordScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.headingSection}>
-            <Text style={styles.title}>新しいパスワードを設定</Text>
+            <Text style={styles.title}>{t('auth.newPasswordTitle')}</Text>
             <Text style={styles.subtitle}>
-              新しいパスワードを入力してください。6文字以上で設定してください。
+              {t('auth.newPasswordSubtitleLong')}
             </Text>
           </View>
 
@@ -105,7 +107,7 @@ export default function ResetPasswordScreen() {
               <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="新しいパスワード"
+                placeholder={t('auth.newPasswordPlaceholder')}
                 placeholderTextColor="#8a8a9a"
                 value={password}
                 onChangeText={setPassword}
@@ -129,7 +131,7 @@ export default function ResetPasswordScreen() {
               <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="新しいパスワード（確認）"
+                placeholder={t('auth.newPasswordConfirmPlaceholder')}
                 placeholderTextColor="#8a8a9a"
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -147,7 +149,7 @@ export default function ResetPasswordScreen() {
               {loading ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <Text style={styles.submitButtonText}>パスワードを変更</Text>
+                <Text style={styles.submitButtonText}>{t('auth.changePasswordButton')}</Text>
               )}
             </TouchableOpacity>
           </View>

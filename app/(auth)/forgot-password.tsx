@@ -13,10 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { Mail, ArrowLeft } from 'lucide-react-native';
 
 export default function ForgotPasswordScreen() {
   const { resetPassword } = useAuth();
+  const { t } = useLanguage();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +29,7 @@ export default function ForgotPasswordScreen() {
     setError(null);
 
     if (!email.trim()) {
-      setError('メールアドレスを入力してください');
+      setError(t('auth.errorEmailRequired'));
       return;
     }
 
@@ -37,7 +39,7 @@ export default function ForgotPasswordScreen() {
 
     if (err) {
       if (err.includes('rate limit')) {
-        setError('しばらく待ってからもう一度お試しください');
+        setError(t('auth.errorRateLimit'));
       } else {
         setError(err);
       }
@@ -62,24 +64,24 @@ export default function ForgotPasswordScreen() {
             onPress={() => router.back()}
           >
             <ArrowLeft size={20} color="#1a1a2e" />
-            <Text style={styles.backText}>ログインに戻る</Text>
+            <Text style={styles.backText}>{t('auth.backToLogin')}</Text>
           </TouchableOpacity>
 
           <View style={styles.headingSection}>
-            <Text style={styles.title}>パスワードをリセット</Text>
+            <Text style={styles.title}>{t('auth.resetPasswordTitle')}</Text>
             <Text style={styles.subtitle}>
-              登録済みのメールアドレスを入力してください。パスワード再設定用のリンクをお送りします。
+              {t('auth.resetPasswordSubtitle')}
             </Text>
           </View>
 
           {sent ? (
             <View style={styles.sentCard}>
-              <Text style={styles.sentTitle}>メールを送信しました</Text>
+              <Text style={styles.sentTitle}>{t('auth.emailSentTitle')}</Text>
               <Text style={styles.sentText}>
-                {email} 宛にパスワード再設定用のリンクを送信しました。メールを確認してリンクをクリックしてください。
+                {t('auth.emailSentBody', { email })}
               </Text>
               <Text style={styles.sentNote}>
-                メールが届かない場合は、迷惑メールフォルダを確認するか、別のメールアドレスでお試しください。
+                {t('auth.emailSentNote')}
               </Text>
               <TouchableOpacity
                 style={styles.resendButton}
@@ -88,7 +90,7 @@ export default function ForgotPasswordScreen() {
                   setError(null);
                 }}
               >
-                <Text style={styles.resendText}>もう一度送信する</Text>
+                <Text style={styles.resendText}>{t('auth.resendEmail')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -103,7 +105,7 @@ export default function ForgotPasswordScreen() {
                 <Mail size={18} color="#8a8a9a" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="メールアドレス"
+                  placeholder={t('auth.email')}
                   placeholderTextColor="#8a8a9a"
                   value={email}
                   onChangeText={setEmail}
@@ -122,7 +124,7 @@ export default function ForgotPasswordScreen() {
                 {loading ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.submitButtonText}>リセットメールを送信</Text>
+                  <Text style={styles.submitButtonText}>{t('auth.sendResetEmail')}</Text>
                 )}
               </TouchableOpacity>
             </View>

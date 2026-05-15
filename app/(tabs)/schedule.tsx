@@ -15,11 +15,13 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Schedule, UserSettings, Todo } from '@/types/database';
-import { formatDate, formatDateDisplay, SCHEDULE_COLORS } from '@/lib/scheduleUtils';
+import { formatDate, formatDateDisplay, parseDateString, SCHEDULE_COLORS } from '@/lib/scheduleUtils';
+import { upsertScheduleFromTodoSchedule } from '@/lib/todoScheduleSync';
 import ScheduleListView from '@/components/ScheduleListView';
 import ScheduleCircleView from '@/components/ScheduleCircleView';
 import ScheduleItemEditor from '@/components/ScheduleItemEditor';
 import ScheduleCalendarModal from '@/components/ScheduleCalendarModal';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 type ViewMode = 'list' | 'circle';
 
@@ -49,6 +51,7 @@ function getTodayIndex(dates: string[]): number {
 
 export default function ScheduleScreen() {
   const { user } = useAuth();
+  const { t, lang } = useLanguage();
   const [allDates] = useState<string[]>(() => generateDates());
   const [currentIndex, setCurrentIndex] = useState(() => getTodayIndex(generateDates()));
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -164,45 +167,79 @@ export default function ScheduleScreen() {
   const syncTodoReminders = useCallback(async () => {
     if (!user || !currentDate || !settings?.todo_schedule_sync) return;
     try {
-      const dayStart = `${currentDate}T00:00:00`;
-      const dayEnd = `${currentDate}T23:59:59`;
+      let dirty = false;
 
-      const { data: todos, error } = await supabase
+      const { data: scheduledTodos } = await supabase
+        .from('todos')
+        .select('id, content, schedule_start_minutes, schedule_end_minutes, schedule_color, workspaces!inner(date)')
+        .eq('user_id', user.id)
+        .eq('workspaces.date', currentDate)
+        .not('schedule_start_minutes', 'is', null)
+        .not('schedule_end_minutes', 'is', null) as {
+          data: { id: string; content: string; schedule_start_minutes: number; schedule_end_minutes: number; schedule_color: string | null }[] | null;
+          error: any;
+        };
+
+      if (scheduledTodos && scheduledTodos.length > 0) {
+        for (const todo of scheduledTodos) {
+          await upsertScheduleFromTodoSchedule(
+            user.id,
+            todo.id,
+            todo.content,
+            currentDate,
+            todo.schedule_start_minutes,
+            todo.schedule_end_minutes,
+            todo.schedule_color,
+          );
+          dirty = true;
+        }
+      }
+
+      const dayStartLocal = parseDateString(currentDate);
+      const dayEndLocal = new Date(dayStartLocal);
+      dayEndLocal.setHours(23, 59, 59, 999);
+      const dayStart = dayStartLocal.toISOString();
+      const dayEnd = dayEndLocal.toISOString();
+
+      const { data: reminderTodos } = await supabase
         .from('todos')
         .select('id, content, reminder_at')
+        .eq('user_id', user.id)
         .gte('reminder_at', dayStart)
         .lte('reminder_at', dayEnd) as { data: Pick<Todo, 'id' | 'content' | 'reminder_at'>[] | null; error: any };
 
-      if (error || !todos || todos.length === 0) return;
+      if (reminderTodos && reminderTodos.length > 0) {
+        const { data: existingSynced } = await supabase
+          .from('schedules')
+          .select('source_todo_id')
+          .eq('user_id', user.id)
+          .eq('date', currentDate)
+          .eq('is_from_todo', true) as { data: { source_todo_id: string }[] | null; error: any };
+        const syncedIds = new Set((existingSynced || []).map(s => s.source_todo_id));
 
-      const { data: existingSynced } = await supabase
-        .from('schedules')
-        .select('source_todo_id')
-        .eq('user_id', user.id)
-        .eq('date', currentDate)
-        .eq('is_from_todo', true) as { data: { source_todo_id: string }[] | null; error: any };
+        for (const todo of reminderTodos) {
+          if (syncedIds.has(todo.id)) continue;
+          const reminderDate = new Date(todo.reminder_at!);
+          const startMin = reminderDate.getHours() * 60 + reminderDate.getMinutes();
+          const endMin = Math.min(startMin + 30, 1440);
 
-      const syncedIds = new Set((existingSynced || []).map(s => s.source_todo_id));
-
-      for (const todo of todos) {
-        if (syncedIds.has(todo.id)) continue;
-        const reminderDate = new Date(todo.reminder_at!);
-        const startMin = reminderDate.getHours() * 60 + reminderDate.getMinutes();
-        const endMin = Math.min(startMin + 30, 1440);
-
-        await supabase.from('schedules').insert({
-          user_id: user.id,
-          date: currentDate,
-          start_minutes: startMin,
-          end_minutes: endMin,
-          title: todo.content,
-          color: '#E8654A',
-          is_from_todo: true,
-          source_todo_id: todo.id,
-        });
+          await supabase.from('schedules').insert({
+            user_id: user.id,
+            date: currentDate,
+            start_minutes: startMin,
+            end_minutes: endMin,
+            title: todo.content,
+            color: '#E8654A',
+            is_from_todo: true,
+            source_todo_id: todo.id,
+          });
+          dirty = true;
+        }
       }
 
-      await loadSchedules();
+      if (dirty) {
+        await loadSchedules();
+      }
     } catch (e) {
       console.error('Error syncing todos:', e);
     }
@@ -225,12 +262,27 @@ export default function ScheduleScreen() {
   }, [settings, currentDate, syncTodoReminders]);
 
   const handleSlotPress = (startMinutes: number) => {
-    const colorIdx = schedules.length % SCHEDULE_COLORS.length;
+    // Pick the color used LEAST in today's existing schedules so the pie
+    // chart stays varied. Round-robin (the old approach) made the first
+    // 3 slots dominate visually.
+    const useCount = new Map<string, number>();
+    for (const c of SCHEDULE_COLORS) useCount.set(c.toUpperCase(), 0);
+    for (const s of schedules) {
+      const k = (s.color || '').toUpperCase();
+      useCount.set(k, (useCount.get(k) ?? 0) + 1);
+    }
+    let suggestedColor = SCHEDULE_COLORS[0];
+    let minCount = useCount.get(suggestedColor.toUpperCase()) ?? 0;
+    for (const c of SCHEDULE_COLORS) {
+      const n = useCount.get(c.toUpperCase()) ?? 0;
+      if (n < minCount) { suggestedColor = c; minCount = n; }
+    }
+
     setEditingSchedule({
       start_minutes: startMinutes,
       end_minutes: Math.min(startMinutes + 60, 1440),
       title: '',
-      color: SCHEDULE_COLORS[colorIdx],
+      color: suggestedColor,
     });
     setIsNewSchedule(true);
     setEditorVisible(true);
@@ -242,9 +294,19 @@ export default function ScheduleScreen() {
     setEditorVisible(true);
   };
 
-  const handleSave = async (data: { title: string; start_minutes: number; end_minutes: number; color: string }) => {
+  const handleSave = async (data: {
+    title: string;
+    start_minutes: number;
+    end_minutes: number;
+    color: string;
+    source_todo_id?: string | null;
+  }) => {
     if (!user) return;
     try {
+      const linkedTodoIdFromEditor = data.source_todo_id ?? null;
+      const linkedTodoIdFromExisting = editingSchedule?.source_todo_id ?? null;
+      const linkedTodoId = linkedTodoIdFromEditor || linkedTodoIdFromExisting;
+
       if (isNewSchedule) {
         const { error } = await supabase.from('schedules').insert({
           user_id: user.id,
@@ -253,8 +315,8 @@ export default function ScheduleScreen() {
           end_minutes: data.end_minutes,
           title: data.title,
           color: data.color,
-          is_from_todo: false,
-          source_todo_id: null,
+          is_from_todo: !!linkedTodoIdFromEditor,
+          source_todo_id: linkedTodoIdFromEditor,
         });
         if (error) throw error;
       } else if (editingSchedule?.id) {
@@ -269,27 +331,51 @@ export default function ScheduleScreen() {
           .eq('id', editingSchedule.id);
         if (error) throw error;
       }
+
+      if (linkedTodoId) {
+        await supabase
+          .from('todos')
+          .update({
+            schedule_start_minutes: data.start_minutes,
+            schedule_end_minutes: data.end_minutes,
+            schedule_color: data.color,
+          })
+          .eq('id', linkedTodoId);
+      }
+
       setEditorVisible(false);
       await loadSchedules();
     } catch (e) {
       console.error('Error saving schedule:', e);
-      Alert.alert('エラー', '予定の保存に失敗しました');
+      Alert.alert(t('common.error'), t('schedule.saveError'));
     }
   };
 
   const handleDelete = async () => {
     if (!editingSchedule?.id) return;
     try {
+      const linkedTodoId = editingSchedule.source_todo_id ?? null;
       const { error } = await supabase
         .from('schedules')
         .delete()
         .eq('id', editingSchedule.id);
       if (error) throw error;
+      if (linkedTodoId) {
+        await supabase
+          .from('todos')
+          .update({
+            schedule_start_minutes: null,
+            schedule_end_minutes: null,
+            schedule_color: null,
+            schedule_notify_before: null,
+          })
+          .eq('id', linkedTodoId);
+      }
       setEditorVisible(false);
       await loadSchedules();
     } catch (e) {
       console.error('Error deleting schedule:', e);
-      Alert.alert('エラー', '予定の削除に失敗しました');
+      Alert.alert(t('common.error'), t('schedule.deleteError'));
     }
   };
 
@@ -331,8 +417,8 @@ export default function ScheduleScreen() {
             <ChevronLeft size={22} color="#333" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setCalendarVisible(true)} style={styles.dateDisplay}>
-            <Text style={styles.dateText}>{formatDateDisplay(currentDate)}</Text>
-            {isToday && <Text style={styles.todayBadge}>TODAY</Text>}
+            <Text style={styles.dateText}>{formatDateDisplay(currentDate, lang)}</Text>
+            {isToday && <Text style={styles.todayBadge}>{t('workspace.todayBadge')}</Text>}
             <Calendar size={16} color="#888" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
           <TouchableOpacity onPress={goToNextDate} style={styles.navBtn}>
@@ -340,7 +426,7 @@ export default function ScheduleScreen() {
           </TouchableOpacity>
           {!isToday && (
             <TouchableOpacity onPress={jumpToToday} style={styles.todayBtn}>
-              <Text style={styles.todayBtnText}>今日へ戻る</Text>
+              <Text style={styles.todayBtnText}>{t('workspace.backToToday')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -369,6 +455,7 @@ export default function ScheduleScreen() {
       <ScheduleItemEditor
         visible={editorVisible}
         schedule={editingSchedule}
+        currentDate={currentDate}
         onSave={handleSave}
         onDelete={isNewSchedule ? undefined : handleDelete}
         onClose={() => setEditorVisible(false)}

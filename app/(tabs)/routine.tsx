@@ -43,15 +43,11 @@ import { RoutineTemplateItem, RoutineSlot } from '@/types/database';
 import { formatDate, formatDateDisplay } from '@/lib/scheduleUtils';
 import ScheduleCalendarModal from '@/components/ScheduleCalendarModal';
 import DraggableRoutineList from '@/components/DraggableRoutineList';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 const SWIPE_THRESHOLD = 50;
 
 const SLOTS: RoutineSlot[] = ['morning', 'daytime', 'evening'];
-const SLOT_LABELS: Record<RoutineSlot, string> = {
-  morning: '朝',
-  daytime: '日中',
-  evening: '夜',
-};
 
 const SLOT_ICONS: Record<RoutineSlot, any> = {
   morning: Sunrise,
@@ -95,6 +91,12 @@ function isRoutineTableMissingError(error: any): boolean {
 
 export default function RoutineScreen() {
   const { user, loading: authLoading } = useAuth();
+  const { t, lang } = useLanguage();
+  const SLOT_LABELS: Record<RoutineSlot, string> = {
+    morning: t('routine.morning'),
+    daytime: t('routine.daytime'),
+    evening: t('routine.evening'),
+  };
   const [allDates] = useState<string[]>(() => generateDates());
   const [currentIndex, setCurrentIndex] = useState(() => getTodayIndex(generateDates()));
   const [templateId, setTemplateId] = useState<string | null>(null);
@@ -419,18 +421,19 @@ export default function RoutineScreen() {
         console.error('deleteItemFromDailyView:', e);
       }
     };
-    const label = item.title || '無題';
+    const label = item.title || t('routine.untitled');
+    const message = t('routine.deleteConfirm', { title: label });
     if (Platform.OS === 'web') {
-      if (window.confirm(`「${label}」を削除しますか？`)) {
+      if (window.confirm(message)) {
         await doDelete();
       }
     } else {
-      Alert.alert('削除', `「${label}」を削除しますか？`, [
-        { text: 'キャンセル', style: 'cancel' },
-        { text: '削除', style: 'destructive', onPress: doDelete },
+      Alert.alert(t('common.delete'), message, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: doDelete },
       ]);
     }
-  }, [templateId, touchTemplateUpdated, loadRoutine]);
+  }, [templateId, touchTemplateUpdated, loadRoutine, t]);
 
   const skipItemForToday = useCallback(async (item: RoutineTemplateItem) => {
     if (!user || !currentDate) return;
@@ -538,7 +541,7 @@ export default function RoutineScreen() {
       .select('*')
       .single()) as { data: RoutineTemplateItem | null; error: Error | null };
     if (error) {
-      Alert.alert('エラー', '項目の追加に失敗しました');
+      Alert.alert(t('common.error'), t('routine.addItemError'));
       return;
     }
     await touchTemplateUpdated(templateId);
@@ -564,7 +567,7 @@ export default function RoutineScreen() {
       .update({ title: trimmed })
       .eq('id', itemId);
     if (error) {
-      Alert.alert('エラー', '保存に失敗しました');
+      Alert.alert(t('common.error'), t('routine.saveError'));
       loadRoutine();
       return;
     }
@@ -578,7 +581,8 @@ export default function RoutineScreen() {
 
   const deleteTemplateItem = async (item: RoutineTemplateItem) => {
     if (!templateId) return;
-    const label = item.title || '無題';
+    const label = item.title || t('routine.untitled');
+    const message = t('routine.deleteConfirm', { title: label });
     const doDelete = async () => {
       try {
         const { error } = await supabase.from('routine_template_items').delete().eq('id', item.id);
@@ -590,13 +594,13 @@ export default function RoutineScreen() {
       }
     };
     if (Platform.OS === 'web') {
-      if (window.confirm(`「${label}」を削除しますか？`)) {
+      if (window.confirm(message)) {
         await doDelete();
       }
     } else {
-      Alert.alert('削除', `「${label}」を削除しますか？`, [
-        { text: 'キャンセル', style: 'cancel' },
-        { text: '削除', style: 'destructive', onPress: doDelete },
+      Alert.alert(t('common.delete'), message, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: doDelete },
       ]);
     }
   };
@@ -631,7 +635,7 @@ export default function RoutineScreen() {
       .update({ is_active: !item.is_active })
       .eq('id', item.id);
     if (error) {
-      Alert.alert('エラー', '更新に失敗しました');
+      Alert.alert(t('common.error'), t('routine.updateError'));
       return;
     }
     await touchTemplateUpdated(templateId);
@@ -652,7 +656,7 @@ export default function RoutineScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centered}>
-          <Text style={styles.hintText}>ログインするとルーティンを利用できます。</Text>
+          <Text style={styles.hintText}>{t('routine.loginRequired')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -678,8 +682,8 @@ export default function RoutineScreen() {
             <ChevronLeft size={22} color="#333" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setCalendarVisible(true)} style={styles.dateDisplay}>
-            <Text style={styles.dateText}>{formatDateDisplay(currentDate)}</Text>
-            {isToday && <Text style={styles.todayBadge}>TODAY</Text>}
+            <Text style={styles.dateText}>{formatDateDisplay(currentDate, lang)}</Text>
+            {isToday && <Text style={styles.todayBadge}>{t('workspace.todayBadge')}</Text>}
             <Calendar size={14} color="#888" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
           <TouchableOpacity onPress={goToNextDate} style={styles.navBtn}>
@@ -687,7 +691,7 @@ export default function RoutineScreen() {
           </TouchableOpacity>
           {!isToday && (
             <TouchableOpacity onPress={jumpToToday} style={styles.todayBtn}>
-              <Text style={styles.todayBtnText}>今日へ戻る</Text>
+              <Text style={styles.todayBtnText}>{t('workspace.backToToday')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -739,9 +743,9 @@ export default function RoutineScreen() {
           ) : routineTablesMissing ? (
             <View style={styles.emptyWrap}>
               <ListChecks size={48} color="#ccc" />
-              <Text style={styles.emptyTitle}>ルーティン機能を準備中</Text>
+              <Text style={styles.emptyTitle}>{t('routine.preparing')}</Text>
               <Text style={styles.emptySub}>
-                データベースの準備が必要です。管理者にお問い合わせください。
+                {t('routine.preparingDesc')}
               </Text>
             </View>
           ) : currentSlotItems.length === 0 ? (
@@ -752,13 +756,13 @@ export default function RoutineScreen() {
                   return <Icon size={32} color={slotColor.accent} />;
                 })()}
               </View>
-              <Text style={styles.emptyTitle}>{SLOT_LABELS[currentSlot]}の習慣がありません</Text>
+              <Text style={styles.emptyTitle}>{t('routine.noSlotHabits', { slot: SLOT_LABELS[currentSlot] })}</Text>
               <Text style={styles.emptySub}>
-                右上の設定アイコンからテンプレートを作成すると{'\n'}毎日の習慣として表示されます
+                {t('routine.createTemplateHint')}
               </Text>
               <TouchableOpacity style={styles.emptyActionBtn} onPress={openTemplateModal}>
                 <Settings size={16} color="#fff" />
-                <Text style={styles.emptyActionText}>テンプレートを作成</Text>
+                <Text style={styles.emptyActionText}>{t('routine.createTemplate')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -798,17 +802,17 @@ export default function RoutineScreen() {
         >
           <View style={styles.addModalContent}>
             <View style={styles.addModalHeader}>
-              <Text style={styles.addModalTitle}>今日だけのタスクを追加</Text>
+              <Text style={styles.addModalTitle}>{t('routine.todayOnlyTaskTitle')}</Text>
               <TouchableOpacity onPress={closeAddModal} style={styles.closeBtn}>
                 <X size={22} color="#999" />
               </TouchableOpacity>
             </View>
             <Text style={styles.addModalSub}>
-              {SLOT_LABELS[currentSlot]}のスロットに追加されます。テンプレートには含まれません。
+              {t('routine.todayOnlyTaskDesc', { slot: SLOT_LABELS[currentSlot] })}
             </Text>
             <TextInput
               style={styles.addInput}
-              placeholder="タスクの内容..."
+              placeholder={t('routine.taskContentPlaceholder')}
               placeholderTextColor="#bbb"
               value={newItemTitle}
               onChangeText={setNewItemTitle}
@@ -819,14 +823,14 @@ export default function RoutineScreen() {
             />
             <View style={styles.addModalActions}>
               <TouchableOpacity style={styles.cancelBtn} onPress={closeAddModal}>
-                <Text style={styles.cancelBtnText}>キャンセル</Text>
+                <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.saveBtn, !newItemTitle.trim() && styles.saveBtnDisabled]}
                 onPress={saveNewTodayTask}
                 disabled={!newItemTitle.trim()}
               >
-                <Text style={styles.saveBtnText}>追加</Text>
+                <Text style={styles.saveBtnText}>{t('common.add')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -841,13 +845,13 @@ export default function RoutineScreen() {
       >
         <SafeAreaView style={styles.tmRoot}>
           <View style={styles.tmHeader}>
-            <Text style={styles.tmTitle}>テンプレート編集</Text>
+            <Text style={styles.tmTitle}>{t('routine.templateEditTitle')}</Text>
             <TouchableOpacity onPress={closeTemplateModal} style={styles.tmDoneBtn}>
-              <Text style={styles.tmDoneText}>完了</Text>
+              <Text style={styles.tmDoneText}>{t('common.done')}</Text>
             </TouchableOpacity>
           </View>
           <Text style={styles.tmDesc}>
-            ここで登録した習慣が毎日のチェックリストとして表示されます。
+            {t('routine.templateEditDesc')}
           </Text>
           <ScrollView style={styles.tmScroll} keyboardShouldPersistTaps="handled">
             {SLOTS.map((slot) => {
@@ -862,14 +866,14 @@ export default function RoutineScreen() {
                       <Text style={[styles.tmSectionTitle, { color: color.accent }]}>
                         {SLOT_LABELS[slot]}
                       </Text>
-                      <Text style={styles.tmSectionCount}>{slotItems.filter((i) => i.is_active).length}件</Text>
+                      <Text style={styles.tmSectionCount}>{t('routine.itemsCount', { n: slotItems.filter((i) => i.is_active).length })}</Text>
                     </View>
                     <TouchableOpacity
                       style={[styles.tmAddBtn, { backgroundColor: color.accent }]}
                       onPress={() => addItemToTemplate(slot)}
                     >
                       <Plus size={16} color="#fff" />
-                      <Text style={styles.tmAddBtnText}>追加</Text>
+                      <Text style={styles.tmAddBtnText}>{t('common.add')}</Text>
                     </TouchableOpacity>
                   </View>
                   {slotItems.map((item, idx) => {
@@ -891,7 +895,7 @@ export default function RoutineScreen() {
                               style={styles.tmEditInput}
                               value={templateEditText}
                               onChangeText={setTemplateEditText}
-                              placeholder="習慣名を入力..."
+                              placeholder={t('routine.habitNamePlaceholder')}
                               placeholderTextColor="#bbb"
                               autoFocus
                               maxLength={100}
@@ -908,7 +912,7 @@ export default function RoutineScreen() {
                               style={styles.tmTitleTouch}
                             >
                               <Text style={[styles.tmItemTitle, !item.is_active && styles.tmItemTitleInactive]}>
-                                {item.title || '(タップして名前を入力)'}
+                                {item.title || t('routine.tapToInputName')}
                               </Text>
                             </TouchableOpacity>
                           )}
@@ -937,7 +941,7 @@ export default function RoutineScreen() {
                   })}
                   {slotItems.length === 0 && (
                     <View style={styles.tmEmptySlot}>
-                      <Text style={styles.tmEmptyText}>習慣がまだありません</Text>
+                      <Text style={styles.tmEmptyText}>{t('routine.noHabitsYet')}</Text>
                     </View>
                   )}
                 </View>

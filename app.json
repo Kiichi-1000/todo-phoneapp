@@ -2,22 +2,28 @@
   "expo": {
     "name": "ToSche",
     "slug": "tosche",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tosche",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.synthera.tosche",
       "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "AIアシスタントへの音声入力に使用します。"
       }
     },
     "android": {
-      "package": "com.synthera.tosche"
+      "package": "com.synthera.tosche",
+      "statusBar": {
+        "backgroundColor": "#ffffff",
+        "barStyle": "dark-content",
+        "translucent": false
+      }
     },
     "web": {
       "bundler": "metro",
@@ -47,7 +53,10 @@
       "router": {},
       "supportPageBaseUrl": "https://synthera.jp/contact",
       "supportEmail": "support@synthera.jp",
-      "legalDocsHubUrl": "https://todo-phoneapp.pages.dev/legal/tosche/"
+      "legalDocsHubUrl": "https://todo-phoneapp.pages.dev/legal/tosche/",
+      "revenuecatApiKeyIos": "test_UPKKrhQDSziYTPCqXvfpuIQBtoG",
+      "revenuecatApiKeyIosProd": "appl_CXatxAtqrKtxlIMUmDDBJsFSVzw",
+      "revenuecatApiKeyAndroid": ""
     },
     "owner": "kiichi.2022222"
   }

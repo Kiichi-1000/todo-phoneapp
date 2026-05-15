@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { formatDate } from '@/lib/scheduleUtils';
+import { formatDate, parseDateString } from '@/lib/scheduleUtils';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface Props {
   visible: boolean;
@@ -16,11 +17,12 @@ interface Props {
   onClose: () => void;
 }
 
-const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
 export default function ScheduleCalendarModal({ visible, currentDate, onSelectDate, onClose }: Props) {
+  const { t } = useLanguage();
   const [viewMonth, setViewMonth] = useState(() => {
-    const d = new Date(currentDate);
+    const d = parseDateString(currentDate);
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
 
@@ -63,7 +65,7 @@ export default function ScheduleCalendarModal({ visible, currentDate, onSelectDa
       <View style={styles.overlay}>
         <View style={styles.container}>
           <View style={styles.header}>
-            <Text style={styles.title}>日付を選択</Text>
+            <Text style={styles.title}>{t('schedule.selectDateTitle')}</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <X size={22} color="#666" />
             </TouchableOpacity>
@@ -74,7 +76,7 @@ export default function ScheduleCalendarModal({ visible, currentDate, onSelectDa
               <ChevronLeft size={20} color="#333" />
             </TouchableOpacity>
             <Text style={styles.monthLabel}>
-              {viewMonth.getFullYear()}年{viewMonth.getMonth() + 1}月
+              {t('dateFormat.yearMonth', { year: viewMonth.getFullYear(), month: viewMonth.getMonth() + 1 })}
             </Text>
             <TouchableOpacity onPress={nextMonth} style={styles.monthBtn}>
               <ChevronRight size={20} color="#333" />
@@ -82,10 +84,10 @@ export default function ScheduleCalendarModal({ visible, currentDate, onSelectDa
           </View>
 
           <View style={styles.weekdayRow}>
-            {WEEKDAYS.map((w, i) => (
-              <View key={w} style={styles.weekdayCell}>
+            {WEEKDAY_KEYS.map((k, i) => (
+              <View key={k} style={styles.weekdayCell}>
                 <Text style={[styles.weekdayText, i === 0 && styles.sundayText, i === 6 && styles.saturdayText]}>
-                  {w}
+                  {t(`weekdays.${k}`)}
                 </Text>
               </View>
             ))}
@@ -126,7 +128,7 @@ export default function ScheduleCalendarModal({ visible, currentDate, onSelectDa
             style={styles.todayButton}
             onPress={() => onSelectDate(todayStr)}
           >
-            <Text style={styles.todayButtonText}>今日に移動</Text>
+            <Text style={styles.todayButtonText}>{t('schedule.goToToday')}</Text>
           </TouchableOpacity>
         </View>
       </View>

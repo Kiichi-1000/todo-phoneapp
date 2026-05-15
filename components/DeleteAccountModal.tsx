@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { X, UserX, ShieldAlert } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 type Provider = 'email' | 'google' | 'apple';
 
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
+  const { t } = useLanguage();
   const { user, reauthenticateWithPassword, reauthenticateWithProvider, deleteAccount } = useAuth();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
 
     if (provider === 'email') {
       if (!password) {
-        setError('パスワードを入力してください');
+        setError(t('deleteAccountModal.errorPasswordRequired'));
         return;
       }
       setLoading(true);
@@ -90,28 +92,27 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
             <View style={styles.headerIcon}>
               <ShieldAlert size={22} color="#ff3b30" />
             </View>
-            <Text style={styles.title}>アカウントを削除</Text>
+            <Text style={styles.title}>{t('deleteAccountModal.title')}</Text>
             <TouchableOpacity onPress={onClose} disabled={loading} style={styles.closeBtn}>
               <X size={20} color="#666" />
             </TouchableOpacity>
           </View>
 
           <Text style={styles.description}>
-            このアカウントと全てのデータが完全に削除されます。{'\n'}
-            この操作は取り消せません。
+            {t('deleteAccountModal.description')}
           </Text>
 
           {!confirmStage ? (
             <>
               <View style={styles.warningBox}>
                 <Text style={styles.warningText}>
-                  続行するにはご本人確認が必要です。
+                  {t('deleteAccountModal.reauthNotice')}
                 </Text>
               </View>
 
               {provider === 'email' ? (
                 <View style={styles.field}>
-                  <Text style={styles.label}>パスワード</Text>
+                  <Text style={styles.label}>{t('deleteAccountModal.passwordLabel')}</Text>
                   <TextInput
                     style={styles.input}
                     value={password}
@@ -119,7 +120,7 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
                     secureTextEntry
                     autoCapitalize="none"
                     autoCorrect={false}
-                    placeholder="現在のパスワード"
+                    placeholder={t('deleteAccountModal.passwordPlaceholder')}
                     placeholderTextColor="#999"
                     editable={!loading}
                   />
@@ -127,8 +128,7 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
               ) : (
                 <View style={styles.providerBox}>
                   <Text style={styles.providerText}>
-                    {providerLabel}アカウントでの再認証が必要です。{'\n'}
-                    次のボタンを押すと{providerLabel}の認証画面が開きます。
+                    {t('deleteAccountModal.providerReauthBody', { provider: providerLabel })}
                   </Text>
                 </View>
               )}
@@ -141,21 +141,21 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
                   onPress={onClose}
                   disabled={loading}
                 >
-                  <Text style={styles.cancelText}>キャンセル</Text>
+                  <Text style={styles.cancelText}>{t('deleteAccountModal.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.nextBtn}
                   onPress={() => {
                     setError(null);
                     if (provider === 'email' && !password) {
-                      setError('パスワードを入力してください');
+                      setError(t('deleteAccountModal.errorPasswordRequired'));
                       return;
                     }
                     setConfirmStage(true);
                   }}
                   disabled={loading}
                 >
-                  <Text style={styles.nextText}>次へ</Text>
+                  <Text style={styles.nextText}>{t('deleteAccountModal.next')}</Text>
                 </TouchableOpacity>
               </View>
             </>
@@ -163,11 +163,11 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
             <>
               <View style={styles.finalBox}>
                 <UserX size={32} color="#ff3b30" />
-                <Text style={styles.finalTitle}>本当に削除しますか？</Text>
+                <Text style={styles.finalTitle}>{t('deleteAccountModal.finalTitle')}</Text>
                 <Text style={styles.finalText}>
                   {provider === 'email'
-                    ? 'パスワードを確認してアカウントを削除します。'
-                    : `${providerLabel}で再認証を行い、アカウントを削除します。`}
+                    ? t('deleteAccountModal.finalEmail')
+                    : t('deleteAccountModal.finalProvider', { provider: providerLabel })}
                 </Text>
               </View>
 
@@ -179,7 +179,7 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
                   onPress={() => setConfirmStage(false)}
                   disabled={loading}
                 >
-                  <Text style={styles.cancelText}>戻る</Text>
+                  <Text style={styles.cancelText}>{t('deleteAccountModal.back')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.deleteBtn}
@@ -189,7 +189,7 @@ export function DeleteAccountModal({ visible, onClose, onDeleted }: Props) {
                   {loading ? (
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (
-                    <Text style={styles.deleteText}>削除する</Text>
+                    <Text style={styles.deleteText}>{t('deleteAccountModal.deleteAction')}</Text>
                   )}
                 </TouchableOpacity>
               </View>

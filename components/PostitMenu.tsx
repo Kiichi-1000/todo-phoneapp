@@ -5,8 +5,9 @@ import {
   TouchableOpacity,
   Modal,
 } from 'react-native';
-import { Bell, ChevronUp, ChevronDown, Trash2 } from 'lucide-react-native';
+import { CalendarClock, ChevronUp, ChevronDown, Trash2 } from 'lucide-react-native';
 import { Todo } from '@/types/database';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface PostitMenuProps {
   visible: boolean;
@@ -14,8 +15,7 @@ interface PostitMenuProps {
   position: { x: number; y: number };
   todos: Todo[];
   onClose: () => void;
-  onReminderPress: (todo: Todo) => void;
-  onClearReminder: (todo: Todo) => void;
+  onSchedulePress: (todo: Todo) => void;
   onMoveUp: (todo: Todo) => void;
   onMoveDown: (todo: Todo) => void;
   onDelete: (todoId: string) => void;
@@ -27,12 +27,12 @@ export default function PostitMenu({
   position,
   todos,
   onClose,
-  onReminderPress,
-  onClearReminder,
+  onSchedulePress,
   onMoveUp,
   onMoveDown,
   onDelete,
 }: PostitMenuProps) {
+  const { t } = useLanguage();
   if (!todo) return null;
 
   const sortedPostits = todos
@@ -46,43 +46,34 @@ export default function PostitMenu({
         <View style={[styles.menu, { top: position.y, left: position.x }]}>
           <TouchableOpacity
             style={styles.menuItem}
-            onPress={() => onReminderPress(todo)}
+            onPress={() => { onClose(); onSchedulePress(todo); }}
           >
-            <Bell size={15} color="#e67e22" />
-            <Text style={styles.menuItemText}>
-              {todo.reminder_at ? '\u30EA\u30DE\u30A4\u30F3\u30C0\u30FC\u3092\u5909\u66F4' : '\u30EA\u30DE\u30A4\u30F3\u30C0\u30FC\u3092\u8A2D\u5B9A'}
+            <CalendarClock size={15} color="#3b82f6" />
+            <Text style={[styles.menuItemText, { color: '#3b82f6' }]}>
+              {todo.schedule_start_minutes != null ? t('workspace.scheduleChange') : t('workspace.scheduleSet')}
             </Text>
           </TouchableOpacity>
-          {todo.reminder_at && (
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => onClearReminder(todo)}
-            >
-              <Bell size={15} color="#999" />
-              <Text style={[styles.menuItemText, { color: '#999' }]}>{'\u30EA\u30DE\u30A4\u30F3\u30C0\u30FC\u3092\u524A\u9664'}</Text>
-            </TouchableOpacity>
-          )}
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() => { if (idx > 0) onMoveUp(todo); }}
           >
             <ChevronUp size={15} color="#007AFF" />
-            <Text style={[styles.menuItemText, { color: '#007AFF' }]}>{'\u4E0A\u306B\u79FB\u52D5'}</Text>
+            <Text style={[styles.menuItemText, { color: '#007AFF' }]}>{t('workspace.moveUp')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() => { if (idx < sortedPostits.length - 1) onMoveDown(todo); }}
           >
             <ChevronDown size={15} color="#007AFF" />
-            <Text style={[styles.menuItemText, { color: '#007AFF' }]}>{'\u4E0B\u306B\u79FB\u52D5'}</Text>
+            <Text style={[styles.menuItemText, { color: '#007AFF' }]}>{t('workspace.moveDown')}</Text>
           </TouchableOpacity>
           <View style={styles.divider} />
           <TouchableOpacity
             style={styles.menuItem}
-            onPress={() => onDelete(todo.id)}
+            onPress={() => { onClose(); onDelete(todo.id); }}
           >
             <Trash2 size={15} color="#e74c3c" />
-            <Text style={[styles.menuItemText, { color: '#e74c3c' }]}>{'\u30BF\u30B9\u30AF\u3092\u524A\u9664'}</Text>
+            <Text style={[styles.menuItemText, { color: '#e74c3c' }]}>{t('workspace.deleteTask')}</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>

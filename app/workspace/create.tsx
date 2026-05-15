@@ -13,29 +13,56 @@ import { ArrowLeft, Calendar } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { WorkspaceType } from '@/types/database';
+import { formatDate } from '@/lib/scheduleUtils';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { checkWorkspaceCreationAccess, FREE_WORKSPACE_LIMIT } from '@/lib/aiAccess';
 
 export default function CreateWorkspaceScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [title, setTitle] = useState('');
   const [selectedType, setSelectedType] = useState<WorkspaceType>('four_grid');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
 
   const workspaceTypes = [
     {
       type: 'four_grid' as WorkspaceType,
-      label: '4分割ポストイット',
-      description: '画面を4つに分けてタスクを整理',
+      label: t('workspace.fourGridLabel'),
+      description: t('workspace.fourGridDescriptionShort'),
     },
   ];
 
   const handleCreate = async () => {
     if (!title.trim()) {
-      Alert.alert('エラー', 'ワークスペース名を入力してください');
+      Alert.alert(t('common.error'), t('workspace.errorRequiredTitle'));
       return;
     }
 
     if (!user) return;
+
+    // 100 ページ制限: 未契約ユーザーは workspaces 数が 100 以上だと作成不可。
+    // サブスク (basic/standard/pro 何でも) 契約者は無制限。
+    try {
+      const access = await checkWorkspaceCreationAccess(user.id);
+      if (!access.allowed) {
+        Alert.alert(
+          t('workspace.limitReachedTitle') || 'ワークスペースの上限に達しました',
+          t('workspace.limitReachedMessage') ||
+            `無料枠は ${FREE_WORKSPACE_LIMIT} ページまでです。プランに加入すると無制限に作成できます。`,
+          [
+            { text: t('common.cancel') || 'キャンセル', style: 'cancel' },
+            {
+              text: t('workspace.viewPlans') || 'プランを見る',
+              onPress: () => router.push('/paywall'),
+            },
+          ],
+        );
+        return;
+      }
+    } catch (e) {
+      console.warn('[CreateWorkspace] access check threw, allowing create as fallback', e);
+    }
 
     try {
       const { data: latestWs } = await supabase
@@ -49,10 +76,10 @@ export default function CreateWorkspaceScreen() {
         .maybeSingle() as { data: { area_titles: any } | null; error: any };
 
       const inheritedTitles = {
-        top_left: latestWs?.area_titles?.top_left || '左上エリア',
-        top_right: latestWs?.area_titles?.top_right || '右上エリア',
-        bottom_left: latestWs?.area_titles?.bottom_left || '左下エリア',
-        bottom_right: latestWs?.area_titles?.bottom_right || '右下エリア',
+        top_left: latestWs?.area_titles?.top_left || t('workspace.areaTopLeft'),
+        top_right: latestWs?.area_titles?.top_right || t('workspace.areaTopRight'),
+        bottom_left: latestWs?.area_titles?.bottom_left || t('workspace.areaBottomLeft'),
+        bottom_right: latestWs?.area_titles?.bottom_right || t('workspace.areaBottomRight'),
       };
 
       const { data, error } = await supabase
@@ -68,18 +95,18 @@ export default function CreateWorkspaceScreen() {
         .single() as { data: { id: string } | null; error: any };
 
       if (error) {
-        Alert.alert('エラー', `ワークスペースの作成に失敗しました: ${error.message}`);
+        Alert.alert(t('common.error'), `${t('workspace.errorCreateFailed')}: ${error.message}`);
         return;
       }
 
       if (!data) {
-        Alert.alert('エラー', 'データが返されませんでした');
+        Alert.alert(t('common.error'), t('workspace.errorReturnedNoData'));
         return;
       }
 
       router.replace(`/workspace/${data.id}`);
     } catch (error) {
-      Alert.alert('エラー', `ワークスペースの作成に失敗しました: ${String(error)}`);
+      Alert.alert(t('common.error'), `${t('workspace.errorCreateFailed')}: ${String(error)}`);
     }
   };
 
@@ -89,22 +116,22 @@ export default function CreateWorkspaceScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <ArrowLeft size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>新規ワークスペース</Text>
+        <Text style={styles.headerTitle}>{t('workspace.newWorkspaceTitle')}</Text>
         <View style={styles.placeholder} />
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.label}>ワークスペース名</Text>
+        <Text style={styles.label}>{t('workspace.workspaceName')}</Text>
         <TextInput
           style={styles.input}
           value={title}
           onChangeText={setTitle}
-          placeholder="例: 今週のタスク"
+          placeholder={t('workspace.workspaceNamePlaceholder')}
           placeholderTextColor="#999"
           autoFocus
         />
 
-        <Text style={styles.label}>日付</Text>
+        <Text style={styles.label}>{t('workspace.datePickerLabel')}</Text>
         <View style={styles.dateInputContainer}>
           <Calendar size={20} color="#666" style={styles.calendarIcon} />
           <TextInput
@@ -116,7 +143,7 @@ export default function CreateWorkspaceScreen() {
           />
         </View>
 
-        <Text style={styles.label}>タイプを選択</Text>
+        <Text style={styles.label}>{t('workspace.selectTypeLabel')}</Text>
         {workspaceTypes.map((item) => (
           <TouchableOpacity
             key={item.type}
@@ -142,7 +169,7 @@ export default function CreateWorkspaceScreen() {
         ))}
 
         <TouchableOpacity style={styles.createButton} onPress={handleCreate}>
-          <Text style={styles.createButtonText}>作成</Text>
+          <Text style={styles.createButtonText}>{t('workspace.createButton')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
