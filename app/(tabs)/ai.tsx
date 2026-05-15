@@ -70,7 +70,12 @@ export default function AIScreen() {
   const [inputFocused, setInputFocused] = useState(false);
   const [balanceYen, setBalanceYen] = useState<number | null>(null);
   const [accessReason, setAccessReason] = useState<
-    'active_subscription' | 'promo' | 'release_promo' | 'none' | null
+    | 'active_subscription'
+    | 'promo'
+    | 'release_promo'
+    | 'basic_plan_no_ai'
+    | 'none'
+    | null
   >(null);
   const [accessExpiresAt, setAccessExpiresAt] = useState<string | null>(null);
   const [historyVisible, setHistoryVisible] = useState(false);
@@ -117,7 +122,7 @@ export default function AIScreen() {
 
         if (!access.allowed && !hasGatedRef.current) {
           hasGatedRef.current = true;
-          router.push('/paywall');
+          router.push('/paywall?context=ai');
         }
       })();
 
@@ -307,7 +312,7 @@ export default function AIScreen() {
         ),
       );
       if (e?.code === 'subscription_required' || e?.code === 'insufficient_balance') {
-        setTimeout(() => router.push('/paywall'), 800);
+        setTimeout(() => router.push('/paywall?context=ai'), 800);
       }
     } finally {
       setMessages((prev) =>

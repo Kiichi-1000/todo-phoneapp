@@ -1,265 +1,1146 @@
-// Paywall route — AI / Goals 機能の課金壁。
+// Paywall route — AI / Goals 機能とプレミアム機能の課金壁。
 //
-// v1.2 から RevenueCat ダッシュボードで管理する組み込み Paywall コンポーネントに切替えました。
-// 旧バージョンの「カスタム React Native UI で価格カードを描く」方式は廃止。
+// ■ v1.3 — RevenueCatUI.Paywall（ダッシュボード製テンプレート）を廃止し、
+//   カスタム実装。さらにデザイン案に合わせてダークテーマへ全面刷新。
 //
-// なぜ切替えたか:
-// - RevenueCat ダッシュボードで AI Paywall Builder + 手作業で完成度の高い Paywall が作れる
-// - ローカライズ (日本語/英語) が RC 側で完結 (再ビルド不要で文言修正可能)
-// - A/B テストや差替えがコード変更なしで可能
-// - SDK が自動的に Offering の `current` から商品リストを取得 → 価格表示が常に正しい
+// なぜ RevenueCatUI.Paywall を廃止したか:
+//   旧実装はダッシュボードのテンプレートを表示するだけで、価格表示（日本ロケール
+//   なのにドル表示）・デザイン・機能説明がコードから一切直せなかった。
+//   ドル表示の正体: RC のパッケージは Test Store 商品（USD建て）と Apple 商品
+//   （JPY建て）を束ねており、テンプレートが環境次第で USD 側を表示してしまう。
+//   → カスタム実装では getOfferings() の pkg.product.priceString（StoreKit が
+//     ローカライズした文字列＝Apple 決済シートと同じ正本）を直接使うため、実機
+//     （本番/TestFlight）では確実に「¥」表示になる。
 //
-// 必要条件 (RC ダッシュボード側):
-// 1. `default` Offering が `is_current: true`
-// 2. その Offering に Paywall が attach されている (Web UI から手動で実施が必要)
-// 3. Offering に商品 (Package) が紐づいている
-// 4. SDK が初期化されている (= `ensureRevenueCat(userId)` が呼ばれている)
+// ■ ヒーロー背景について
+//   デザイン案は都市写真だが、写真アセットが未提供のため、ダークグラデーション＋
+//   ビル群シルエット（react-native-svg で描画）で都市夜景の雰囲気を出している。
+//   本物の写真を入れる場合は <HeroBackdrop> を ImageBackground に差し替えるだけ。
 //
-// 動作フロー:
-//   ユーザーが AI / Goals タップ
-//   → router.push('/paywall')
-//   → このスクリーンが modal で開く
-//   → ensureRevenueCat() で SDK init を待つ
-//   → ヘッダーに「閉じる」ボタンを明示表示 (RC template が X を出さなくても確実に脱出可能)
-//   → <RevenueCatUI.Paywall> が現在の Offering の Paywall を全画面表示
-//   → 購入完了 / 復元完了 → サブスク状態を即時同期 → /(tabs)/ai に遷移
-//   → 閉じる (ヘッダー閉じる / X タップ / swipe down / 購入せず終了) → /(tabs)/workspace に遷移
+// ■ 既知の制約（コードでは直せないもの）
+//   - Apple ネイティブ決済シートの桁区切り → iOS が端末の地域設定で描画。端末の
+//     「設定 > 一般 > 言語と地域 > 地域」を「日本」にすると ¥2,000 表記になる。
+//   - 開発ビルド（__DEV__）は RC Test Store 鍵を使うため Test Store 商品（USD建て
+//     登録）が出る。RC ダッシュボードで Test Store 商品を JPY 登録し直すか
+//     TestFlight ビルドで確認する。
 //
-// dismissal 経路 (= 全て workspace に集約):
-//   1. ヘッダー左の「閉じる」ボタン (常時表示)
-//   2. RC Paywall の X ボタン (displayCloseButton: true)
-//   3. iOS modal の下スワイプ (gestureEnabled: true)
-//   いずれも onDismiss / handleClose を経由して /(tabs)/workspace へ replace。
-//   元タブ (AI / Goals) に router.back() で戻すと useFocusEffect が再判定して
-//   paywall を再 push する無限ループになるため、必ず replace で切る。
+// ■ トライアル表記は意図的に「なし」
+//   ASC の6商品に introductory offer（無料トライアル）が設定されていないため、
+//   実体のないトライアル表記は入れない（Apple ガイドライン 2.3.2 / 3.1.2 対策）。
+//   トライアルを設定したら、このファイルにトライアル UI を追記する。
 //
-// 購入後の「即時解放」について:
-//   購入の正本反映は RevenueCat Webhook (Edge Function: revenuecat-webhook) が
-//   担うが、サーバ間通信のラグ (数秒〜十数秒) がある。その間 AI タブに戻ると
-//   checkAiAccess() がまだ「未加入」を返し課金壁が再表示される。
-//   → 購入/復元成功時に syncSubscriptionAfterPurchase() を呼び、クライアントが
-//     掴んでいる customerInfo を Edge Function (sync-subscription) に渡して
-//     user_subscriptions を即 active にしてからタブ遷移する。
+// ■ コンテキスト Paywall
+//   ?context=ai / ?context=workspace / （指定なし）でヒーロー文言と初期選択プランを
+//   出し分ける（SKU ごとに Paywall は分けない）。
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
-  ActivityIndicator,
   Text,
+  ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
+  Linking,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { X } from 'lucide-react-native';
-import RevenueCatUI from 'react-native-purchases-ui';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Svg, Rect } from 'react-native-svg';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
+import {
+  X,
+  Check,
+  Infinity as InfinityIcon,
+  Sparkles,
+  Crown,
+  Ban,
+  Lock,
+  RotateCcw,
+} from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   ensureRevenueCat,
   isRevenueCatConfigured,
+  getOfferings,
+  purchasePackage,
+  restorePurchases,
   syncSubscriptionAfterPurchase,
+  type PriceOption,
+  type Plan,
+  type Cycle,
 } from '@/lib/revenueCat';
+
+// ─────────────────────────────────────────────
+// カラー（ダークテーマ）
+// ─────────────────────────────────────────────
+const C = {
+  bg: '#0A0E1C',
+  card: '#141A30',
+  cardSelected: '#1A2240',
+  border: '#28324E',
+  borderSoft: '#1F2740',
+  divider: '#232C46',
+  ink: '#F1F5F9',
+  inkSoft: '#A3AEC6',
+  inkFaint: '#6B7795',
+  white: '#FFFFFF',
+  basic: '#34D399', // green
+  standard: '#60A5FA', // blue
+  pro: '#A78BFA', // purple
+  danger: '#F87171',
+  heroSubtle: 'rgba(255,255,255,0.78)',
+};
+
+// グラデーション（expo-linear-gradient の colors は最低2要素のタプル）
+const GRAD_HERO: readonly [string, string, string] = ['#0F1636', '#1B1A4A', '#2C1B4E'];
+const GRAD_CTA: readonly [string, string] = ['#6366F1', '#8B5CF6'];
+
+// ヒーロー下部のビル群シルエット（都市夜景の雰囲気）。写真が用意できたら不要。
+const SKYLINE: { x: number; w: number; h: number }[] = [
+  { x: 0, w: 34, h: 46 }, { x: 37, w: 22, h: 68 }, { x: 62, w: 30, h: 36 },
+  { x: 95, w: 26, h: 78 }, { x: 124, w: 40, h: 52 }, { x: 167, w: 24, h: 88 },
+  { x: 194, w: 34, h: 42 }, { x: 231, w: 28, h: 64 }, { x: 262, w: 42, h: 50 },
+  { x: 307, w: 24, h: 82 }, { x: 334, w: 34, h: 58 }, { x: 371, w: 29, h: 72 },
+];
+
+const LEGAL_HUB =
+  ((Constants.expoConfig?.extra as { legalDocsHubUrl?: string } | undefined)
+    ?.legalDocsHubUrl as string) ||
+  'https://todo-phoneapp.pages.dev/legal/tosche/';
+
+// ─────────────────────────────────────────────
+// プランのメタ情報
+// 機能コピーは RC 旧 Paywall + docs/v2-requirements.md +
+// monthly-token-grant（basic=0 / standard=¥400 / pro=¥700）に基づく実態ベース。
+// ─────────────────────────────────────────────
+type PlanMeta = {
+  accent: string;
+  gradient: readonly [string, string];
+  Icon: typeof Check;
+  nameJa: string;
+  nameEn: string;
+  /** カード内に出す短い機能ラベル（詳細は機能比較表で） */
+  featuresJa: string[];
+  featuresEn: string[];
+  /** AI 機能を含まないプランの注記（basic のみ） */
+  noteJa?: string;
+  noteEn?: string;
+};
+
+const PLAN_META: Record<Plan, PlanMeta> = {
+  basic: {
+    accent: C.basic,
+    gradient: ['#34D399', '#10B981'],
+    Icon: InfinityIcon,
+    nameJa: 'ToSche プラン',
+    nameEn: 'ToSche',
+    featuresJa: ['ワークスペースを無制限に作成', 'ToDo・スケジュール・統計の全機能'],
+    featuresEn: ['Unlimited workspace pages', 'All core features'],
+    noteJa: 'AI機能は含まれません',
+    noteEn: 'AI features not included',
+  },
+  standard: {
+    accent: C.standard,
+    gradient: ['#60A5FA', '#3B82F6'],
+    Icon: Sparkles,
+    nameJa: 'AI Standard',
+    nameEn: 'AI Standard',
+    featuresJa: [
+      'AIアシスタント・目標コーチ',
+      '毎月 400円分のAIクレジット',
+      'ToScheプランの全機能込み',
+    ],
+    featuresEn: [
+      'AI assistant & goal coach',
+      '¥400 of AI credits / month',
+      'Everything in the ToSche plan',
+    ],
+  },
+  pro: {
+    accent: C.pro,
+    gradient: ['#A78BFA', '#7C3AED'],
+    Icon: Crown,
+    nameJa: 'AI Pro',
+    nameEn: 'AI Pro',
+    featuresJa: [
+      'AIアシスタント・目標コーチ',
+      '毎月 700円分のAIクレジット',
+      'ToScheプランの全機能込み',
+    ],
+    featuresEn: [
+      'AI assistant & goal coach',
+      '¥700 of AI credits / month',
+      'Everything in the ToSche plan',
+    ],
+  },
+};
+
+const PLAN_ORDER: Plan[] = ['basic', 'standard', 'pro'];
+const RECOMMENDED_PLAN: Plan = 'pro'; // デザイン案に合わせ「おすすめ」は AI Pro
+
+// ─────────────────────────────────────────────
+// 機能比較表（実態ベース。優先サポート等の未確認機能は載せない）
+// ─────────────────────────────────────────────
+type CompareValue = boolean | string;
+const COMPARISON: {
+  labelJa: string;
+  labelEn: string;
+  values: Record<Plan, CompareValue>;
+}[] = [
+  {
+    labelJa: 'ワークスペース無制限',
+    labelEn: 'Unlimited workspace',
+    values: { basic: true, standard: true, pro: true },
+  },
+  {
+    labelJa: 'ToDo・予定・ルーティン・統計',
+    labelEn: 'To-dos, schedule, routines, stats',
+    values: { basic: true, standard: true, pro: true },
+  },
+  {
+    labelJa: 'すべての端末でデータ同期',
+    labelEn: 'Sync across all devices',
+    values: { basic: true, standard: true, pro: true },
+  },
+  {
+    labelJa: 'AIアシスタント・目標コーチ',
+    labelEn: 'AI assistant & goal coach',
+    values: { basic: false, standard: true, pro: true },
+  },
+  {
+    labelJa: '自然文でタスク・予定を操作',
+    labelEn: 'Plain-language task control',
+    values: { basic: false, standard: true, pro: true },
+  },
+  {
+    labelJa: '毎月のAIクレジット',
+    labelEn: 'Monthly AI credits',
+    values: { basic: '—', standard: '¥400分', pro: '¥700分' },
+  },
+];
+
+// ─────────────────────────────────────────────
+// 文言（ja / en）
+// ─────────────────────────────────────────────
+const STRINGS = {
+  ja: {
+    close: '閉じる',
+    eyebrow: 'ToSche Premium',
+    heroTitle: 'ToSche を、もっと自由に。',
+    heroSubtitle: 'あなたの時間設計を、思いどおりに。プランはいつでも変更・解約できます。',
+    heroAiTitle: 'あなたの理想の1日を、AIがサポート。',
+    heroAiSubtitle:
+      '革新的なAIエージェントが、タスク管理から目標設定まですべてをサポートします。',
+    heroWorkspaceTitle: 'ワークスペースを、無制限に。',
+    heroWorkspaceSubtitle: '100ページの無料枠を解除して、思考を止めずに書き続ける。',
+    monthlyKind: '月額プラン',
+    yearlyKind: '年額プラン',
+    yearlyOff: (pct: number) => `${pct}% OFF`,
+    perMonth: '/月',
+    perYear: '/年',
+    perMonthEq: (price: string) => `月あたり ${price}`,
+    cancelAnytime: 'いつでも解約できます',
+    recommended: 'おすすめ',
+    compareTitle: '機能比較',
+    footerCancel: 'いつでもキャンセル可能',
+    footerSecure: '安全な決済',
+    ctaStart: (plan: string, cycle: string) => `${plan}（${cycle}）ではじめる`,
+    ctaProcessing: '処理中…',
+    restore: '購入を復元',
+    restoring: '復元中…',
+    legal:
+      '購入を確定すると自動更新サブスクリプションが開始されます。期間（月額は1か月／年額は1年）終了の24時間以上前に解約しない限り自動的に更新され、同額が請求されます。解約は App Store の「サブスクリプション」からいつでも行えます。',
+    terms: '利用規約',
+    privacy: 'プライバシーポリシー',
+    tokushoho: '特定商取引法に基づく表記',
+    errorTitle: '読み込みに失敗しました',
+    errorBody: 'プラン情報を取得できませんでした。通信環境を確認して再試行してください。',
+    retry: '再試行',
+    back: '戻る',
+    purchaseFailed: '購入を完了できませんでした。',
+    restoreFailed: '復元できる購入が見つかりませんでした。',
+    notConfigured: '購入機能を準備中です。アプリを最新版に更新してからお試しください。',
+  },
+  en: {
+    close: 'Close',
+    eyebrow: 'ToSche Premium',
+    heroTitle: 'Make ToSche truly yours.',
+    heroSubtitle: 'Design your time, your way. Change or cancel anytime.',
+    heroAiTitle: 'Let AI support your ideal day.',
+    heroAiSubtitle:
+      'An AI agent that supports everything — from task management to goal setting.',
+    heroWorkspaceTitle: 'Unlimited workspace pages.',
+    heroWorkspaceSubtitle: 'Remove the 100-page free cap and keep your ideas flowing.',
+    monthlyKind: 'Monthly',
+    yearlyKind: 'Yearly',
+    yearlyOff: (pct: number) => `${pct}% OFF`,
+    perMonth: '/mo',
+    perYear: '/yr',
+    perMonthEq: (price: string) => `${price} / month`,
+    cancelAnytime: 'Cancel anytime',
+    recommended: 'Recommended',
+    compareTitle: 'Compare plans',
+    footerCancel: 'Cancel anytime',
+    footerSecure: 'Secure payment',
+    ctaStart: (plan: string, cycle: string) => `Start ${plan} (${cycle})`,
+    ctaProcessing: 'Processing…',
+    restore: 'Restore purchases',
+    restoring: 'Restoring…',
+    legal:
+      'Confirming your purchase starts an auto-renewing subscription. It renews automatically — and you are charged the same amount — unless cancelled at least 24 hours before the end of the period (1 month for monthly, 1 year for yearly). Manage or cancel anytime under Subscriptions in the App Store.',
+    terms: 'Terms of Use',
+    privacy: 'Privacy Policy',
+    tokushoho: 'Commercial Transactions Act notice',
+    errorTitle: 'Failed to load',
+    errorBody: 'We could not load the plans. Check your connection and try again.',
+    retry: 'Retry',
+    back: 'Back',
+    purchaseFailed: 'The purchase could not be completed.',
+    restoreFailed: 'No restorable purchases were found.',
+    notConfigured: 'Purchases are being set up. Please update the app and try again.',
+  },
+};
+
+// ─────────────────────────────────────────────
+// 価格オプションを plan × cycle で引けるようにグルーピング
+// ─────────────────────────────────────────────
+type GroupedOfferings = Record<Plan, Partial<Record<Cycle, PriceOption>>>;
+
+function groupOfferings(options: PriceOption[]): GroupedOfferings {
+  const grouped: GroupedOfferings = { basic: {}, standard: {}, pro: {} };
+  for (const opt of options) {
+    if (grouped[opt.plan]) grouped[opt.plan][opt.cycle] = opt;
+  }
+  return grouped;
+}
+
+/** 月額×12 と年額の差から「年額の割引率（%）」を算出。出せないときは 0。 */
+function yearlySavingsPct(group: Partial<Record<Cycle, PriceOption>>): number {
+  const m = group.monthly;
+  const y = group.yearly;
+  if (!m || !y || m.priceMicros <= 0 || y.priceMicros <= 0) return 0;
+  const pct = Math.round((1 - y.priceMicros / (m.priceMicros * 12)) * 100);
+  return pct > 0 ? pct : 0;
+}
+
+/** 年額の「月あたり」価格文字列（¥ローカライズ簡易版）。 */
+function perMonthString(yearly: PriceOption | undefined): string {
+  if (!yearly || yearly.priceMicros <= 0) return '';
+  const yen = Math.round(yearly.priceMicros / 12 / 1_000_000);
+  return `¥${yen.toLocaleString('ja-JP')}`;
+}
+
+/** 触覚フィードバック（本質的でないので失敗は無視）。 */
+function fireHaptic(kind: 'select' | 'tap') {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+  try {
+    if (kind === 'select') {
+      Haptics.selectionAsync().catch(() => {});
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
+  } catch {
+    // no-op
+  }
+}
 
 export default function PaywallScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ context?: string }>();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { lang } = useLanguage();
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const t = lang === 'ja' ? STRINGS.ja : STRINGS.en;
 
-  // 二重発火防止フラグ。 X タップ / swipe / ヘッダー閉じる が同時にトリガーされたとき、
-  // router.replace を 2 回呼ぶと navigation state が破綻するので、最初の dismiss だけ
-  // 処理する。
-  const dismissingRef = useRef(false);
+  // エントリーポイント別のコンテキスト（"contextual paywall" パターン）。
+  const entryContext =
+    params.context === 'ai' || params.context === 'workspace'
+      ? params.context
+      : 'default';
+  const heroTitle =
+    entryContext === 'ai'
+      ? t.heroAiTitle
+      : entryContext === 'workspace'
+        ? t.heroWorkspaceTitle
+        : t.heroTitle;
+  const heroSubtitle =
+    entryContext === 'ai'
+      ? t.heroAiSubtitle
+      : entryContext === 'workspace'
+        ? t.heroWorkspaceSubtitle
+        : t.heroSubtitle;
+  const initialPlan: Plan = entryContext === 'workspace' ? 'basic' : RECOMMENDED_PLAN;
 
-  // SDK 初期化を待つ。configure が未完で <Paywall> をレンダすると getOfferings が
-  // 空を返して「商品が見つかりません」エラーが出るため、必ず ready=true 待ち。
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!isRevenueCatConfigured()) {
-          // API キー未設定 (= stub モード) のとき。開発用ビルドのまま運用してると起きる。
-          if (!cancelled) {
-            setError(
-              lang === 'ja'
-                ? 'RevenueCat が未設定です。アプリの再ビルドが必要かもしれません。'
-                : 'RevenueCat is not configured. The app may need to be rebuilt.',
-            );
-            setReady(true);
-          }
-          return;
-        }
-        await ensureRevenueCat(user?.id);
-        if (!cancelled) setReady(true);
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message ?? String(e));
-          setReady(true);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, lang]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [offerings, setOfferings] = useState<GroupedOfferings | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<Plan>(initialPlan);
+  const [selectedCycle, setSelectedCycle] = useState<Cycle>('monthly');
+  const [purchasing, setPurchasing] = useState(false);
+  const [restoringState, setRestoringState] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // 課金せずに閉じた場合の遷移先。
-  // router.back() だと paywall を出した元タブ (AI / Goals) に戻ってしまい、
-  // 元タブの useFocusEffect が再判定 → 再度 paywall push の無限ループになる。
-  // → workspace タブに replace してループを断つ。
-  const handleClose = () => {
-    if (dismissingRef.current) return;
-    dismissingRef.current = true;
-    router.replace('/(tabs)/workspace');
-  };
+  const leavingRef = useRef(false);
 
-  // 購入 / 復元の成功時: まずサブスク状態を即時同期してから AI タブへ遷移する。
-  // 同期に失敗しても (= sync が false / 例外) AI タブには進める。その場合は
-  // RevenueCat Webhook が後追いで user_subscriptions を確定し、AI タブの
-  // useFocusEffect 再判定で最終的に解放される。
-  // storeTransaction.productIdentifier が取れれば product_id を sync に渡す。
-  const handlePurchaseOrRestore = async (info: {
-    customerInfo: unknown;
-    storeTransaction?: { productIdentifier?: string } | null;
-  }) => {
-    if (dismissingRef.current) return;
-    dismissingRef.current = true;
+  // ── プラン情報の読み込み ──────────────────────
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
     try {
-      const productId = info?.storeTransaction?.productIdentifier;
-      await syncSubscriptionAfterPurchase(info?.customerInfo, productId);
+      if (isRevenueCatConfigured()) {
+        await ensureRevenueCat(user?.id);
+      }
+      const options = await getOfferings();
+      if (!options || options.length === 0) {
+        setLoadError(true);
+        return;
+      }
+      setOfferings(groupOfferings(options));
     } catch (e) {
-      if (__DEV__) console.warn('[Paywall] sync after purchase failed', e);
-      // 同期失敗は致命的でない — Webhook が後で補正する。遷移は続行。
+      if (__DEV__) console.warn('[Paywall] load failed', e);
+      setLoadError(true);
+    } finally {
+      setLoading(false);
     }
-    router.replace('/(tabs)/ai');
-  };
+  }, [user?.id]);
 
-  // 共通ヘッダー: 左に「閉じる」ボタンを必ず表示。RC Paywall の template が
-  // X を出さない場合の救済線。loading / error / paywall 表示中いずれの状態でも見える。
-  const renderHeader = () => (
-    <View style={styles.header}>
-      <TouchableOpacity
-        onPress={handleClose}
-        style={styles.closeButton}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel={lang === 'ja' ? '閉じる' : 'Close'}
-        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      >
-        <X size={22} color="#0F172A" strokeWidth={2.3} />
-        <Text style={styles.closeText}>
-          {lang === 'ja' ? '閉じる' : 'Close'}
-        </Text>
-      </TouchableOpacity>
-    </View>
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // ── 閉じる（購入せず終了）→ workspace へ ────────
+  const handleClose = useCallback(() => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    router.replace('/(tabs)/workspace');
+  }, [router]);
+
+  // ── 購入成功 → 即時同期 → AI タブへ ────────────
+  const goToAiAfterPurchase = useCallback(
+    async (customerInfo: unknown, productId?: string) => {
+      if (leavingRef.current) return;
+      leavingRef.current = true;
+      try {
+        await syncSubscriptionAfterPurchase(customerInfo, productId);
+      } catch (e) {
+        if (__DEV__) console.warn('[Paywall] sync after purchase failed', e);
+      }
+      router.replace('/(tabs)/ai');
+    },
+    [router],
   );
 
-  if (!ready) {
+  // ── プラン購入 ───────────────────────────────
+  const handlePurchase = useCallback(async () => {
+    if (purchasing || restoringState) return;
+    const opt = offerings?.[selectedPlan]?.[selectedCycle];
+    if (!opt) return;
+
+    if (!isRevenueCatConfigured()) {
+      setActionError(t.notConfigured);
+      return;
+    }
+
+    fireHaptic('tap');
+    setActionError(null);
+    setPurchasing(true);
+    try {
+      const result = await purchasePackage(opt.identifier);
+      if (result.success) {
+        await goToAiAfterPurchase(result.customerInfo, opt.identifier);
+        return;
+      }
+      if (result.cancelled) return;
+      if (__DEV__) console.warn('[Paywall] purchase error', result.error);
+      setActionError(t.purchaseFailed);
+    } catch (e) {
+      if (__DEV__) console.warn('[Paywall] purchase threw', e);
+      setActionError(t.purchaseFailed);
+    } finally {
+      setPurchasing(false);
+    }
+  }, [
+    purchasing,
+    restoringState,
+    offerings,
+    selectedPlan,
+    selectedCycle,
+    t,
+    goToAiAfterPurchase,
+  ]);
+
+  // ── 購入の復元 ───────────────────────────────
+  const handleRestore = useCallback(async () => {
+    if (purchasing || restoringState) return;
+    if (!isRevenueCatConfigured()) {
+      setActionError(t.notConfigured);
+      return;
+    }
+    setActionError(null);
+    setRestoringState(true);
+    try {
+      const result = await restorePurchases();
+      const restored =
+        result.success &&
+        (result.customerInfoSnapshot?.activeEntitlements?.length ?? 0) > 0;
+      if (restored) {
+        await goToAiAfterPurchase(result.customerInfo);
+        return;
+      }
+      setActionError(t.restoreFailed);
+    } catch (e) {
+      if (__DEV__) console.warn('[Paywall] restore threw', e);
+      setActionError(t.restoreFailed);
+    } finally {
+      setRestoringState(false);
+    }
+  }, [purchasing, restoringState, t, goToAiAfterPurchase]);
+
+  const openLegal = useCallback((file: string) => {
+    void Linking.openURL(LEGAL_HUB + file);
+  }, []);
+
+  const selectCard = useCallback((plan: Plan, cycle: Cycle) => {
+    setSelectedPlan(plan);
+    setSelectedCycle(cycle);
+    fireHaptic('select');
+  }, []);
+
+  // ── 閉じるボタン（右上に固定） ─────────────────
+  const renderCloseButton = () => (
+    <TouchableOpacity
+      onPress={handleClose}
+      style={[styles.closeButton, { top: insets.top + 6 }]}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={t.close}
+      hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+    >
+      <X size={20} color={C.white} strokeWidth={2.6} />
+    </TouchableOpacity>
+  );
+
+  // ── ローディング ─────────────────────────────
+  if (loading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        {renderHeader()}
+      <View style={styles.container}>
+        {renderCloseButton()}
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#0F172A" />
+          <ActivityIndicator size="large" color={C.standard} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
-  if (error) {
+  // ── 読み込みエラー ───────────────────────────
+  if (loadError || !offerings) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        {renderHeader()}
+      <View style={styles.container}>
+        {renderCloseButton()}
         <View style={styles.center}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={handleClose} style={styles.errorButton} activeOpacity={0.7}>
-            <Text style={styles.errorButtonText}>
-              {lang === 'ja' ? '戻る' : 'Back'}
-            </Text>
+          <Text style={styles.errorTitle}>{t.errorTitle}</Text>
+          <Text style={styles.errorBody}>{t.errorBody}</Text>
+          <TouchableOpacity onPress={() => void load()} activeOpacity={0.85} style={styles.retryWrap}>
+            <LinearGradient
+              colors={GRAD_CTA}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.retryButton}
+            >
+              <Text style={styles.retryButtonText}>{t.retry}</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleClose} style={styles.linkButton} activeOpacity={0.7}>
+            <Text style={styles.linkButtonText}>{t.back}</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
+  // ── 本体 ─────────────────────────────────────
+  const selectedOpt = offerings[selectedPlan]?.[selectedCycle];
+  const selectedName =
+    lang === 'ja' ? PLAN_META[selectedPlan].nameJa : PLAN_META[selectedPlan].nameEn;
+  const selectedCycleLabel =
+    selectedCycle === 'monthly' ? t.monthlyKind : t.yearlyKind;
+  const busy = purchasing || restoringState;
+
+  // 月額カード
+  const renderMonthlyCard = (plan: Plan, index: number) => {
+    const meta = PLAN_META[plan];
+    const opt = offerings[plan]?.monthly;
+    const isSelected = selectedPlan === plan && selectedCycle === 'monthly';
+    const isRecommended = plan === RECOMMENDED_PLAN;
+    const features = lang === 'ja' ? meta.featuresJa : meta.featuresEn;
+    const note = lang === 'ja' ? meta.noteJa : meta.noteEn;
+
+    return (
+      <Animated.View
+        key={`m-${plan}`}
+        entering={FadeInDown.duration(420).delay(160 + index * 80)}
+        style={styles.cardCol}
+      >
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => selectCard(plan, 'monthly')}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isSelected }}
+          style={[
+            styles.planCard,
+            { borderColor: isSelected ? meta.accent : C.border },
+            isSelected && { backgroundColor: C.cardSelected, shadowColor: meta.accent },
+            isSelected && styles.planCardSelected,
+          ]}
+        >
+          {isRecommended && (
+            <View style={[styles.recoBadge, { backgroundColor: meta.accent }]}>
+              <Text style={styles.recoBadgeText}>{t.recommended}</Text>
+            </View>
+          )}
+          <View style={styles.planCardTopRow}>
+            <Text style={[styles.planCardName, { color: meta.accent }]} numberOfLines={1}>
+              {lang === 'ja' ? meta.nameJa : meta.nameEn}
+            </Text>
+            {isSelected ? (
+              <View style={[styles.radioOn, { backgroundColor: meta.accent }]}>
+                <Check size={11} color={C.bg} strokeWidth={3.6} />
+              </View>
+            ) : (
+              <View style={styles.radioOff} />
+            )}
+          </View>
+          <Text style={styles.planCardKind}>{t.monthlyKind}</Text>
+          <View style={styles.priceRow}>
+            <Text style={styles.priceValue}>{opt ? opt.priceString : '—'}</Text>
+            <Text style={styles.pricePer}>{t.perMonth}</Text>
+          </View>
+          <Text style={styles.cancelNote}>{t.cancelAnytime}</Text>
+          <View style={styles.cardDivider} />
+          {features.map((f) => (
+            <View key={f} style={styles.featureRow}>
+              <View style={[styles.featureDot, { backgroundColor: meta.accent }]}>
+                <Check size={8} color={C.bg} strokeWidth={4} />
+              </View>
+              <Text style={styles.featureText}>{f}</Text>
+            </View>
+          ))}
+          {note && (
+            <View style={styles.featureRow}>
+              <View style={styles.featureDotOff}>
+                <Ban size={9} color={C.inkFaint} strokeWidth={2.6} />
+              </View>
+              <Text style={styles.featureTextOff}>{note}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
+
+  // 年額カード（コンパクト）
+  const renderYearlyCard = (plan: Plan, index: number) => {
+    const meta = PLAN_META[plan];
+    const group = offerings[plan];
+    const opt = group?.yearly;
+    const isSelected = selectedPlan === plan && selectedCycle === 'yearly';
+    const off = yearlySavingsPct(group ?? {});
+    const perMo = perMonthString(opt);
+
+    return (
+      <Animated.View
+        key={`y-${plan}`}
+        entering={FadeInDown.duration(420).delay(420 + index * 80)}
+        style={styles.cardCol}
+      >
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => selectCard(plan, 'yearly')}
+          accessibilityRole="button"
+          accessibilityState={{ selected: isSelected }}
+          style={[
+            styles.yearCard,
+            { borderColor: isSelected ? meta.accent : C.borderSoft },
+            isSelected && { backgroundColor: C.cardSelected, shadowColor: meta.accent },
+            isSelected && styles.planCardSelected,
+          ]}
+        >
+          <View style={styles.planCardTopRow}>
+            <Text style={[styles.yearKind, { color: meta.accent }]} numberOfLines={1}>
+              {t.yearlyKind}
+              {off > 0 ? `（${t.yearlyOff(off)}）` : ''}
+            </Text>
+            {isSelected ? (
+              <View style={[styles.radioOn, { backgroundColor: meta.accent }]}>
+                <Check size={11} color={C.bg} strokeWidth={3.6} />
+              </View>
+            ) : (
+              <View style={styles.radioOff} />
+            )}
+          </View>
+          <View style={styles.priceRow}>
+            <Text style={styles.priceValueSm}>{opt ? opt.priceString : '—'}</Text>
+            <Text style={styles.pricePer}>{t.perYear}</Text>
+          </View>
+          {perMo !== '' && (
+            <View style={[styles.perMoPill, { backgroundColor: meta.accent + '22' }]}>
+              <Text style={[styles.perMoText, { color: meta.accent }]}>
+                {t.perMonthEq(perMo)}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
+
+  // 機能比較表のセル
+  const renderCompareCell = (value: CompareValue, plan: Plan) => {
+    const meta = PLAN_META[plan];
+    if (value === true) {
+      return (
+        <View style={styles.compareCell}>
+          <Check size={16} color={meta.accent} strokeWidth={3} />
+        </View>
+      );
+    }
+    if (value === false) {
+      return (
+        <View style={styles.compareCell}>
+          <X size={14} color={C.inkFaint} strokeWidth={2.6} />
+        </View>
+      );
+    }
+    return (
+      <View style={styles.compareCell}>
+        <Text style={[styles.compareCellText, { color: meta.accent }]}>{value}</Text>
+      </View>
+    );
+  };
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {renderHeader()}
-      <RevenueCatUI.Paywall
-        style={styles.paywall}
-        options={{
-          // RC template 内蔵の X ボタンも併用。表示するかは template 次第だが、
-          // 出るならユーザーの選択肢が増えるので有効化したまま。
-          displayCloseButton: true,
-        }}
-        onPurchaseCompleted={({ customerInfo, storeTransaction }) => {
-          void handlePurchaseOrRestore({ customerInfo, storeTransaction });
-        }}
-        onRestoreCompleted={({ customerInfo }) => {
-          void handlePurchaseOrRestore({ customerInfo });
-        }}
-        onPurchaseError={({ error: e }) => {
-          if (__DEV__) console.warn('[Paywall] purchase error', e);
-        }}
-        onDismiss={() => {
-          handleClose();
-        }}
-      />
-    </SafeAreaView>
+    <View style={styles.container}>
+      {renderCloseButton()}
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── ヒーロー（ダークグラデーション + ビル群シルエット） ── */}
+        <Animated.View entering={FadeIn.duration(450)}>
+          <LinearGradient
+            colors={GRAD_HERO}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.hero, { paddingTop: insets.top + 56 }]}
+          >
+            {/* 都市夜景の雰囲気。本物の写真ができたらこの Svg を ImageBackground に差し替え。 */}
+            <View style={styles.skylineWrap} pointerEvents="none">
+              <Svg
+                width="100%"
+                height={96}
+                viewBox="0 0 400 96"
+                preserveAspectRatio="xMidYMax slice"
+              >
+                {SKYLINE.map((b, i) => (
+                  <Rect
+                    key={i}
+                    x={b.x}
+                    y={96 - b.h}
+                    width={b.w}
+                    height={b.h}
+                    rx={1.5}
+                    fill="#05070F"
+                    opacity={0.55}
+                  />
+                ))}
+              </Svg>
+            </View>
+
+            <View style={styles.eyebrowChip}>
+              <Sparkles size={13} color={C.white} strokeWidth={2.6} />
+              <Text style={styles.eyebrowText}>{t.eyebrow}</Text>
+            </View>
+            <Text style={styles.heroTitle}>{heroTitle}</Text>
+            <Text style={styles.heroSubtitle}>{heroSubtitle}</Text>
+          </LinearGradient>
+        </Animated.View>
+
+        {/* ── 月額プラン（3カード） ── */}
+        <View style={styles.cardRow}>
+          {PLAN_ORDER.map((plan, i) => renderMonthlyCard(plan, i))}
+        </View>
+
+        {/* ── 年額プラン（3カード・コンパクト） ── */}
+        <View style={[styles.cardRow, styles.cardRowTight]}>
+          {PLAN_ORDER.map((plan, i) => renderYearlyCard(plan, i))}
+        </View>
+
+        {/* ── 機能比較表 ── */}
+        <Animated.View entering={FadeInDown.duration(420).delay(560)} style={styles.compareCard}>
+          <Text style={styles.compareTitle}>{t.compareTitle}</Text>
+          <View style={styles.compareHeaderRow}>
+            <View style={styles.compareLabelCell} />
+            {PLAN_ORDER.map((plan) => (
+              <View key={plan} style={styles.compareCell}>
+                <Text style={[styles.compareHeaderText, { color: PLAN_META[plan].accent }]}>
+                  {lang === 'ja' ? PLAN_META[plan].nameJa.replace('ToSche ', '') : PLAN_META[plan].nameEn}
+                </Text>
+              </View>
+            ))}
+          </View>
+          {COMPARISON.map((row, idx) => (
+            <View
+              key={row.labelJa}
+              style={[styles.compareRow, idx === COMPARISON.length - 1 && styles.compareRowLast]}
+            >
+              <View style={styles.compareLabelCell}>
+                <Text style={styles.compareLabelText}>
+                  {lang === 'ja' ? row.labelJa : row.labelEn}
+                </Text>
+              </View>
+              {PLAN_ORDER.map((plan) => (
+                <View key={plan}>{renderCompareCell(row.values[plan], plan)}</View>
+              ))}
+            </View>
+          ))}
+        </Animated.View>
+
+        {/* ── フッター: 安心バッジ + 法的開示 + リンク ── */}
+        <View style={styles.footer}>
+          <View style={styles.assuranceRow}>
+            <View style={styles.assuranceItem}>
+              <RotateCcw size={14} color={C.inkSoft} strokeWidth={2.4} />
+              <Text style={styles.assuranceText}>{t.footerCancel}</Text>
+            </View>
+            <View style={styles.assuranceDivider} />
+            <View style={styles.assuranceItem}>
+              <Lock size={14} color={C.inkSoft} strokeWidth={2.4} />
+              <Text style={styles.assuranceText}>{t.footerSecure}</Text>
+            </View>
+          </View>
+          <Text style={styles.legalText}>{t.legal}</Text>
+          <View style={styles.legalLinks}>
+            <TouchableOpacity onPress={() => openLegal('terms.html')} activeOpacity={0.7}>
+              <Text style={styles.legalLink}>{t.terms}</Text>
+            </TouchableOpacity>
+            <Text style={styles.legalDot}>・</Text>
+            <TouchableOpacity onPress={() => openLegal('privacy.html')} activeOpacity={0.7}>
+              <Text style={styles.legalLink}>{t.privacy}</Text>
+            </TouchableOpacity>
+            <Text style={styles.legalDot}>・</Text>
+            <TouchableOpacity onPress={() => openLegal('tokushoho.html')} activeOpacity={0.7}>
+              <Text style={styles.legalLink}>{t.tokushoho}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* ── 下部固定バー — グラデーション CTA + 復元 ── */}
+      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 14 }]}>
+        {actionError && <Text style={styles.actionError}>{actionError}</Text>}
+        <TouchableOpacity
+          onPress={handlePurchase}
+          activeOpacity={0.9}
+          disabled={busy}
+          accessibilityRole="button"
+          style={[styles.ctaWrap, busy && styles.ctaWrapDisabled]}
+        >
+          <LinearGradient
+            colors={GRAD_CTA}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.cta}
+          >
+            {purchasing ? (
+              <ActivityIndicator size="small" color={C.white} />
+            ) : (
+              <Text style={styles.ctaText}>
+                {selectedOpt
+                  ? t.ctaStart(selectedName, selectedCycleLabel)
+                  : t.ctaProcessing}
+              </Text>
+            )}
+          </LinearGradient>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleRestore}
+          disabled={busy}
+          activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={styles.restoreWrap}
+        >
+          <Text style={[styles.restoreText, busy && styles.restoreTextDisabled]}>
+            {restoringState ? t.restoring : t.restore}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FAFBFF' },
-  paywall: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#FAFBFF',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E2E8F0',
-  },
+  container: { flex: 1, backgroundColor: C.bg },
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: 24 },
+
+  // 閉じるボタン（右上に固定）
   closeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  closeText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-  center: {
-    flex: 1,
+    position: 'absolute',
+    right: 16,
+    zIndex: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
-    padding: 24,
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
-  errorText: {
+
+  // ローディング / エラー
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  errorTitle: { fontSize: 18, fontWeight: '800', color: C.ink, marginBottom: 8 },
+  errorBody: {
     fontSize: 14,
-    color: '#475569',
+    color: C.inkSoft,
     textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 22,
+  },
+  retryWrap: { borderRadius: 13, overflow: 'hidden' },
+  retryButton: { paddingVertical: 13, paddingHorizontal: 36 },
+  retryButtonText: { color: C.white, fontSize: 15, fontWeight: '800' },
+  linkButton: { marginTop: 14, paddingVertical: 8, paddingHorizontal: 16 },
+  linkButtonText: { color: C.inkSoft, fontSize: 14, fontWeight: '600' },
+
+  // ヒーロー
+  hero: {
+    paddingHorizontal: 22,
+    paddingBottom: 40,
+    overflow: 'hidden',
+  },
+  skylineWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 96,
+  },
+  eyebrowChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    marginBottom: 14,
+  },
+  eyebrowText: { color: C.white, fontSize: 11.5, fontWeight: '800', letterSpacing: 0.6 },
+  heroTitle: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: C.white,
+    letterSpacing: -0.4,
+    lineHeight: 35,
+  },
+  heroSubtitle: {
+    fontSize: 13.5,
+    color: C.heroSubtle,
+    lineHeight: 21,
+    marginTop: 9,
+    maxWidth: '94%',
+  },
+
+  // カード行
+  cardRow: {
+    flexDirection: 'row',
+    gap: 9,
+    paddingHorizontal: 14,
+    marginTop: 16,
+    alignItems: 'stretch',
+  },
+  cardRowTight: { marginTop: 10 },
+  cardCol: { flex: 1 },
+
+  // 月額プランカード
+  planCard: {
+    flex: 1,
+    backgroundColor: C.card,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 12,
+  },
+  planCardSelected: {
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  recoBadge: {
+    position: 'absolute',
+    top: -9,
+    right: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  recoBadgeText: { color: C.bg, fontSize: 9.5, fontWeight: '900', letterSpacing: 0.2 },
+  planCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  planCardName: { flex: 1, fontSize: 12.5, fontWeight: '900', letterSpacing: 0.2 },
+  radioOn: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioOff: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: C.border,
+  },
+  planCardKind: { fontSize: 11, color: C.inkSoft, fontWeight: '600', marginTop: 6 },
+  priceRow: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 3 },
+  priceValue: { fontSize: 21, fontWeight: '900', color: C.ink, letterSpacing: -0.5 },
+  priceValueSm: { fontSize: 17, fontWeight: '900', color: C.ink, letterSpacing: -0.4 },
+  pricePer: { fontSize: 11, fontWeight: '700', color: C.inkFaint, marginLeft: 2, marginBottom: 2 },
+  cancelNote: { fontSize: 9.5, color: C.inkFaint, marginTop: 3 },
+  cardDivider: {
+    height: 1,
+    backgroundColor: C.divider,
+    marginVertical: 10,
+  },
+  featureRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 7 },
+  featureDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  featureDotOff: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+    backgroundColor: C.borderSoft,
+  },
+  featureText: { flex: 1, fontSize: 10.5, color: C.inkSoft, lineHeight: 15 },
+  featureTextOff: { flex: 1, fontSize: 10.5, color: C.inkFaint, lineHeight: 15 },
+
+  // 年額プランカード
+  yearCard: {
+    flex: 1,
+    backgroundColor: C.card,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 12,
+  },
+  yearKind: { flex: 1, fontSize: 10, fontWeight: '800' },
+  perMoPill: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  perMoText: { fontSize: 10.5, fontWeight: '800' },
+
+  // 機能比較表
+  compareCard: {
+    marginHorizontal: 14,
+    marginTop: 20,
+    backgroundColor: C.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.borderSoft,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  compareTitle: { fontSize: 15, fontWeight: '800', color: C.ink, marginBottom: 10 },
+  compareHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: C.divider,
+  },
+  compareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: C.divider,
+  },
+  compareRowLast: { borderBottomWidth: 0, paddingBottom: 2 },
+  compareLabelCell: { flex: 1, paddingRight: 8 },
+  compareLabelText: { fontSize: 11.5, color: C.inkSoft, lineHeight: 16 },
+  compareCell: { width: 58, alignItems: 'center', justifyContent: 'center' },
+  compareHeaderText: { fontSize: 11, fontWeight: '900', letterSpacing: 0.2 },
+  compareCellText: { fontSize: 11, fontWeight: '800' },
+
+  // フッター
+  footer: { marginTop: 22, paddingHorizontal: 22 },
+  assuranceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
     marginBottom: 16,
-    lineHeight: 20,
   },
-  errorButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-    backgroundColor: '#0F172A',
+  assuranceItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  assuranceText: { fontSize: 11.5, color: C.inkSoft, fontWeight: '600' },
+  assuranceDivider: { width: 1, height: 14, backgroundColor: C.border },
+  legalText: { fontSize: 10.5, color: C.inkFaint, lineHeight: 16, textAlign: 'center' },
+  legalLinks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
   },
-  errorButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#fff',
+  legalLink: { fontSize: 11.5, color: C.standard, fontWeight: '600' },
+  legalDot: { fontSize: 11, color: C.inkFaint, marginHorizontal: 6 },
+
+  // 下部固定バー
+  bottomBar: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    backgroundColor: C.card,
+    borderTopWidth: 1,
+    borderTopColor: C.borderSoft,
   },
+  actionError: { fontSize: 13, color: C.danger, textAlign: 'center', marginBottom: 10 },
+  ctaWrap: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: C.standard,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 7,
+  },
+  ctaWrapDisabled: { opacity: 0.55 },
+  cta: { paddingVertical: 17, alignItems: 'center', justifyContent: 'center' },
+  ctaText: { color: C.white, fontSize: 16, fontWeight: '900', letterSpacing: 0.2 },
+  restoreWrap: { alignItems: 'center', marginTop: 12 },
+  restoreText: { fontSize: 13, color: C.inkSoft, fontWeight: '700' },
+  restoreTextDisabled: { opacity: 0.5 },
 });

@@ -134,7 +134,16 @@ export type RoutineSkip = {
 
 export type SubscriptionStatus =
   | 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired' | 'promo' | 'none';
-export type SubscriptionPlan = 'ai_light' | 'ai_standard' | 'promo';
+// ASC 実商品の3階層 (basic/standard/pro)。
+// 旧値 (ai_light/ai_standard/promo) は後方互換のため温存
+// (DB migration 20260515 の plan CHECK 制約と一致させること)。
+export type SubscriptionPlan =
+  | 'basic'
+  | 'standard'
+  | 'pro'
+  | 'ai_light'
+  | 'ai_standard'
+  | 'promo';
 export type BillingCycle = 'monthly' | 'half_year' | 'yearly';
 export type Platform = 'ios' | 'android' | 'web';
 export type AIProvider = 'anthropic' | 'openai';

@@ -3,7 +3,13 @@ import { Sparkles, Gift, Zap } from 'lucide-react-native';
 
 interface Props {
   balanceYen: number | null;
-  accessReason: 'active_subscription' | 'promo' | 'release_promo' | 'none' | null;
+  accessReason:
+    | 'active_subscription'
+    | 'promo'
+    | 'release_promo'
+    | 'basic_plan_no_ai'
+    | 'none'
+    | null;
   expiresAt?: string | null;
 }
 

@@ -130,6 +130,95 @@ export async function checkAiAccess(userId: string): Promise<AccessResult> {
 }
 
 // ----------------------------------------------------------------------------
+// 「有料機能」全般 (= AI 以外のサブスク機能。Goals 閲覧/編集など) のアクセスチェック
+//
+// 想定:
+//   - Basic / Standard / Pro いずれかの active 契約なら allowed
+//   - 未契約・無料枠超過・期限切れなら not allowed
+//   - Goal Coach (= 実際の AI 応答) は別途 checkAiAccess() で gate する
+//
+// この関数の使いどころ:
+//   - GoalView (= 目標の作成/閲覧/編集 UI)。Basic でも触れる仕様
+//   - その他「サブスク契約者専用」だが AI ではない機能
+// ----------------------------------------------------------------------------
+
+export interface PaidAccessResult {
+  allowed: boolean;
+  /** "any_subscription" | "promo" | "release_promo" | "none" */
+  reason: 'any_subscription' | 'promo' | 'release_promo' | 'none';
+  expiresAt: string | null;
+  /** active なサブスクのプラン名 (basic / standard / pro)。allowed=true 時のみ意味あり */
+  plan?: 'basic' | 'standard' | 'pro' | null;
+}
+
+export async function checkPaidAccess(userId: string): Promise<PaidAccessResult> {
+  if (!userId) return { allowed: false, reason: 'none', expiresAt: null };
+  const now = new Date();
+  const nowISO = now.toISOString();
+
+  // 1) Active subscription (plan 問わず)
+  try {
+    const { data: sub } = await supabase
+      .from('user_subscriptions')
+      .select('status, plan, current_period_end')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (
+      sub &&
+      (sub.status === 'active' || sub.status === 'trialing') &&
+      sub.current_period_end &&
+      new Date(sub.current_period_end) > now
+    ) {
+      return {
+        allowed: true,
+        reason: 'any_subscription',
+        expiresAt: sub.current_period_end,
+        plan: (sub.plan as 'basic' | 'standard' | 'pro' | null) ?? null,
+      };
+    }
+  } catch (e) {
+    console.warn('[checkPaidAccess] subscription read threw', e);
+  }
+
+  // 2) Promo redemption — 一時的に有料機能を解放するクーポン
+  try {
+    const { data: redemption } = await supabase
+      .from('ai_promo_redemptions')
+      .select('valid_until')
+      .eq('user_id', userId)
+      .gt('valid_until', nowISO)
+      .order('valid_until', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (redemption?.valid_until) {
+      return { allowed: true, reason: 'promo', expiresAt: redemption.valid_until };
+    }
+  } catch (e) {
+    console.warn('[checkPaidAccess] promo check threw', e);
+  }
+
+  // 3) Release-wide promo
+  try {
+    const { data: releasePromo } = await supabase
+      .from('app_release_promos')
+      .select('promo_ends_at')
+      .eq('is_active', true)
+      .lte('promo_starts_at', nowISO)
+      .gte('promo_ends_at', nowISO)
+      .order('promo_ends_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (releasePromo?.promo_ends_at) {
+      return { allowed: true, reason: 'release_promo', expiresAt: releasePromo.promo_ends_at };
+    }
+  } catch (e) {
+    console.warn('[checkPaidAccess] release promo check threw', e);
+  }
+
+  return { allowed: false, reason: 'none', expiresAt: null };
+}
+
+// ----------------------------------------------------------------------------
 // ワークスペース新規作成のアクセスチェック
 //
 // 仕様:

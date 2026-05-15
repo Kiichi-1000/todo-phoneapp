@@ -31,6 +31,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { sendCoach } from '@/lib/goalCoachClient';
+import { checkAiAccess } from '@/lib/aiAccess';
 import ChatBubble from '@/components/ai/ChatBubble';
 import ToolResultCard from '@/components/ai/ToolResultCard';
 import TokenBalanceBadge from '@/components/ai/TokenBalanceBadge';
@@ -79,6 +80,27 @@ export default function GoalCoachScreen() {
   const scrollToBottom = useCallback(() => {
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
   }, []);
+
+  // AI access gate: Goal Coach は AI 機能なので、契約プランが AI Standard 以上
+  // でないと画面に居続けられない。Basic プラン契約者 / 未契約者がこの画面に到達した
+  // 場合、自動的に /paywall に遷移して「AI Standard 以上で利用可能」を促す。
+  // チェックは画面マウント時に 1 回。Standard/Pro なら何もせず通過。
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      const access = await checkAiAccess(user.id);
+      if (cancelled) return;
+      if (!access.allowed) {
+        // basic_plan_no_ai / none いずれの理由でも paywall に飛ばす。
+        // goal-coach 画面はそのまま残るが、Apple 画面遷移で前面に paywall が乗る。
+        router.replace('/paywall');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, router]);
 
   // Load full history on mount
   useEffect(() => {

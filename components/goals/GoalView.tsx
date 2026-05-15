@@ -36,6 +36,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { checkAiAccess } from '@/lib/aiAccess';
 import type { Goal, GoalLevel } from '@/types/database';
 import GoalCard from './GoalCard';
 import GoalEditorModal from './GoalEditorModal';
@@ -354,7 +355,20 @@ export default function GoalView() {
 
   // Goals are coached by the dedicated goal-coach AI (separate from the
   // general /ai assistant). The coach retains full conversation history.
-  const goToCoach = () => router.push('/goal-coach');
+  //
+  // Goal Coach は AI 機能なので AI Standard / Pro が必要。
+  // Basic プラン契約者 / 未契約者がタップした場合は paywall を表示して、
+  // 「AI Standard 以上で利用可能」をアップグレード誘導する (= /paywall に push)。
+  const goToCoach = useCallback(async () => {
+    if (!user) return;
+    const access = await checkAiAccess(user.id);
+    if (!access.allowed) {
+      // basic_plan_no_ai / none いずれの場合も paywall に誘導
+      router.push('/paywall');
+      return;
+    }
+    router.push('/goal-coach');
+  }, [user, router]);
 
   const jumpToPage = (idx: number) => {
     if (idx === activePageIndex) return;

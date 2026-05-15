@@ -82,6 +82,9 @@ export interface PurchaseResult {
   success: boolean;
   cancelled?: boolean;
   error?: string;
+  // RevenueCat の生 CustomerInfo。カスタム Paywall から
+  // syncSubscriptionAfterPurchase() にそのまま渡せるよう公開する。
+  customerInfo?: any;
   customerInfoSnapshot?: {
     activeEntitlements: string[];
     expiresAt?: string | null;
@@ -242,6 +245,7 @@ export async function purchasePackage(productId: string): Promise<PurchaseResult
     const { customerInfo } = await purchasesModule.purchasePackage(pkg);
     return {
       success: true,
+      customerInfo,
       customerInfoSnapshot: snapshotCustomerInfo(customerInfo),
     };
   } catch (e: any) {
@@ -258,6 +262,7 @@ export async function restorePurchases(): Promise<PurchaseResult> {
     const customerInfo = await purchasesModule.restorePurchases();
     return {
       success: true,
+      customerInfo,
       customerInfoSnapshot: snapshotCustomerInfo(customerInfo),
     };
   } catch (e: any) {

@@ -22,7 +22,7 @@ import WorkspacePage from '@/components/WorkspacePage';
 import GoalView from '@/components/goals/GoalView';
 import { parseDateString } from '@/lib/scheduleUtils';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { checkAiAccess } from '@/lib/aiAccess';
+import { checkPaidAccess } from '@/lib/aiAccess';
 
 type ViewMode = 'todo' | 'goals';
 
@@ -43,7 +43,11 @@ export default function WorkspaceScreen() {
   // grid. Defaults to 'todo' so existing behavior is preserved.
   const [viewMode, setViewMode] = useState<ViewMode>('todo');
 
-  // 目標機能 (goals タブ) は有料機能。
+  // 目標機能 (goals タブ) は「有料機能」だが「AI 機能」ではない。
+  // 仕様:
+  //   - サブスク (basic / standard / pro いずれか) があれば Goals 閲覧/編集 OK
+  //   - Goal Coach (= AI による分解・コーチング) のみ AI Standard / Pro が必要
+  //     (Goal Coach への gate は GoalView.tsx 内のボタンと goal-coach.tsx 画面側で実施)
   // UX 要件:
   //   1. タップ時に先に Goals 画面に切り替えてから、paywall モーダルを上に被せる
   //      (= 「何が使えるのか」がチラッと見えるので「課金してまで使いたい」となりやすい)
@@ -56,8 +60,9 @@ export default function WorkspaceScreen() {
     if (viewMode === 'goals') return;
     // 先に表示。これで Goals 画面がチラッと見える
     setViewMode('goals');
-    // バックグラウンドで access チェック → 未加入なら paywall を即時出す
-    const access = await checkAiAccess(user.id);
+    // 「サブスク何でも持っているか」をチェック (Basic でも Goals 自体は使える)。
+    // 未契約なら paywall を即時出す。
+    const access = await checkPaidAccess(user.id);
     if (!access.allowed) {
       setGoalsLocked(true);
       router.push('/paywall');
@@ -74,7 +79,7 @@ export default function WorkspaceScreen() {
       if (viewMode !== 'goals') return;
       let cancelled = false;
       (async () => {
-        const access = await checkAiAccess(user.id);
+        const access = await checkPaidAccess(user.id);
         if (cancelled) return;
         if (!access.allowed) {
           // 未加入のまま戻ってきた → todo タブへ戻す + ロック解除 (= goalsLocked リセット)
