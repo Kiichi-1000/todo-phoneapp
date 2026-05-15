@@ -96,17 +96,58 @@ const C = {
   heroSubtle: 'rgba(255,255,255,0.78)',
 };
 
-// グラデーション（expo-linear-gradient の colors は最低2要素のタプル）
-const GRAD_HERO: readonly [string, string, string] = ['#0F1636', '#1B1A4A', '#2C1B4E'];
+// グラデーション。リファレンス画像の「夕暮れ時のシティスカイライン」を再現。
+// 空 (top) は夜の濃紫、中盤に夕陽のオレンジ・ピンク・マゼンタ、地平線手前は深いブルー。
+const GRAD_HERO: readonly [string, string, string, string, string] = [
+  '#080B1F', // top: deep night sky
+  '#241540', // upper-mid: violet twilight
+  '#7B2A5C', // mid: dusk magenta
+  '#D14C2A', // lower-mid: warm sunset glow
+  '#0A0E1C', // bottom: city horizon shadow
+];
 const GRAD_CTA: readonly [string, string] = ['#6366F1', '#8B5CF6'];
 
-// ヒーロー下部のビル群シルエット（都市夜景の雰囲気）。写真が用意できたら不要。
-const SKYLINE: { x: number; w: number; h: number }[] = [
-  { x: 0, w: 34, h: 46 }, { x: 37, w: 22, h: 68 }, { x: 62, w: 30, h: 36 },
-  { x: 95, w: 26, h: 78 }, { x: 124, w: 40, h: 52 }, { x: 167, w: 24, h: 88 },
-  { x: 194, w: 34, h: 42 }, { x: 231, w: 28, h: 64 }, { x: 262, w: 42, h: 50 },
-  { x: 307, w: 24, h: 82 }, { x: 334, w: 34, h: 58 }, { x: 371, w: 29, h: 72 },
+// ヒーロー下部のビル群シルエット (奥行きを出すため 2 レイヤー)。
+// 写真ができたらこの 2 レイヤーを ImageBackground に差し替えるだけ。
+
+// 奥のレイヤー: 暗くて低めの遠景ビル
+const SKYLINE_FAR: { x: number; w: number; h: number }[] = [
+  { x: 0, w: 50, h: 28 }, { x: 55, w: 38, h: 40 }, { x: 98, w: 44, h: 22 },
+  { x: 148, w: 60, h: 34 }, { x: 215, w: 32, h: 26 }, { x: 252, w: 52, h: 42 },
+  { x: 308, w: 38, h: 30 }, { x: 350, w: 50, h: 36 },
 ];
+
+// 手前のレイヤー: 濃くて高めの主役ビル群
+const SKYLINE: { x: number; w: number; h: number }[] = [
+  { x: 0, w: 34, h: 56 }, { x: 37, w: 22, h: 84 }, { x: 62, w: 30, h: 46 },
+  { x: 95, w: 26, h: 96 }, { x: 124, w: 40, h: 64 }, { x: 167, w: 24, h: 104 },
+  { x: 194, w: 34, h: 52 }, { x: 231, w: 28, h: 78 }, { x: 262, w: 42, h: 60 },
+  { x: 307, w: 24, h: 98 }, { x: 334, w: 34, h: 70 }, { x: 371, w: 29, h: 88 },
+];
+
+// 手前ビルに重ねる窓灯り (yellow dots)。手前ビルの座標から決定論的に算出。
+// 関数ではなく事前計算しておくことで Svg のレンダコストを抑える。
+const WINDOWS: { x: number; y: number; on: boolean }[] = (() => {
+  const out: { x: number; y: number; on: boolean }[] = [];
+  // SVG_H = 120 (= styles.skylineSvgHeight)。各ビルの内側に 5px グリッドで窓を打つ。
+  const SVG_H = 120;
+  let seed = 7;
+  const rand = () => {
+    // 単純な決定論的擬似乱数 (LCG)。ビルド間で同じ模様にする。
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+  for (const b of SKYLINE) {
+    const top = SVG_H - b.h + 4;
+    const bottom = SVG_H - 6;
+    for (let y = top; y < bottom; y += 5) {
+      for (let x = b.x + 3; x < b.x + b.w - 3; x += 4) {
+        out.push({ x, y, on: rand() > 0.35 }); // ~65% の窓に灯り
+      }
+    }
+  }
+  return out;
+})();
 
 const LEGAL_HUB =
   ((Constants.expoConfig?.extra as { legalDocsHubUrl?: string } | undefined)
@@ -158,17 +199,19 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     Icon: Sparkles,
     nameJa: 'AI Standard',
     nameEn: 'AI Standard',
+    // ※ AIクレジット具体額（¥400分など）は企業秘密のためカードでは見せない。
+    //   実体（標準枠での会話量）が伝わるニュアンスのコピーに留める。
     featuresJa: [
       'ToScheプランの全機能込み',
       'AIアシスタント（自然文でタスク・予定操作）',
       'AI目標コーチ（目標の分解と振り返り）',
-      '毎月 400円分のAIクレジット',
+      '毎月のAI利用枠付き',
     ],
     featuresEn: [
       'Everything in the ToSche plan',
       'AI assistant (plain-language task control)',
       'AI goal coach (break down and review goals)',
-      '¥400 of AI credits / month',
+      'Monthly AI usage included',
     ],
   },
   pro: {
@@ -181,13 +224,13 @@ const PLAN_META: Record<Plan, PlanMeta> = {
       'ToScheプランの全機能込み',
       'AIアシスタント（自然文でタスク・予定操作）',
       'AI目標コーチ（目標の分解と振り返り）',
-      '毎月 700円分のAIクレジット（Standardの1.75倍）',
+      'Standard より余裕のあるAI利用枠',
     ],
     featuresEn: [
       'Everything in the ToSche plan',
       'AI assistant (plain-language task control)',
       'AI goal coach (break down and review goals)',
-      '¥700 of AI credits / month (1.75× Standard)',
+      'Generously larger AI usage than Standard',
     ],
   },
 };
@@ -234,10 +277,12 @@ const COMPARISON: {
     labelEn: 'AI goal coach (break down & review goals)',
     values: { basic: false, standard: true, pro: true },
   },
+  // ※ AI 利用枠の具体額 (¥400分/¥700分) は企業秘密のため表に出さない。
+  //   代わりに「標準/拡張」のニュアンスだけ伝える。
   {
-    labelJa: '毎月のAIクレジット',
-    labelEn: 'Monthly AI credits',
-    values: { basic: '—', standard: '¥400分', pro: '¥700分' },
+    labelJa: 'AI利用枠',
+    labelEn: 'AI usage allowance',
+    values: { basic: '—', standard: '標準', pro: '拡張' },
   },
 ];
 
@@ -264,6 +309,9 @@ const STRINGS = {
     cancelAnytime: 'いつでも解約できます',
     recommended: 'おすすめ',
     compareTitle: '機能比較',
+    // ボトムバッジ (3 つ)。ASC で無料トライアル未設定のため「7日間トライアル」は出さない。
+    // 代わりに、本アプリ独自の「100ページまで無料で使える」をアピール。
+    footerFreeTier: '100ページまで無料',
     footerCancel: 'いつでもキャンセル可能',
     footerSecure: '安全な決済',
     ctaStart: (plan: string, cycle: string) => `${plan}（${cycle}）ではじめる`,
@@ -302,6 +350,7 @@ const STRINGS = {
     cancelAnytime: 'Cancel anytime',
     recommended: 'Recommended',
     compareTitle: 'Compare plans',
+    footerFreeTier: 'Free for 100 pages',
     footerCancel: 'Cancel anytime',
     footerSecure: 'Secure payment',
     ctaStart: (plan: string, cycle: string) => `Start ${plan} (${cycle})`,
@@ -749,36 +798,88 @@ export default function PaywallScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── ヒーロー（ダークグラデーション + ビル群シルエット） ── */}
+        {/* ── ヒーロー（夕暮れの空 + シティスカイライン） ──
+            実装メモ:
+              1. ベースグラデーション (LinearGradient #1) で「夜→紫→マゼンタ→夕陽オレンジ→地平線」を表現。
+              2. 右上に追加グラデ (LinearGradient #2) で太陽光を再現 (ホットスポット)。
+              3. SVG で奥のビル群 → 手前のビル群 → 窓灯り の 3 層を重ねて奥行きを出す。
+              4. 上端にダーク半透明オーバーレイで Close ボタン領域の視認性を確保。
+            写真アセットを用意したら、この 3 つを単一の <ImageBackground source={...}> に置き換える。 */}
         <Animated.View entering={FadeIn.duration(450)}>
           <LinearGradient
             colors={GRAD_HERO}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+            locations={[0, 0.32, 0.55, 0.78, 1]}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
             style={[styles.hero, { paddingTop: insets.top + 56 }]}
           >
-            {/* 都市夜景の雰囲気。本物の写真ができたらこの Svg を ImageBackground に差し替え。 */}
+            {/* 右上の太陽グロー（角度を付けて diagonal に） */}
+            <LinearGradient
+              colors={['rgba(252, 211, 77, 0.45)', 'rgba(244, 114, 182, 0.18)', 'rgba(124, 58, 237, 0)']}
+              locations={[0, 0.4, 1]}
+              start={{ x: 1, y: 0 }}
+              end={{ x: 0.25, y: 0.6 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+
+            {/* スカイライン 3 層 + 窓灯り */}
             <View style={styles.skylineWrap} pointerEvents="none">
               <Svg
                 width="100%"
-                height={96}
-                viewBox="0 0 400 96"
+                height={120}
+                viewBox="0 0 400 120"
                 preserveAspectRatio="xMidYMax slice"
               >
+                {/* 奥のビル群: 半透明の濃紺 */}
+                {SKYLINE_FAR.map((b, i) => (
+                  <Rect
+                    key={`far-${i}`}
+                    x={b.x}
+                    y={120 - b.h}
+                    width={b.w}
+                    height={b.h}
+                    rx={1}
+                    fill="#0B0F22"
+                    opacity={0.7}
+                  />
+                ))}
+                {/* 手前のビル群: ほぼ黒 */}
                 {SKYLINE.map((b, i) => (
                   <Rect
-                    key={i}
+                    key={`near-${i}`}
                     x={b.x}
-                    y={96 - b.h}
+                    y={120 - b.h}
                     width={b.w}
                     height={b.h}
                     rx={1.5}
-                    fill="#05070F"
-                    opacity={0.55}
+                    fill="#04060E"
+                    opacity={0.95}
+                  />
+                ))}
+                {/* 窓灯り: 灯り on の窓だけ描画して負荷を抑える */}
+                {WINDOWS.filter((w) => w.on).map((w, i) => (
+                  <Rect
+                    key={`w-${i}`}
+                    x={w.x}
+                    y={w.y}
+                    width={1.6}
+                    height={1.6}
+                    fill="#FCD34D"
+                    opacity={0.85}
                   />
                 ))}
               </Svg>
             </View>
+
+            {/* 上端: Close ボタン領域の視認性向上のためのほのかな暗オーバーレイ */}
+            <LinearGradient
+              colors={['rgba(8, 11, 31, 0.55)', 'rgba(8, 11, 31, 0)']}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={styles.heroTopShade}
+              pointerEvents="none"
+            />
 
             <View style={styles.eyebrowChip}>
               <Sparkles size={13} color={C.white} strokeWidth={2.6} />
@@ -829,9 +930,14 @@ export default function PaywallScreen() {
           ))}
         </Animated.View>
 
-        {/* ── フッター: 安心バッジ + 法的開示 + リンク ── */}
+        {/* ── フッター: 安心バッジ 3 つ + 法的開示 + リンク ── */}
         <View style={styles.footer}>
           <View style={styles.assuranceRow}>
+            <View style={styles.assuranceItem}>
+              <Check size={14} color={C.inkSoft} strokeWidth={2.6} />
+              <Text style={styles.assuranceText}>{t.footerFreeTier}</Text>
+            </View>
+            <View style={styles.assuranceDivider} />
             <View style={styles.assuranceItem}>
               <RotateCcw size={14} color={C.inkSoft} strokeWidth={2.4} />
               <Text style={styles.assuranceText}>{t.footerCancel}</Text>
@@ -947,7 +1053,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: 96,
+    height: 120,
+  },
+  // ヒーロー上端のほのかな暗オーバーレイ (Close ボタン視認性のため)
+  heroTopShade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 110,
   },
   eyebrowChip: {
     flexDirection: 'row',
@@ -1115,15 +1229,17 @@ const styles = StyleSheet.create({
 
   // フッター
   footer: { marginTop: 22, paddingHorizontal: 22 },
+  // 3 つのバッジを横一列で表示。小画面でも収まるよう gap と font を調整。
   assuranceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 14,
+    flexWrap: 'wrap',
+    gap: 10,
     marginBottom: 16,
   },
-  assuranceItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  assuranceText: { fontSize: 11.5, color: C.inkSoft, fontWeight: '600' },
+  assuranceItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  assuranceText: { fontSize: 11, color: C.inkSoft, fontWeight: '600' },
   assuranceDivider: { width: 1, height: 14, backgroundColor: C.border },
   legalText: { fontSize: 10.5, color: C.inkFaint, lineHeight: 16, textAlign: 'center' },
   legalLinks: {
