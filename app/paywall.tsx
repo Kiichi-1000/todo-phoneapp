@@ -139,10 +139,18 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     Icon: InfinityIcon,
     nameJa: 'ToSche プラン',
     nameEn: 'ToSche',
-    featuresJa: ['ワークスペースを無制限に作成', 'ToDo・スケジュール・統計の全機能'],
-    featuresEn: ['Unlimited workspace pages', 'All core features'],
-    noteJa: 'AI機能は含まれません',
-    noteEn: 'AI features not included',
+    featuresJa: [
+      'ワークスペースを無制限に作成',
+      'ToDo・スケジュール・ルーティン・統計の全機能',
+      '目標管理（年・半期・月・長期）',
+    ],
+    featuresEn: [
+      'Unlimited workspace pages',
+      'All core features (to-dos, schedule, routines, stats)',
+      'Goal management (yearly / half-year / monthly / long-term)',
+    ],
+    noteJa: 'AIアシスタント・AI目標コーチは含まれません',
+    noteEn: 'AI assistant & AI goal coach not included',
   },
   standard: {
     accent: C.standard,
@@ -151,14 +159,16 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     nameJa: 'AI Standard',
     nameEn: 'AI Standard',
     featuresJa: [
-      'AIアシスタント・目標コーチ',
-      '毎月 400円分のAIクレジット',
       'ToScheプランの全機能込み',
+      'AIアシスタント（自然文でタスク・予定操作）',
+      'AI目標コーチ（目標の分解と振り返り）',
+      '毎月 400円分のAIクレジット',
     ],
     featuresEn: [
-      'AI assistant & goal coach',
-      '¥400 of AI credits / month',
       'Everything in the ToSche plan',
+      'AI assistant (plain-language task control)',
+      'AI goal coach (break down and review goals)',
+      '¥400 of AI credits / month',
     ],
   },
   pro: {
@@ -168,14 +178,16 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     nameJa: 'AI Pro',
     nameEn: 'AI Pro',
     featuresJa: [
-      'AIアシスタント・目標コーチ',
-      '毎月 700円分のAIクレジット',
       'ToScheプランの全機能込み',
+      'AIアシスタント（自然文でタスク・予定操作）',
+      'AI目標コーチ（目標の分解と振り返り）',
+      '毎月 700円分のAIクレジット（Standardの1.75倍）',
     ],
     featuresEn: [
-      'AI assistant & goal coach',
-      '¥700 of AI credits / month',
       'Everything in the ToSche plan',
+      'AI assistant (plain-language task control)',
+      'AI goal coach (break down and review goals)',
+      '¥700 of AI credits / month (1.75× Standard)',
     ],
   },
 };
@@ -203,18 +215,23 @@ const COMPARISON: {
     values: { basic: true, standard: true, pro: true },
   },
   {
+    labelJa: '目標管理 (年/半期/月/長期)',
+    labelEn: 'Goal management (yearly / half-year / monthly / long-term)',
+    values: { basic: true, standard: true, pro: true },
+  },
+  {
     labelJa: 'すべての端末でデータ同期',
     labelEn: 'Sync across all devices',
     values: { basic: true, standard: true, pro: true },
   },
   {
-    labelJa: 'AIアシスタント・目標コーチ',
-    labelEn: 'AI assistant & goal coach',
+    labelJa: 'AIアシスタント (自然文でタスク・予定操作)',
+    labelEn: 'AI assistant (plain-language task control)',
     values: { basic: false, standard: true, pro: true },
   },
   {
-    labelJa: '自然文でタスク・予定を操作',
-    labelEn: 'Plain-language task control',
+    labelJa: 'AI目標コーチ (目標の分解と振り返り)',
+    labelEn: 'AI goal coach (break down & review goals)',
     values: { basic: false, standard: true, pro: true },
   },
   {
