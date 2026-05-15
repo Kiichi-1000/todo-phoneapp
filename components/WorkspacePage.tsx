@@ -8,14 +8,17 @@ import {
   Platform,
   ScrollView,
   KeyboardAvoidingView,
+  Alert,
 } from 'react-native';
 import Svg, { Defs, Pattern, Rect, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { Plus, Bell, Check } from 'lucide-react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { checkWorkspaceCreationAccess, FREE_WORKSPACE_LIMIT } from '@/lib/aiAccess';
 import { Workspace, Todo, GridArea, UserSettings, DEFAULT_FOUR_GRID_TODO_BORDER_COLORS } from '@/types/database';
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
@@ -46,6 +49,7 @@ export default function WorkspacePage({
 }: WorkspacePageProps) {
   const { user } = useAuth();
   const { t: tr } = useLanguage();
+  const router = useRouter();
   const { skin: fourGridSkin } = useFourGridSkin();
   const fourGridTheme = getThemeForSkin(fourGridSkin);
   const [gridTitles, setGridTitles] = useState<Record<GridArea, string>>({
@@ -261,10 +265,52 @@ export default function WorkspacePage({
     setEditingTodoText('');
   };
 
+  // ──────────────────────────────────────────────
+  // 100 ページ無料枠ゲート (タスク追加直前の保険)
+  //
+  // 「タスクが1つでもあるワークスペース数 ≥ 100 かつ未契約 かつ このワークスペース
+  //   は今 0 タスク (= このタスクが追加されると 101 件目の "使ったワークスペース"
+  //   になる)」のときだけ Alert を出して paywall に誘導する。
+  //
+  // タスクがすでにある (= todos.length > 0) ワークスペースへの追加はカウント済みなので
+  // ゲートしない。チェックは Supabase に問い合わせるため小さなネットワーク往復が走る
+  // が、todos.length === 0 のときのみなのでオーバーヘッドは限定的。
+  // ──────────────────────────────────────────────
+  const ensureWithinFreeLimitForFirstTask = async (): Promise<boolean> => {
+    if (!user) return false;
+    if (todos.length > 0) return true; // 既にタスクがある = カウント済み → スキップ
+    try {
+      const access = await checkWorkspaceCreationAccess(user.id);
+      if (!access.allowed) {
+        Alert.alert(
+          tr('workspace.limitReachedTitle') || 'ワークスペースの上限に達しました',
+          tr('workspace.limitReachedMessage') ||
+            `タスクを追加できるページは無料枠で ${FREE_WORKSPACE_LIMIT} 日分までです。プランに加入すると無制限に追加できます。`,
+          [
+            { text: tr('common.cancel') || 'キャンセル', style: 'cancel' },
+            {
+              text: tr('workspace.viewPlans') || 'プランを見る',
+              onPress: () => router.push('/paywall?context=workspace'),
+            },
+          ],
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[WorkspacePage] limit check threw, allowing add as fallback', e);
+      return true;
+    }
+  };
+
   const addTodo = async (gridArea: GridArea, content?: string) => {
     if (!user) return;
     const taskContent = content || newTodoContent[gridArea].trim();
     if (!taskContent) return;
+    // 無料枠 100 ページのゲート。todos.length === 0 のときだけ実行 (= このタスクで
+    // 「使ったワークスペース」が +1 増えるケース)。
+    const ok = await ensureWithinFreeLimitForFirstTask();
+    if (!ok) return;
     try {
       const areaTodos = todos.filter(t => t.grid_area === gridArea);
       const maxOrder = areaTodos.length > 0 ? Math.max(...areaTodos.map(t => t.order)) : -1;
@@ -292,6 +338,9 @@ export default function WorkspacePage({
 
   const handleAddPostit = async () => {
     if (!user || !newTaskText.trim()) return;
+    // 無料枠 100 ページのゲート。todos.length === 0 のときのみ。
+    const ok = await ensureWithinFreeLimitForFirstTask();
+    if (!ok) return;
     try {
       const postitTodos = todos.filter(t => t.grid_area === null);
       const maxOrder = postitTodos.length > 0 ? Math.max(...postitTodos.map(t => t.order)) : -1;

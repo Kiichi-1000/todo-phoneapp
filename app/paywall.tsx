@@ -1,33 +1,27 @@
 // Paywall route — AI / Goals 機能とプレミアム機能の課金壁。
 //
-// ■ v1.3 — RevenueCatUI.Paywall（ダッシュボード製テンプレート）を廃止し、
-//   カスタム実装。さらにデザイン案に合わせてダークテーマへ全面刷新。
+// ■ v1.3 — RevenueCatUI.Paywall（ダッシュボード製テンプレート）を廃止しカスタム実装。
+//   デザイン案 (PayWall-risou) に合わせ、ヒーローは都市写真、本文はダークテーマ。
 //
 // なぜ RevenueCatUI.Paywall を廃止したか:
-//   旧実装はダッシュボードのテンプレートを表示するだけで、価格表示（日本ロケール
-//   なのにドル表示）・デザイン・機能説明がコードから一切直せなかった。
-//   ドル表示の正体: RC のパッケージは Test Store 商品（USD建て）と Apple 商品
-//   （JPY建て）を束ねており、テンプレートが環境次第で USD 側を表示してしまう。
-//   → カスタム実装では getOfferings() の pkg.product.priceString（StoreKit が
-//     ローカライズした文字列＝Apple 決済シートと同じ正本）を直接使うため、実機
-//     （本番/TestFlight）では確実に「¥」表示になる。
+//   旧実装はダッシュボードのテンプレートを表示するだけで、価格表示・デザイン・
+//   機能説明がコードから一切直せなかった。カスタム実装では getOfferings() の
+//   pkg.product.priceString（StoreKit がローカライズした文字列）を使う。
 //
-// ■ ヒーロー背景について
-//   デザイン案は都市写真だが、写真アセットが未提供のため、ダークグラデーション＋
-//   ビル群シルエット（react-native-svg で描画）で都市夜景の雰囲気を出している。
-//   本物の写真を入れる場合は <HeroBackdrop> を ImageBackground に差し替えるだけ。
+// ■ 通貨表示
+//   日本語ユーザーには必ず「¥」表示にする (displayPrice / resolveYen)。
+//   - 本番ビルド: StoreKit が JP ストアフロントなら priceString が ¥ → そのまま使用。
+//   - 開発ビルド (RC Test Store): currencyCode が USD で返るため、JPY_FALLBACK
+//     (= ASC 実価格の円建て) にフォールバックして ¥ 表示を保証する。
+//   - 英語ユーザー / 海外ストアフロント: priceString をそのまま使用 ($ など)。
 //
-// ■ 既知の制約（コードでは直せないもの）
-//   - Apple ネイティブ決済シートの桁区切り → iOS が端末の地域設定で描画。端末の
-//     「設定 > 一般 > 言語と地域 > 地域」を「日本」にすると ¥2,000 表記になる。
-//   - 開発ビルド（__DEV__）は RC Test Store 鍵を使うため Test Store 商品（USD建て
-//     登録）が出る。RC ダッシュボードで Test Store 商品を JPY 登録し直すか
-//     TestFlight ビルドで確認する。
+// ■ ヒーロー背景
+//   assets/images/paywall-city.jpg を ImageBackground で全幅表示し、上下に暗
+//   グラデーションを重ねて文字の視認性とダーク本文への接続を確保する。
 //
-// ■ トライアル表記は意図的に「なし」
-//   ASC の6商品に introductory offer（無料トライアル）が設定されていないため、
-//   実体のないトライアル表記は入れない（Apple ガイドライン 2.3.2 / 3.1.2 対策）。
-//   トライアルを設定したら、このファイルにトライアル UI を追記する。
+// ■ 機能コピー
+//   AI 利用枠の具体額 (¥400分 等) は企業秘密のためカード・比較表に出さない。
+//   カードの機能は短いキーワードのみ。詳細は機能比較表で補う。
 //
 // ■ コンテキスト Paywall
 //   ?context=ai / ?context=workspace / （指定なし）でヒーロー文言と初期選択プランを
@@ -41,13 +35,13 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  ImageBackground,
   Linking,
   Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Svg, Rect } from 'react-native-svg';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
@@ -75,13 +69,16 @@ import {
   type Cycle,
 } from '@/lib/revenueCat';
 
+// ヒーロー背景の都市写真。
+const CITY_IMG = require('../assets/images/paywall-city.jpg');
+
 // ─────────────────────────────────────────────
 // カラー（ダークテーマ）
 // ─────────────────────────────────────────────
 const C = {
   bg: '#0A0E1C',
   card: '#141A30',
-  cardSelected: '#1A2240',
+  cardSelected: '#1B2342',
   border: '#28324E',
   borderSoft: '#1F2740',
   divider: '#232C46',
@@ -93,61 +90,18 @@ const C = {
   standard: '#60A5FA', // blue
   pro: '#A78BFA', // purple
   danger: '#F87171',
-  heroSubtle: 'rgba(255,255,255,0.78)',
+  heroSubtle: 'rgba(255,255,255,0.82)',
 };
 
-// グラデーション。リファレンス画像の「夕暮れ時のシティスカイライン」を再現。
-// 空 (top) は夜の濃紫、中盤に夕陽のオレンジ・ピンク・マゼンタ、地平線手前は深いブルー。
-const GRAD_HERO: readonly [string, string, string, string, string] = [
-  '#080B1F', // top: deep night sky
-  '#241540', // upper-mid: violet twilight
-  '#7B2A5C', // mid: dusk magenta
-  '#D14C2A', // lower-mid: warm sunset glow
-  '#0A0E1C', // bottom: city horizon shadow
+// ヒーロー写真の上に重ねる暗オーバーレイ。
+// 上=Closeボタン/ステータスバーの視認性、中=写真を見せる、下=ダーク本文へ接続。
+const GRAD_HERO_OVERLAY: readonly [string, string, string, string] = [
+  'rgba(8,11,28,0.66)',
+  'rgba(8,11,28,0.10)',
+  'rgba(10,14,28,0.55)',
+  '#0A0E1C',
 ];
 const GRAD_CTA: readonly [string, string] = ['#6366F1', '#8B5CF6'];
-
-// ヒーロー下部のビル群シルエット (奥行きを出すため 2 レイヤー)。
-// 写真ができたらこの 2 レイヤーを ImageBackground に差し替えるだけ。
-
-// 奥のレイヤー: 暗くて低めの遠景ビル
-const SKYLINE_FAR: { x: number; w: number; h: number }[] = [
-  { x: 0, w: 50, h: 28 }, { x: 55, w: 38, h: 40 }, { x: 98, w: 44, h: 22 },
-  { x: 148, w: 60, h: 34 }, { x: 215, w: 32, h: 26 }, { x: 252, w: 52, h: 42 },
-  { x: 308, w: 38, h: 30 }, { x: 350, w: 50, h: 36 },
-];
-
-// 手前のレイヤー: 濃くて高めの主役ビル群
-const SKYLINE: { x: number; w: number; h: number }[] = [
-  { x: 0, w: 34, h: 56 }, { x: 37, w: 22, h: 84 }, { x: 62, w: 30, h: 46 },
-  { x: 95, w: 26, h: 96 }, { x: 124, w: 40, h: 64 }, { x: 167, w: 24, h: 104 },
-  { x: 194, w: 34, h: 52 }, { x: 231, w: 28, h: 78 }, { x: 262, w: 42, h: 60 },
-  { x: 307, w: 24, h: 98 }, { x: 334, w: 34, h: 70 }, { x: 371, w: 29, h: 88 },
-];
-
-// 手前ビルに重ねる窓灯り (yellow dots)。手前ビルの座標から決定論的に算出。
-// 関数ではなく事前計算しておくことで Svg のレンダコストを抑える。
-const WINDOWS: { x: number; y: number; on: boolean }[] = (() => {
-  const out: { x: number; y: number; on: boolean }[] = [];
-  // SVG_H = 120 (= styles.skylineSvgHeight)。各ビルの内側に 5px グリッドで窓を打つ。
-  const SVG_H = 120;
-  let seed = 7;
-  const rand = () => {
-    // 単純な決定論的擬似乱数 (LCG)。ビルド間で同じ模様にする。
-    seed = (seed * 9301 + 49297) % 233280;
-    return seed / 233280;
-  };
-  for (const b of SKYLINE) {
-    const top = SVG_H - b.h + 4;
-    const bottom = SVG_H - 6;
-    for (let y = top; y < bottom; y += 5) {
-      for (let x = b.x + 3; x < b.x + b.w - 3; x += 4) {
-        out.push({ x, y, on: rand() > 0.35 }); // ~65% の窓に灯り
-      }
-    }
-  }
-  return out;
-})();
 
 const LEGAL_HUB =
   ((Constants.expoConfig?.extra as { legalDocsHubUrl?: string } | undefined)
@@ -156,8 +110,7 @@ const LEGAL_HUB =
 
 // ─────────────────────────────────────────────
 // プランのメタ情報
-// 機能コピーは RC 旧 Paywall + docs/v2-requirements.md +
-// monthly-token-grant（basic=0 / standard=¥400 / pro=¥700）に基づく実態ベース。
+// 機能はデザイン案に合わせた「短いキーワード」のみ。AI 利用枠の具体額は出さない。
 // ─────────────────────────────────────────────
 type PlanMeta = {
   accent: string;
@@ -165,7 +118,7 @@ type PlanMeta = {
   Icon: typeof Check;
   nameJa: string;
   nameEn: string;
-  /** カード内に出す短い機能ラベル（詳細は機能比較表で） */
+  /** カードに出す短いキーワード機能ラベル（詳細は機能比較表で補う） */
   featuresJa: string[];
   featuresEn: string[];
   /** AI 機能を含まないプランの注記（basic のみ） */
@@ -178,20 +131,14 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     accent: C.basic,
     gradient: ['#34D399', '#10B981'],
     Icon: InfinityIcon,
-    nameJa: 'ToSche プラン',
+    // プラン名はカードに1行で必ず収めるためシンプル化。
+    // 「ToSche プラン」とした版は「ToSche」へ。日英で同じ表記。
+    nameJa: 'ToSche',
     nameEn: 'ToSche',
-    featuresJa: [
-      'ワークスペースを無制限に作成',
-      'ToDo・スケジュール・ルーティン・統計の全機能',
-      '目標管理（年・半期・月・長期）',
-    ],
-    featuresEn: [
-      'Unlimited workspace pages',
-      'All core features (to-dos, schedule, routines, stats)',
-      'Goal management (yearly / half-year / monthly / long-term)',
-    ],
-    noteJa: 'AIアシスタント・AI目標コーチは含まれません',
-    noteEn: 'AI assistant & AI goal coach not included',
+    featuresJa: ['ワークスペース制限なし (100枚以上作成可能)', '目標設定機能'],
+    featuresEn: ['Unlimited workspace (100+ pages)', 'Goal setting'],
+    noteJa: 'AIエージェントは含まれません',
+    noteEn: 'AI agent not included',
   },
   standard: {
     accent: C.standard,
@@ -199,19 +146,18 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     Icon: Sparkles,
     nameJa: 'AI Standard',
     nameEn: 'AI Standard',
-    // ※ AIクレジット具体額（¥400分など）は企業秘密のためカードでは見せない。
-    //   実体（標準枠での会話量）が伝わるニュアンスのコピーに留める。
+    // 機能はユーザー指定の短いキーワード4点。分析インサイトはデフォルト機能のため除外。
     featuresJa: [
-      'ToScheプランの全機能込み',
-      'AIアシスタント（自然文でタスク・予定操作）',
-      'AI目標コーチ（目標の分解と振り返り）',
-      '毎月のAI利用枠付き',
+      'AIエージェント',
+      'タスク管理サポート',
+      '目標進捗管理AI',
+      'ワークスペース制限なし',
     ],
     featuresEn: [
-      'Everything in the ToSche plan',
-      'AI assistant (plain-language task control)',
-      'AI goal coach (break down and review goals)',
-      'Monthly AI usage included',
+      'AI agent',
+      'AI task support',
+      'AI goal coach',
+      'Unlimited workspace',
     ],
   },
   pro: {
@@ -220,17 +166,18 @@ const PLAN_META: Record<Plan, PlanMeta> = {
     Icon: Crown,
     nameJa: 'AI Pro',
     nameEn: 'AI Pro',
+    // Pro はカード上の見える機能は Standard と同じ。差は比較表の「AI利用枠」(標準/拡張)。
     featuresJa: [
-      'ToScheプランの全機能込み',
-      'AIアシスタント（自然文でタスク・予定操作）',
-      'AI目標コーチ（目標の分解と振り返り）',
-      'Standard より余裕のあるAI利用枠',
+      'AIエージェント',
+      'タスク管理サポート',
+      '目標進捗管理AI',
+      'ワークスペース制限なし',
     ],
     featuresEn: [
-      'Everything in the ToSche plan',
-      'AI assistant (plain-language task control)',
-      'AI goal coach (break down and review goals)',
-      'Generously larger AI usage than Standard',
+      'AI agent',
+      'AI task support',
+      'AI goal coach',
+      'Unlimited workspace',
     ],
   },
 };
@@ -239,50 +186,53 @@ const PLAN_ORDER: Plan[] = ['basic', 'standard', 'pro'];
 const RECOMMENDED_PLAN: Plan = 'pro'; // デザイン案に合わせ「おすすめ」は AI Pro
 
 // ─────────────────────────────────────────────
-// 機能比較表（実態ベース。優先サポート等の未確認機能は載せない）
+// 機能比較表（短いキーワード。優先サポート等の未確認機能は載せない）
 // ─────────────────────────────────────────────
-type CompareValue = boolean | string;
+type CompareValue = boolean | { ja: string; en: string };
 const COMPARISON: {
   labelJa: string;
   labelEn: string;
   values: Record<Plan, CompareValue>;
 }[] = [
   {
-    labelJa: 'ワークスペース無制限',
+    labelJa: 'ワークスペース制限なし',
     labelEn: 'Unlimited workspace',
     values: { basic: true, standard: true, pro: true },
   },
   {
-    labelJa: 'ToDo・予定・ルーティン・統計',
-    labelEn: 'To-dos, schedule, routines, stats',
+    labelJa: '目標設定・進捗管理',
+    labelEn: 'Goals & progress',
     values: { basic: true, standard: true, pro: true },
   },
   {
-    labelJa: '目標管理 (年/半期/月/長期)',
-    labelEn: 'Goal management (yearly / half-year / monthly / long-term)',
+    labelJa: '端末間データ同期',
+    labelEn: 'Cross-device sync',
     values: { basic: true, standard: true, pro: true },
   },
   {
-    labelJa: 'すべての端末でデータ同期',
-    labelEn: 'Sync across all devices',
-    values: { basic: true, standard: true, pro: true },
-  },
-  {
-    labelJa: 'AIアシスタント (自然文でタスク・予定操作)',
-    labelEn: 'AI assistant (plain-language task control)',
+    labelJa: 'AIエージェント',
+    labelEn: 'AI agent',
     values: { basic: false, standard: true, pro: true },
   },
   {
-    labelJa: 'AI目標コーチ (目標の分解と振り返り)',
-    labelEn: 'AI goal coach (break down & review goals)',
+    labelJa: 'タスク管理サポート',
+    labelEn: 'AI task support',
     values: { basic: false, standard: true, pro: true },
   },
-  // ※ AI 利用枠の具体額 (¥400分/¥700分) は企業秘密のため表に出さない。
-  //   代わりに「標準/拡張」のニュアンスだけ伝える。
+  {
+    labelJa: '目標進捗管理AI',
+    labelEn: 'AI goal coach',
+    values: { basic: false, standard: true, pro: true },
+  },
+  // AI 利用枠は「標準 / 拡張」の質的表現のみ（具体額は企業秘密のため非表示）。
   {
     labelJa: 'AI利用枠',
-    labelEn: 'AI usage allowance',
-    values: { basic: '—', standard: '標準', pro: '拡張' },
+    labelEn: 'AI usage',
+    values: {
+      basic: { ja: '—', en: '—' },
+      standard: { ja: '標準', en: 'Standard' },
+      pro: { ja: '拡張', en: 'Expanded' },
+    },
   },
 ];
 
@@ -309,8 +259,6 @@ const STRINGS = {
     cancelAnytime: 'いつでも解約できます',
     recommended: 'おすすめ',
     compareTitle: '機能比較',
-    // ボトムバッジ (3 つ)。ASC で無料トライアル未設定のため「7日間トライアル」は出さない。
-    // 代わりに、本アプリ独自の「100ページまで無料で使える」をアピール。
     footerFreeTier: '100ページまで無料',
     footerCancel: 'いつでもキャンセル可能',
     footerSecure: '安全な決済',
@@ -385,20 +333,76 @@ function groupOfferings(options: PriceOption[]): GroupedOfferings {
   return grouped;
 }
 
-/** 月額×12 と年額の差から「年額の割引率（%）」を算出。出せないときは 0。 */
+// ─────────────────────────────────────────────
+// 通貨表示 — 日本語ユーザーには必ず円で見せる
+// ─────────────────────────────────────────────
+// ASC 実価格（円）。本番では StoreKit の priceString が正だが、開発ビルドの
+// RC Test Store は USD を返すため、日本語ユーザーへ円表示を保証するための表。
+const JPY_FALLBACK: Record<string, number> = {
+  'ToSche.std.1.2': 300,
+  tosche_basic_yearly: 3240,
+  'ToSche.AI.std.1.2': 1200,
+  tosche_ai_standard_yearly: 12960,
+  'ToSche.AI.Pro.1.2': 2000,
+  tosche_ai_pro_yearly: 21600,
+};
+
+/** 表示確定済みの「円」金額。JPYストアなら StoreKit 実値、非JPYならフォールバック。 */
+function resolveYen(opt: PriceOption | undefined): number | null {
+  if (!opt) return null;
+  if (opt.currencyCode === 'JPY' && opt.priceMicros > 0) {
+    return Math.round(opt.priceMicros / 1_000_000);
+  }
+  return JPY_FALLBACK[opt.identifier] ?? null;
+}
+
+/** プラン価格の表示文字列。日本語ユーザー→必ず¥、それ以外→ストアのローカライズ価格。 */
+function displayPrice(opt: PriceOption | undefined, lang: string): string {
+  if (!opt) return '—';
+  if (lang === 'ja') {
+    const yen = resolveYen(opt);
+    if (yen != null) return `¥${yen.toLocaleString('ja-JP')}`;
+  }
+  return opt.priceString;
+}
+
+/** 年額の「月あたり」価格文字列。 */
+function perMonthLabel(yearly: PriceOption | undefined, lang: string): string {
+  if (!yearly) return '';
+  if (lang === 'ja') {
+    const yen = resolveYen(yearly);
+    if (yen != null) return `¥${Math.round(yen / 12).toLocaleString('ja-JP')}`;
+  }
+  if (yearly.priceMicros > 0) {
+    const v = yearly.priceMicros / 12 / 1_000_000;
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: yearly.currencyCode || 'USD',
+      }).format(v);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+/** 年額の割引率（%）。円建てに揃えて算出（通貨非依存の比率）。 */
 function yearlySavingsPct(group: Partial<Record<Cycle, PriceOption>>): number {
   const m = group.monthly;
   const y = group.yearly;
-  if (!m || !y || m.priceMicros <= 0 || y.priceMicros <= 0) return 0;
-  const pct = Math.round((1 - y.priceMicros / (m.priceMicros * 12)) * 100);
-  return pct > 0 ? pct : 0;
-}
-
-/** 年額の「月あたり」価格文字列（¥ローカライズ簡易版）。 */
-function perMonthString(yearly: PriceOption | undefined): string {
-  if (!yearly || yearly.priceMicros <= 0) return '';
-  const yen = Math.round(yearly.priceMicros / 12 / 1_000_000);
-  return `¥${yen.toLocaleString('ja-JP')}`;
+  if (!m || !y) return 0;
+  const mYen = resolveYen(m);
+  const yYen = resolveYen(y);
+  if (mYen && yYen && mYen > 0) {
+    const pct = Math.round((1 - yYen / (mYen * 12)) * 100);
+    return pct > 0 ? pct : 0;
+  }
+  if (m.priceMicros > 0 && y.priceMicros > 0) {
+    const pct = Math.round((1 - y.priceMicros / (m.priceMicros * 12)) * 100);
+    return pct > 0 ? pct : 0;
+  }
+  return 0;
 }
 
 /** 触覚フィードバック（本質的でないので失敗は無視）。 */
@@ -441,6 +445,13 @@ export default function PaywallScreen() {
         ? t.heroWorkspaceSubtitle
         : t.heroSubtitle;
   const initialPlan: Plan = entryContext === 'workspace' ? 'basic' : RECOMMENDED_PLAN;
+
+  // コンテキスト別の表示プラン:
+  //  - ai       : Basic は AI 非対応なので隠す → AI Standard + AI Pro の 2 プランのみ
+  //  - workspace: 3 プラン全部表示 (Basic を入口にする想定の文脈)
+  //  - default  : 3 プラン全部表示
+  const visiblePlans: Plan[] =
+    entryContext === 'ai' ? ['standard', 'pro'] : ['basic', 'standard', 'pro'];
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -637,7 +648,7 @@ export default function PaywallScreen() {
     selectedCycle === 'monthly' ? t.monthlyKind : t.yearlyKind;
   const busy = purchasing || restoringState;
 
-  // 月額カード
+  // 月額カード（主役・大きめ）
   const renderMonthlyCard = (plan: Plan, index: number) => {
     const meta = PLAN_META[plan];
     const opt = offerings[plan]?.monthly;
@@ -649,7 +660,7 @@ export default function PaywallScreen() {
     return (
       <Animated.View
         key={`m-${plan}`}
-        entering={FadeInDown.duration(420).delay(160 + index * 80)}
+        entering={FadeInDown.duration(420).delay(140 + index * 80)}
         style={styles.cardCol}
       >
         <TouchableOpacity
@@ -669,21 +680,27 @@ export default function PaywallScreen() {
               <Text style={styles.recoBadgeText}>{t.recommended}</Text>
             </View>
           )}
+          {/* 選択ラジオはカード右上に絶対配置 → 名前行を1行で必ず収める。 */}
+          {isSelected ? (
+            <View style={[styles.radioAbsWrap, styles.radioOn, { backgroundColor: meta.accent }]}>
+              <Check size={12} color={C.bg} strokeWidth={3.6} />
+            </View>
+          ) : (
+            <View style={[styles.radioAbsWrap, styles.radioOff]} />
+          )}
           <View style={styles.planCardTopRow}>
-            <Text style={[styles.planCardName, { color: meta.accent }]} numberOfLines={1}>
+            <Text
+              style={[styles.planCardName, { color: meta.accent }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.78}
+            >
               {lang === 'ja' ? meta.nameJa : meta.nameEn}
             </Text>
-            {isSelected ? (
-              <View style={[styles.radioOn, { backgroundColor: meta.accent }]}>
-                <Check size={11} color={C.bg} strokeWidth={3.6} />
-              </View>
-            ) : (
-              <View style={styles.radioOff} />
-            )}
           </View>
           <Text style={styles.planCardKind}>{t.monthlyKind}</Text>
           <View style={styles.priceRow}>
-            <Text style={styles.priceValue}>{opt ? opt.priceString : '—'}</Text>
+            <Text style={styles.priceValue}>{displayPrice(opt, lang)}</Text>
             <Text style={styles.pricePer}>{t.perMonth}</Text>
           </View>
           <Text style={styles.cancelNote}>{t.cancelAnytime}</Text>
@@ -693,7 +710,10 @@ export default function PaywallScreen() {
               <View style={[styles.featureDot, { backgroundColor: meta.accent }]}>
                 <Check size={8} color={C.bg} strokeWidth={4} />
               </View>
-              <Text style={styles.featureText}>{f}</Text>
+              {/* 1〜2行折返し許容。3カラム時の幅でも崩れにくいよう細字+10pt。 */}
+              <Text style={styles.featureText} numberOfLines={2}>
+                {f}
+              </Text>
             </View>
           ))}
           {note && (
@@ -701,7 +721,9 @@ export default function PaywallScreen() {
               <View style={styles.featureDotOff}>
                 <Ban size={9} color={C.inkFaint} strokeWidth={2.6} />
               </View>
-              <Text style={styles.featureTextOff}>{note}</Text>
+              <Text style={styles.featureTextOff} numberOfLines={2}>
+                {note}
+              </Text>
             </View>
           )}
         </TouchableOpacity>
@@ -716,12 +738,12 @@ export default function PaywallScreen() {
     const opt = group?.yearly;
     const isSelected = selectedPlan === plan && selectedCycle === 'yearly';
     const off = yearlySavingsPct(group ?? {});
-    const perMo = perMonthString(opt);
+    const perMo = perMonthLabel(opt, lang);
 
     return (
       <Animated.View
         key={`y-${plan}`}
-        entering={FadeInDown.duration(420).delay(420 + index * 80)}
+        entering={FadeInDown.duration(420).delay(380 + index * 80)}
         style={styles.cardCol}
       >
         <TouchableOpacity
@@ -736,26 +758,39 @@ export default function PaywallScreen() {
             isSelected && styles.planCardSelected,
           ]}
         >
+          {/* 選択ラジオはカード右上に絶対配置。 */}
+          {isSelected ? (
+            <View style={[styles.radioAbsWrap, styles.radioOn, { backgroundColor: meta.accent }]}>
+              <Check size={12} color={C.bg} strokeWidth={3.6} />
+            </View>
+          ) : (
+            <View style={[styles.radioAbsWrap, styles.radioOff]} />
+          )}
           <View style={styles.planCardTopRow}>
-            <Text style={[styles.yearKind, { color: meta.accent }]} numberOfLines={1}>
+            <Text
+              style={[styles.yearKind, { color: meta.accent }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
               {t.yearlyKind}
               {off > 0 ? `（${t.yearlyOff(off)}）` : ''}
             </Text>
-            {isSelected ? (
-              <View style={[styles.radioOn, { backgroundColor: meta.accent }]}>
-                <Check size={11} color={C.bg} strokeWidth={3.6} />
-              </View>
-            ) : (
-              <View style={styles.radioOff} />
-            )}
           </View>
           <View style={styles.priceRow}>
-            <Text style={styles.priceValueSm}>{opt ? opt.priceString : '—'}</Text>
+            <Text style={styles.priceValueSm}>{displayPrice(opt, lang)}</Text>
             <Text style={styles.pricePer}>{t.perYear}</Text>
           </View>
           {perMo !== '' && (
             <View style={[styles.perMoPill, { backgroundColor: meta.accent + '22' }]}>
-              <Text style={[styles.perMoText, { color: meta.accent }]}>
+              {/* 「月あたり ¥1,080」がカード幅を超える機種でも末尾「…」省略を避けるため、
+                  numberOfLines=1 で adjustsFontSizeToFit。最低 75% まで縮小可能。 */}
+              <Text
+                style={[styles.perMoText, { color: meta.accent }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
                 {t.perMonthEq(perMo)}
               </Text>
             </View>
@@ -784,7 +819,9 @@ export default function PaywallScreen() {
     }
     return (
       <View style={styles.compareCell}>
-        <Text style={[styles.compareCellText, { color: meta.accent }]}>{value}</Text>
+        <Text style={[styles.compareCellText, { color: meta.accent }]}>
+          {lang === 'ja' ? value.ja : value.en}
+        </Text>
       </View>
     );
   };
@@ -798,106 +835,39 @@ export default function PaywallScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── ヒーロー（夕暮れの空 + シティスカイライン） ──
-            実装メモ:
-              1. ベースグラデーション (LinearGradient #1) で「夜→紫→マゼンタ→夕陽オレンジ→地平線」を表現。
-              2. 右上に追加グラデ (LinearGradient #2) で太陽光を再現 (ホットスポット)。
-              3. SVG で奥のビル群 → 手前のビル群 → 窓灯り の 3 層を重ねて奥行きを出す。
-              4. 上端にダーク半透明オーバーレイで Close ボタン領域の視認性を確保。
-            写真アセットを用意したら、この 3 つを単一の <ImageBackground source={...}> に置き換える。 */}
+        {/* ── ヒーロー（都市写真 + 暗オーバーレイ） ── */}
         <Animated.View entering={FadeIn.duration(450)}>
-          <LinearGradient
-            colors={GRAD_HERO}
-            locations={[0, 0.32, 0.55, 0.78, 1]}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-            style={[styles.hero, { paddingTop: insets.top + 56 }]}
+          <ImageBackground
+            source={CITY_IMG}
+            style={[styles.hero, { paddingTop: insets.top + 54 }]}
+            imageStyle={styles.heroImage}
           >
-            {/* 右上の太陽グロー（角度を付けて diagonal に） */}
+            {/* 写真の上の暗グラデーション（上=視認性 / 下=本文へ接続） */}
             <LinearGradient
-              colors={['rgba(252, 211, 77, 0.45)', 'rgba(244, 114, 182, 0.18)', 'rgba(124, 58, 237, 0)']}
-              locations={[0, 0.4, 1]}
-              start={{ x: 1, y: 0 }}
-              end={{ x: 0.25, y: 0.6 }}
+              colors={GRAD_HERO_OVERLAY}
+              locations={[0, 0.4, 0.72, 1]}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
               style={StyleSheet.absoluteFill}
               pointerEvents="none"
             />
-
-            {/* スカイライン 3 層 + 窓灯り */}
-            <View style={styles.skylineWrap} pointerEvents="none">
-              <Svg
-                width="100%"
-                height={120}
-                viewBox="0 0 400 120"
-                preserveAspectRatio="xMidYMax slice"
-              >
-                {/* 奥のビル群: 半透明の濃紺 */}
-                {SKYLINE_FAR.map((b, i) => (
-                  <Rect
-                    key={`far-${i}`}
-                    x={b.x}
-                    y={120 - b.h}
-                    width={b.w}
-                    height={b.h}
-                    rx={1}
-                    fill="#0B0F22"
-                    opacity={0.7}
-                  />
-                ))}
-                {/* 手前のビル群: ほぼ黒 */}
-                {SKYLINE.map((b, i) => (
-                  <Rect
-                    key={`near-${i}`}
-                    x={b.x}
-                    y={120 - b.h}
-                    width={b.w}
-                    height={b.h}
-                    rx={1.5}
-                    fill="#04060E"
-                    opacity={0.95}
-                  />
-                ))}
-                {/* 窓灯り: 灯り on の窓だけ描画して負荷を抑える */}
-                {WINDOWS.filter((w) => w.on).map((w, i) => (
-                  <Rect
-                    key={`w-${i}`}
-                    x={w.x}
-                    y={w.y}
-                    width={1.6}
-                    height={1.6}
-                    fill="#FCD34D"
-                    opacity={0.85}
-                  />
-                ))}
-              </Svg>
-            </View>
-
-            {/* 上端: Close ボタン領域の視認性向上のためのほのかな暗オーバーレイ */}
-            <LinearGradient
-              colors={['rgba(8, 11, 31, 0.55)', 'rgba(8, 11, 31, 0)']}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              style={styles.heroTopShade}
-              pointerEvents="none"
-            />
-
             <View style={styles.eyebrowChip}>
               <Sparkles size={13} color={C.white} strokeWidth={2.6} />
               <Text style={styles.eyebrowText}>{t.eyebrow}</Text>
             </View>
             <Text style={styles.heroTitle}>{heroTitle}</Text>
             <Text style={styles.heroSubtitle}>{heroSubtitle}</Text>
-          </LinearGradient>
+          </ImageBackground>
         </Animated.View>
 
         {/* ── 月額プラン（3カード） ── */}
         <View style={styles.cardRow}>
-          {PLAN_ORDER.map((plan, i) => renderMonthlyCard(plan, i))}
+          {visiblePlans.map((plan, i) => renderMonthlyCard(plan, i))}
         </View>
 
         {/* ── 年額プラン（3カード・コンパクト） ── */}
         <View style={[styles.cardRow, styles.cardRowTight]}>
-          {PLAN_ORDER.map((plan, i) => renderYearlyCard(plan, i))}
+          {visiblePlans.map((plan, i) => renderYearlyCard(plan, i))}
         </View>
 
         {/* ── 機能比較表 ── */}
@@ -905,10 +875,10 @@ export default function PaywallScreen() {
           <Text style={styles.compareTitle}>{t.compareTitle}</Text>
           <View style={styles.compareHeaderRow}>
             <View style={styles.compareLabelCell} />
-            {PLAN_ORDER.map((plan) => (
+            {visiblePlans.map((plan) => (
               <View key={plan} style={styles.compareCell}>
                 <Text style={[styles.compareHeaderText, { color: PLAN_META[plan].accent }]}>
-                  {lang === 'ja' ? PLAN_META[plan].nameJa.replace('ToSche ', '') : PLAN_META[plan].nameEn}
+                  {lang === 'ja' ? PLAN_META[plan].nameJa : PLAN_META[plan].nameEn}
                 </Text>
               </View>
             ))}
@@ -923,7 +893,7 @@ export default function PaywallScreen() {
                   {lang === 'ja' ? row.labelJa : row.labelEn}
                 </Text>
               </View>
-              {PLAN_ORDER.map((plan) => (
+              {visiblePlans.map((plan) => (
                 <View key={plan}>{renderCompareCell(row.values[plan], plan)}</View>
               ))}
             </View>
@@ -1023,12 +993,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
 
   // ローディング / エラー
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  errorTitle: { fontSize: 18, fontWeight: '800', color: C.ink, marginBottom: 8 },
+  errorTitle: { fontSize: 18, fontWeight: '700', color: C.ink, marginBottom: 8 },
   errorBody: {
     fontSize: 14,
     color: C.inkSoft,
@@ -1036,32 +1006,22 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     marginBottom: 22,
   },
-  retryWrap: { borderRadius: 13, overflow: 'hidden' },
+  retryWrap: { borderRadius: 10, overflow: 'hidden' },
   retryButton: { paddingVertical: 13, paddingHorizontal: 36 },
-  retryButtonText: { color: C.white, fontSize: 15, fontWeight: '800' },
+  retryButtonText: { color: C.white, fontSize: 15, fontWeight: '700' },
   linkButton: { marginTop: 14, paddingVertical: 8, paddingHorizontal: 16 },
   linkButtonText: { color: C.inkSoft, fontSize: 14, fontWeight: '600' },
 
-  // ヒーロー
+  // ヒーロー（都市写真）
   hero: {
     paddingHorizontal: 22,
-    paddingBottom: 40,
+    paddingBottom: 46,
+    minHeight: 322,
+    justifyContent: 'flex-end',
     overflow: 'hidden',
   },
-  skylineWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 120,
-  },
-  // ヒーロー上端のほのかな暗オーバーレイ (Close ボタン視認性のため)
-  heroTopShade: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: 110,
+  heroImage: {
+    resizeMode: 'cover',
   },
   eyebrowChip: {
     flexDirection: 'row',
@@ -1070,166 +1030,202 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    marginBottom: 14,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginBottom: 12,
   },
-  eyebrowText: { color: C.white, fontSize: 11.5, fontWeight: '800', letterSpacing: 0.6 },
+  eyebrowText: { color: C.white, fontSize: 11.5, fontWeight: '700', letterSpacing: 1.0 },
   heroTitle: {
-    fontSize: 26,
-    fontWeight: '800',
+    fontSize: 27,
+    fontWeight: '700',
     color: C.white,
-    letterSpacing: -0.4,
-    lineHeight: 35,
+    letterSpacing: -0.2,
+    lineHeight: 36,
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
   },
   heroSubtitle: {
     fontSize: 13.5,
     color: C.heroSubtle,
     lineHeight: 21,
     marginTop: 9,
-    maxWidth: '94%',
+    maxWidth: '96%',
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
 
-  // カード行
+  // カード行 — 横余白を最小限にしてカード幅を最大化。
   cardRow: {
     flexDirection: 'row',
-    gap: 9,
-    paddingHorizontal: 14,
+    gap: 7,
+    paddingHorizontal: 8,
     marginTop: 16,
     alignItems: 'stretch',
   },
   cardRowTight: { marginTop: 10 },
   cardCol: { flex: 1 },
 
-  // 月額プランカード
+  // 月額プランカード（主役・大きめ）
+  // 横padding を詰めて文字の表示領域を最大化。ラジオは absolute 配置なので
+  // 名前行は paddingRight (planCardTopRow) でラジオとの重なりを避ける。
   planCard: {
     flex: 1,
     backgroundColor: C.card,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1.25,
+    paddingHorizontal: 8,
+    paddingTop: 16,
+    paddingBottom: 14,
   },
   planCardSelected: {
-    shadowOpacity: 0.4,
-    shadowRadius: 14,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    elevation: 7,
   },
   recoBadge: {
     position: 'absolute',
-    top: -9,
-    right: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
+    top: -10,
+    right: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 6,
   },
-  recoBadgeText: { color: C.bg, fontSize: 9.5, fontWeight: '900', letterSpacing: 0.2 },
+  recoBadgeText: { color: C.bg, fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   planCardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    // 絶対配置ラジオ (right:12, 幅20) と重ならないよう、名前行に右余白を確保。
+    paddingRight: 28,
   },
-  planCardName: { flex: 1, fontSize: 12.5, fontWeight: '900', letterSpacing: 0.2 },
+  // 「キリッ」感: 900の極太 → 700のbold、letterSpacing 1.0 で英字大文字感を強める。
+  planCardName: { flex: 1, fontSize: 13, fontWeight: '700', letterSpacing: 1.0 },
   radioOn: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   radioOff: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     borderWidth: 1.5,
     borderColor: C.border,
   },
-  planCardKind: { fontSize: 11, color: C.inkSoft, fontWeight: '600', marginTop: 6 },
+  // ラジオ絶対配置用ラッパ (radioOn / radioOff と合成して使用)
+  radioAbsWrap: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 2,
+  },
+  planCardKind: { fontSize: 11, color: C.inkSoft, fontWeight: '600', marginTop: 8 },
   priceRow: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 3 },
-  priceValue: { fontSize: 21, fontWeight: '900', color: C.ink, letterSpacing: -0.5 },
-  priceValueSm: { fontSize: 17, fontWeight: '900', color: C.ink, letterSpacing: -0.4 },
-  pricePer: { fontSize: 11, fontWeight: '700', color: C.inkFaint, marginLeft: 2, marginBottom: 2 },
-  cancelNote: { fontSize: 9.5, color: C.inkFaint, marginTop: 3 },
+  // 価格は強さを保ちつつ「極太の丸み」を抑える: 900 → 800、tight な letterSpacing。
+  priceValue: { fontSize: 25, fontWeight: '800', color: C.ink, letterSpacing: -0.6 },
+  priceValueSm: { fontSize: 18, fontWeight: '800', color: C.ink, letterSpacing: -0.4 },
+  pricePer: { fontSize: 11, fontWeight: '600', color: C.inkFaint, marginLeft: 3, marginBottom: 3 },
+  cancelNote: { fontSize: 10, color: C.inkFaint, marginTop: 4 },
   cardDivider: {
     height: 1,
     backgroundColor: C.divider,
-    marginVertical: 10,
+    marginTop: 12,
+    marginBottom: 11,
   },
-  featureRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 7 },
+  // 機能リスト — 3カラム時にも収まるよう、細字+小さめ。
+  // 短いラベル (例「AIエージェント」「タスク管理サポート」「目標進捗管理AI」) が
+  // 1行に収まるよう、fontSize=9 / gap=4 / dot=12 まで詰めてテキスト幅を確保する。
+  // 長いラベル「ワークスペース制限なし (100枚以上作成可能)」のみ意図的に2行折返し。
+  // 半角スペースを文中に入れて自然な折返し位置を担保している (PLAN_META 参照)。
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    marginBottom: 7,
+  },
   featureDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
+    marginTop: 1.5,
   },
   featureDotOff: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
     backgroundColor: C.borderSoft,
+    marginTop: 1.5,
   },
-  featureText: { flex: 1, fontSize: 10.5, color: C.inkSoft, lineHeight: 15 },
-  featureTextOff: { flex: 1, fontSize: 10.5, color: C.inkFaint, lineHeight: 15 },
+  featureText: { flex: 1, fontSize: 9, color: C.inkSoft, fontWeight: '400', lineHeight: 12.5 },
+  featureTextOff: { flex: 1, fontSize: 9, color: C.inkFaint, fontWeight: '400', lineHeight: 12.5 },
 
   // 年額プランカード
   yearCard: {
     flex: 1,
     backgroundColor: C.card,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.25,
+    paddingHorizontal: 8,
+    paddingTop: 14,
+    paddingBottom: 13,
   },
   yearKind: { flex: 1, fontSize: 10, fontWeight: '800' },
+  // 月あたり pill —「月あたり ¥1,800」がカード幅 (~100px) を超えて末尾「…」省略
+  // されてしまっていた。fontSize 11→9.5 / padding 9→6 / pill 幅を flex で
+  // カード幅一杯まで広げ、末尾省略を起こさないように。
   perMoPill: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    paddingHorizontal: 8,
+    alignSelf: 'stretch',
+    marginTop: 9,
+    paddingHorizontal: 6,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 5,
+    alignItems: 'center',
   },
-  perMoText: { fontSize: 10.5, fontWeight: '800' },
+  perMoText: { fontSize: 9.5, fontWeight: '700', textAlign: 'center' },
 
   // 機能比較表
   compareCard: {
-    marginHorizontal: 14,
+    marginHorizontal: 12,
     marginTop: 20,
     backgroundColor: C.card,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: C.borderSoft,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
-  compareTitle: { fontSize: 15, fontWeight: '800', color: C.ink, marginBottom: 10 },
+  compareTitle: { fontSize: 16, fontWeight: '700', color: C.ink, marginBottom: 12 },
   compareHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingBottom: 8,
+    paddingBottom: 9,
     borderBottomWidth: 1,
     borderBottomColor: C.divider,
   },
   compareRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 9,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: C.divider,
   },
   compareRowLast: { borderBottomWidth: 0, paddingBottom: 2 },
   compareLabelCell: { flex: 1, paddingRight: 8 },
-  compareLabelText: { fontSize: 11.5, color: C.inkSoft, lineHeight: 16 },
-  compareCell: { width: 58, alignItems: 'center', justifyContent: 'center' },
-  compareHeaderText: { fontSize: 11, fontWeight: '900', letterSpacing: 0.2 },
-  compareCellText: { fontSize: 11, fontWeight: '800' },
+  compareLabelText: { fontSize: 12, color: C.inkSoft, lineHeight: 16 },
+  compareCell: { width: 56, alignItems: 'center', justifyContent: 'center' },
+  compareHeaderText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8 },
+  compareCellText: { fontSize: 11, fontWeight: '700' },
 
   // フッター
   footer: { marginTop: 22, paddingHorizontal: 22 },
-  // 3 つのバッジを横一列で表示。小画面でも収まるよう gap と font を調整。
   assuranceRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1262,7 +1258,7 @@ const styles = StyleSheet.create({
   },
   actionError: { fontSize: 13, color: C.danger, textAlign: 'center', marginBottom: 10 },
   ctaWrap: {
-    borderRadius: 16,
+    borderRadius: 12,
     overflow: 'hidden',
     shadowColor: C.standard,
     shadowOpacity: 0.45,
@@ -1272,7 +1268,7 @@ const styles = StyleSheet.create({
   },
   ctaWrapDisabled: { opacity: 0.55 },
   cta: { paddingVertical: 17, alignItems: 'center', justifyContent: 'center' },
-  ctaText: { color: C.white, fontSize: 16, fontWeight: '900', letterSpacing: 0.2 },
+  ctaText: { color: C.white, fontSize: 16, fontWeight: '700', letterSpacing: 0.4 },
   restoreWrap: { alignItems: 'center', marginTop: 12 },
   restoreText: { fontSize: 13, color: C.inkSoft, fontWeight: '700' },
   restoreTextDisabled: { opacity: 0.5 },

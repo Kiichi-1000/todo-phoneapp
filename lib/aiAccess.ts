@@ -221,10 +221,21 @@ export async function checkPaidAccess(userId: string): Promise<PaidAccessResult>
 // ----------------------------------------------------------------------------
 // ワークスペース新規作成のアクセスチェック
 //
-// 仕様:
-//   - サブスク未契約ユーザー → 既存ワークスペース数 < 100 なら作成可、100 以上で paywall
-//   - 任意プラン (Basic / Standard / Pro) のサブスク契約者 → 無制限
-//   (= Basic は「100 ページ超過後も基本機能を使うためのプラン」という位置付け)
+// 仕様 (v1.3 で実態に合わせて改訂):
+//   - 本アプリは「日付に紐づくワークスペース」を訪問するたびに行を自動 INSERT する。
+//     つまり workspaces テーブルの行数 ≠ ユーザーが実際に "使った" ページ数 となる。
+//   - 「使った」とみなす定義: そのワークスペースに **タスク (todos) が1つでも紐付いた**
+//     状態。タスク0件のワークスペースはノーカウント (= 訪問しただけ)。
+//   - 100 件まで無料、101 件目から有料 (basic 以上のサブスク必須)。
+//   - 任意プラン (Basic / Standard / Pro) のサブスク契約者 → 無制限。
+//
+// したがって判定は:
+//   1) サブスク契約あり → allowed
+//   2) todos テーブルで distinct workspace_id をカウント → 100 以上で拒否
+//
+// 呼び出し側 (WorkspacePage.tsx):
+//   タスク追加直前に「このワークスペースの todos.length === 0」のときだけチェック。
+//   既にタスクがあるワークスペースへの追加は無料 (カウント対象なので)。
 // ----------------------------------------------------------------------------
 
 export const FREE_WORKSPACE_LIMIT = 100;
@@ -232,16 +243,16 @@ export const FREE_WORKSPACE_LIMIT = 100;
 export interface WorkspaceCreationAccess {
   allowed: boolean;
   reason: 'subscribed' | 'within_free_limit' | 'free_limit_reached';
-  /** 現在のワークスペース数 */
+  /** 現在「使ったワークスペース」の数 (= 少なくとも1タスクを持つ workspace 数) */
   count: number;
   /** 残り作成可能枚数 (サブスク契約者は Infinity 相当として -1) */
   remaining: number;
 }
 
 /**
- * 新規ワークスペース作成が可能かを判定する。
- * - サブスク契約 (basic/standard/pro いずれか) があれば常に true
- * - 未契約なら workspaces テーブルの該当 user_id 件数で判定 (100 まで)
+ * 新規「使ったワークスペース」(= タスクを1つでも持つワークスペース) を増やせるか判定。
+ * - サブスク契約 (basic/standard/pro いずれか) があれば常に allowed
+ * - 未契約なら todos の distinct workspace_id 数で判定 (100 まで)
  */
 export async function checkWorkspaceCreationAccess(
   userId: string,
@@ -270,18 +281,28 @@ export async function checkWorkspaceCreationAccess(
     console.warn('[checkWorkspaceCreationAccess] subscription read threw', e);
   }
 
-  // 2) workspaces テーブルの件数で判定
+  // 2) todos の distinct workspace_id 数で判定 (= 「使ったワークスペース」のカウント)。
+  //
+  // supabase-js は count(distinct ...) を直接サポートしないため、
+  // workspace_id 列だけを引いてクライアント側で Set ユニーク化する。
+  // 通常ユーザーは未契約時点で <100 ワークスペース = todos 数百件程度なので問題なし。
+  // (本格的なスケールが必要になったら Supabase RPC で SELECT count(DISTINCT) する関数化を)
   try {
-    const { count, error } = await supabase
-      .from('workspaces')
-      .select('id', { count: 'exact', head: true })
+    const { data: rows, error } = await supabase
+      .from('todos')
+      .select('workspace_id')
       .eq('user_id', userId);
     if (error) {
-      console.warn('[checkWorkspaceCreationAccess] count failed', error.message);
+      console.warn('[checkWorkspaceCreationAccess] todos read failed', error.message);
       // 失敗時は保守的に作成許可 (UX を壊さない方向にフォールバック)
       return { allowed: true, reason: 'within_free_limit', count: 0, remaining: FREE_WORKSPACE_LIMIT };
     }
-    const c = count ?? 0;
+    const usedWorkspaceIds = new Set<string>();
+    for (const r of rows ?? []) {
+      const wid = (r as { workspace_id?: string | null }).workspace_id;
+      if (wid) usedWorkspaceIds.add(wid);
+    }
+    const c = usedWorkspaceIds.size;
     if (c >= FREE_WORKSPACE_LIMIT) {
       return {
         allowed: false,
@@ -297,7 +318,7 @@ export async function checkWorkspaceCreationAccess(
       remaining: FREE_WORKSPACE_LIMIT - c,
     };
   } catch (e) {
-    console.warn('[checkWorkspaceCreationAccess] count threw', e);
+    console.warn('[checkWorkspaceCreationAccess] todos count threw', e);
     return { allowed: true, reason: 'within_free_limit', count: 0, remaining: FREE_WORKSPACE_LIMIT };
   }
 }
