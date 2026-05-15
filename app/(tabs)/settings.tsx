@@ -654,17 +654,25 @@ export default function SettingsScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={exportData}
-            disabled={isExporting}>
-            <View style={styles.settingLeft}>
-              <Download size={20} color="#000" />
-              <Text style={styles.settingText}>
-                {isExporting ? t('settings.exporting') : t('settings.exportData')}
-              </Text>
-            </View>
-          </TouchableOpacity>
+          {/* データエクスポート —
+              Web ではブラウザの Blob ダウンロードで動作するが、モバイル (iOS / Android)
+              では現状 expo-sharing 未実装のため WIP アラートが出るだけ。"動かないボタンを
+              見せる" のは Apple ガイドライン 2.3.0 リスクなので、モバイルでは非表示にする。
+              v1.3 で expo-sharing 経由のネイティブ Export を実装したら Platform.OS === 'web'
+              のチェックを外す。 */}
+          {Platform.OS === 'web' && (
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={exportData}
+              disabled={isExporting}>
+              <View style={styles.settingLeft}>
+                <Download size={20} color="#000" />
+                <Text style={styles.settingText}>
+                  {isExporting ? t('settings.exporting') : t('settings.exportData')}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity style={styles.settingItem} onPress={clearAllData}>
             <View style={styles.settingLeft}>
