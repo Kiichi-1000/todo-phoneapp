@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -275,10 +275,23 @@ export default function WorkspacePage({
   // タスクがすでにある (= todos.length > 0) ワークスペースへの追加はカウント済みなので
   // ゲートしない。チェックは Supabase に問い合わせるため小さなネットワーク往復が走る
   // が、todos.length === 0 のときのみなのでオーバーヘッドは限定的。
+  //
+  // 二重発火対策:
+  //   `todos.length === 0` の判定は React state を読むため、最初の insert の onTodosChange
+  //   が親に伝わる前にユーザーが連打すると 2 件とも check が「allowed」を返し抜けて
+  //   1 ページ分超過してしまう (= 100 + 2 件追加されうる)。
+  //   limitCheckInFlightRef でこの並列実行を直列化し、二重発火しても 1 件で止まるようにする。
   // ──────────────────────────────────────────────
+  const limitCheckInFlightRef = useRef(false);
+
   const ensureWithinFreeLimitForFirstTask = async (): Promise<boolean> => {
     if (!user) return false;
     if (todos.length > 0) return true; // 既にタスクがある = カウント済み → スキップ
+    if (limitCheckInFlightRef.current) {
+      // すでに直前の add 操作が走っている。連打を黙って無視する (誤って 2 ページ目を作らせない)。
+      return false;
+    }
+    limitCheckInFlightRef.current = true;
     try {
       const access = await checkWorkspaceCreationAccess(user.id);
       if (!access.allowed) {
@@ -300,6 +313,13 @@ export default function WorkspacePage({
     } catch (e) {
       console.warn('[WorkspacePage] limit check threw, allowing add as fallback', e);
       return true;
+    } finally {
+      // ロック解除は次の event loop に逃がす。Alert の OK/Cancel が押されるまでは
+      // ロック解除しないほうが安全だが、Alert dismiss を厳密に拾うのは複雑なので
+      // 短いタイムアウトでガード解除 (= 連打を 1 回吸収する設計)。
+      setTimeout(() => {
+        limitCheckInFlightRef.current = false;
+      }, 800);
     }
   };
 
