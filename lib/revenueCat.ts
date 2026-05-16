@@ -173,10 +173,23 @@ function shouldUseStub(): boolean {
 /**
  * Lazily initialize the SDK. Safe to call repeatedly.
  * No-op when running in stub mode (no API key, web, etc.).
+ *
+ * IMPORTANT: userId が undefined のまま configure すると RevenueCat は匿名 ID
+ * ($RCAnonymousID:...) を振る。すると後続の Webhook が
+ * `app_user_id_not_uuid` でスキップされ、user_subscriptions が永遠に更新されない
+ * (= 課金壁の無限ループ)。よって `userId` 必須のセマンティクスで運用する:
+ *   - userId 未指定で呼ばれた場合は init をスキップし、後で再呼出を待つ
+ *   - 既に匿名で initialized 済みなら、logIn(userId) で identify を切り替える
  */
 export async function ensureRevenueCat(userId?: string): Promise<void> {
   if (shouldUseStub()) return;
-  if (initialized) return;
+  if (!userId) return; // hydration 競合の保険。user.id が決まるまで configure しない
+  if (initialized) {
+    // SDK が既に動いている場合でも、appUserID が想定と違う可能性があるので
+    // logIn を必ず通して紐付けを確定させる (logIn はべき等)。
+    await logInToRevenueCat(userId);
+    return;
+  }
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
@@ -197,6 +210,34 @@ export async function ensureRevenueCat(userId?: string): Promise<void> {
   })();
 
   return initPromise;
+}
+
+/**
+ * Supabase auth user_id を RevenueCat の appUserID として明示的に再紐付けする。
+ * 直前に呼んでおくと「configure 時は匿名 → 購入時には正しい UUID」のレースに
+ * 強くなる。SDK 内部でべき等。
+ */
+async function logInToRevenueCat(userId: string): Promise<void> {
+  if (!purchasesModule || !userId) return;
+  try {
+    await purchasesModule.logIn(userId);
+  } catch (e) {
+    console.warn('[revenueCat] logIn failed:', e);
+  }
+}
+
+/**
+ * 現在の CustomerInfo を取得 (購入後のリトライで最新 entitlement を再確認するため)。
+ * stub モード / 未 init では null。
+ */
+export async function fetchCustomerInfo(): Promise<any | null> {
+  if (shouldUseStub() || !purchasesModule) return null;
+  try {
+    return await purchasesModule.getCustomerInfo();
+  } catch (e) {
+    console.warn('[revenueCat] getCustomerInfo failed:', e);
+    return null;
+  }
 }
 
 export async function getOfferings(): Promise<PriceOption[]> {

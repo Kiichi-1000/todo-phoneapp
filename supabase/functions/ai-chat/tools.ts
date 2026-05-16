@@ -269,7 +269,11 @@ export const TOOL_DEFS: ToolDefinition[] = [
     name: "delete_goal",
     description:
       "[GOAL VIEW] Delete a goal. Linked todos retain their content but lose the goal reference (goal_id set to null). " +
-      "You MUST call request_confirmation BEFORE this tool.",
+      "MANDATORY two-step destructive flow:\n" +
+      "  Step 1: Call request_confirmation with summary describing what will be deleted. Do NOT call delete_goal yet.\n" +
+      "  Step 2: When the user's next message starts with 'CONFIRMED: ', you MUST call delete_goal NOW with the goal_id. " +
+      "         Do not just reply in text saying you deleted it — the deletion only happens when this tool is invoked. " +
+      "         If you forget to call delete_goal after CONFIRMED, the goal will remain in the database.",
     input_schema: {
       type: "object",
       properties: { goal_id: { type: "string" } },
@@ -357,7 +361,12 @@ export const TOOL_DEFS: ToolDefinition[] = [
   },
   {
     name: "delete_milestone",
-    description: "[GOAL ROADMAP] Delete a single milestone. Use request_confirmation first.",
+    description:
+      "[GOAL ROADMAP] Delete a single milestone. " +
+      "MANDATORY two-step destructive flow:\n" +
+      "  Step 1: Call request_confirmation describing the milestone to delete. Do NOT call delete_milestone yet.\n" +
+      "  Step 2: When the user's next message starts with 'CONFIRMED: ', you MUST call delete_milestone NOW with the milestone_id. " +
+      "         Replying in text alone does NOT delete anything — only this tool call does.",
     input_schema: {
       type: "object",
       properties: { milestone_id: { type: "string" } },
@@ -831,18 +840,21 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     return ok({ goal: data });
   },
 
-  redirect_to_goal_coach: async (input, _ctx): Promise<ToolResult> => {
-    const reason = (input.reason as string) || '目標設定';
+  redirect_to_goal_coach: async (input, ctx): Promise<ToolResult> => {
+    const en = ctx.language === 'en';
+    const reason = (input.reason as string) || (en ? 'goal setting' : '目標設定');
     return ok({
       redirect: true,
-      message:
-        `目標設定（${reason}）は専用のAIで行います。下のボタンから「目標設定AI」を開いてください。\n` +
-        `専用AIは過去のすべての会話を覚えており、あなただけのコーチとして伴走します。`,
+      message: en
+        ? `${reason} is handled by a dedicated AI. Tap the button below to open the Goal Coach.\n` +
+          `It remembers every past conversation and walks alongside you as your personal coach.`
+        : `目標設定(${reason})は専用のAIで行います。下のボタンから「目標設定AI」を開いてください。\n` +
+          `専用AIは過去のすべての会話を覚えており、あなただけのコーチとして伴走します。`,
       choices: [
         {
           id: 'open_coach',
           variant: 'primary',
-          label: '目標設定AIを開く',
+          label: en ? 'Open Goal Coach' : '目標設定AIを開く',
           nav: '/goal-coach',
         },
       ],
@@ -1038,9 +1050,14 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     return ok({ entries, limit: MEMORY_LIMIT });
   },
 
-  request_confirmation: async (input, _ctx: ToolContext): Promise<ToolResult> => {
-    const summary = (input.summary as string) || "この操作を実行してよろしいですか？";
-    const confirmedPrompt = (input.confirmed_action_prompt as string) || "CONFIRMED: 続行してください。";
+  request_confirmation: async (input, ctx: ToolContext): Promise<ToolResult> => {
+    const en = ctx.language === "en";
+    const summary =
+      (input.summary as string) ||
+      (en ? "Proceed with this action?" : "この操作を実行してよろしいですか？");
+    const confirmedPrompt =
+      (input.confirmed_action_prompt as string) ||
+      (en ? "CONFIRMED: please proceed." : "CONFIRMED: 続行してください。");
     const destructive = (input.destructive as boolean) !== false;
     return ok({
       confirmation: true,
@@ -1050,14 +1067,18 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
         {
           id: "yes",
           variant: destructive ? "destructive" : "primary",
-          label: destructive ? "はい、削除する" : "はい、実行する",
+          label: en
+            ? (destructive ? "Yes, delete" : "Yes, proceed")
+            : (destructive ? "はい、削除する" : "はい、実行する"),
           prompt: confirmedPrompt,
         },
         {
           id: "no",
           variant: "secondary",
-          label: "キャンセル",
-          prompt: "CANCELLED: ユーザーは操作をキャンセルしました。何もせず、その旨を簡潔に伝えてください。",
+          label: en ? "Cancel" : "キャンセル",
+          prompt: en
+            ? "CANCELLED: the user cancelled the action. Do nothing and acknowledge briefly."
+            : "CANCELLED: ユーザーは操作をキャンセルしました。何もせず、その旨を簡潔に伝えてください。",
         },
       ],
     });
