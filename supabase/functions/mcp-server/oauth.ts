@@ -22,6 +22,13 @@ const AUTH_CODE_TTL_SEC = 60 * 10;                // 10 minutes
 const SUPPORTED_SCOPES = ["goals"];
 const SCOPE_DEFAULT = "goals";
 
+// Cloudflare Worker proxy hosts the consent HTML. Supabase + Cloudflare
+// inject `Content-Security-Policy: default-src 'none'; sandbox` on every
+// HTML response from *.supabase.co, which makes inline JS / forms inert.
+// The Worker re-emits the page from a non-supabase domain with a permissive
+// CSP so the consent flow actually works in the browser.
+const CONSENT_PAGE_URL = "https://tosche-oauth.kiichitsukui111806.workers.dev/authorize";
+
 // ------------- helpers -------------
 
 const corsHeaders = {
@@ -92,7 +99,9 @@ export function handleAuthServerMetadata(req: Request, basePath: string): Respon
   const issuer = issuerFromRequest(req, basePath);
   return json({
     issuer,
-    authorization_endpoint: `${issuer}/oauth/authorize`,
+    // authorization_endpoint points at the Cloudflare Worker proxy, not at
+    // the Supabase mcp-server. See CONSENT_PAGE_URL comment above for why.
+    authorization_endpoint: CONSENT_PAGE_URL,
     token_endpoint: `${issuer}/oauth/token`,
     registration_endpoint: `${issuer}/oauth/register`,
     scopes_supported: SUPPORTED_SCOPES,
@@ -690,7 +699,7 @@ function consentPage(opts: ConsentPageOpts): string {
       $("allow-btn").disabled = false;
       return;
     }
-    const res = await fetch(window.location.pathname.replace(/\\/oauth\\/authorize\\/?$/, "/oauth/authorize/approve"), {
+    const res = await fetch("https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server/oauth/authorize/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
