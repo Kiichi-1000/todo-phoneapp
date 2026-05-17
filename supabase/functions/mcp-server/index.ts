@@ -27,6 +27,15 @@ import {
   MCP_TOOL_EXECUTORS,
   type ToolContext,
 } from "./tools.ts";
+import {
+  handleAuthServerMetadata,
+  handleProtectedResourceMetadata,
+  handleRegister,
+  handleAuthorizeGet,
+  handleAuthorizeApprove,
+  handleToken,
+  lookupAccessToken,
+} from "./oauth.ts";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SERVER_NAME = "tosche-mcp";
@@ -81,13 +90,20 @@ async function sha256Hex(input: string): Promise<string> {
     .join("");
 }
 
-// Look up a user_id by API key (Bearer token). Returns null if not found or revoked.
-// Bumps last_used_at on success (fire-and-forget; we don't await).
-async function authenticateApiKey(
+// Look up a user_id by Bearer token. Tries OAuth access tokens first (because
+// OAuth tokens have a known prefix-free format and DB lookup is cheap), then
+// falls back to the legacy static API key (`tsche_…`). Returns null on miss.
+async function authenticateBearer(
   adminClient: any,
   rawKey: string,
-): Promise<{ userId: string; keyId: string } | null> {
+): Promise<{ userId: string; source: "oauth" | "api_key" } | null> {
   if (!rawKey || rawKey.length < 16) return null;
+
+  // 1. Try OAuth access token
+  const oauthHit = await lookupAccessToken(adminClient, rawKey);
+  if (oauthHit) return { userId: oauthHit.userId, source: "oauth" };
+
+  // 2. Fall back to static API key (legacy / power user)
   const hash = await sha256Hex(rawKey);
   const { data, error } = await adminClient
     .from("mcp_api_keys")
@@ -105,7 +121,7 @@ async function authenticateApiKey(
     .then(() => {})
     .catch(() => {});
 
-  return { userId: data.user_id as string, keyId: data.id as string };
+  return { userId: data.user_id as string, source: "api_key" };
 }
 
 interface JsonRpcRequest {
@@ -311,11 +327,38 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceKey) {
+  if (!supabaseUrl || !serviceKey || !anonKey) {
     return httpError(500, { error: "Server misconfigured" });
   }
   const adminClient = createClient(supabaseUrl, serviceKey);
+
+  // ---------- OAuth 2.1 surface ----------
+  // GET /.well-known/oauth-protected-resource : tells clients where the auth server lives
+  if (req.method === "GET" && path === "/.well-known/oauth-protected-resource") {
+    return handleProtectedResourceMetadata(req, REST_BASE_PATH);
+  }
+  // GET /.well-known/oauth-authorization-server : the auth server metadata
+  if (req.method === "GET" && path === "/.well-known/oauth-authorization-server") {
+    return handleAuthServerMetadata(req, REST_BASE_PATH);
+  }
+  // POST /oauth/register : Dynamic Client Registration (RFC 7591)
+  if (req.method === "POST" && path === "/oauth/register") {
+    return await handleRegister(req, adminClient);
+  }
+  // GET /oauth/authorize : consent HTML page
+  if (req.method === "GET" && path === "/oauth/authorize") {
+    return await handleAuthorizeGet(req, adminClient);
+  }
+  // POST /oauth/authorize/approve : called by the consent page JS
+  if (req.method === "POST" && path === "/oauth/authorize/approve") {
+    return await handleAuthorizeApprove(req, adminClient, anonKey, supabaseUrl);
+  }
+  // POST /oauth/token : authorization_code or refresh_token grants
+  if (req.method === "POST" && path === "/oauth/token") {
+    return await handleToken(req, adminClient);
+  }
 
   // Parse Authorization header (used by both MCP and REST paths)
   const authHeader = req.headers.get("Authorization") || "";
@@ -325,7 +368,7 @@ Deno.serve(async (req: Request) => {
   // --- POST /api/<tool_name> : REST surface for ChatGPT ---
   if (req.method === "POST" && path.startsWith("/api/")) {
     const toolName = path.slice("/api/".length);
-    const auth = await authenticateApiKey(adminClient, rawKey);
+    const auth = await authenticateBearer(adminClient, rawKey);
     if (!auth) {
       return httpError(401, {
         ok: false,
@@ -376,7 +419,7 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 202, headers: corsHeaders });
   }
 
-  const auth = await authenticateApiKey(adminClient, rawKey);
+  const auth = await authenticateBearer(adminClient, rawKey);
   if (!auth) {
     return jsonRpcError(
       body.id,
