@@ -64,6 +64,7 @@ import {
   purchasePackage,
   restorePurchases,
   syncSubscriptionAfterPurchase,
+  fetchCustomerInfo,
   type PriceOption,
   type Plan,
   type Cycle,
@@ -465,6 +466,12 @@ export default function PaywallScreen() {
   const leavingRef = useRef(false);
 
   // ── プラン情報の読み込み ──────────────────────
+  //
+  // user.id が確定する前に ensureRevenueCat() を呼ぶと appUserID が undefined
+  // のまま configure され、RevenueCat は匿名 ID ($RCAnonymousID:...) を振る。
+  // すると Webhook 側で `app_user_id_not_uuid` でスキップされ、購入しても
+  // user_subscriptions が永遠に更新されない (= 課金壁の無限ループ)。
+  // → user.id が来るまで load() を保留する。
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
@@ -487,8 +494,11 @@ export default function PaywallScreen() {
   }, [user?.id]);
 
   useEffect(() => {
+    // RevenueCat が設定済み (本番/TestFlight) のときは user.id が来るまで待つ。
+    // stub モード時は user.id 不問でロード OK (オフェリングはプレースホルダ)。
+    if (isRevenueCatConfigured() && !user?.id) return;
     void load();
-  }, [load]);
+  }, [load, user?.id]);
 
   // ── 閉じる（購入せず終了）→ workspace へ ────────
   const handleClose = useCallback(() => {
@@ -498,12 +508,26 @@ export default function PaywallScreen() {
   }, [router]);
 
   // ── 購入成功 → 即時同期 → AI タブへ ────────────
+  //
+  // StoreKit Sandbox (TestFlight) では purchasePackage の解決直後に
+  // customerInfo.entitlements.active がまだ空のまま返ってくることがある。
+  // 一回 sync が「no_active_entitlement」を返したまま AI タブに戻ると
+  // checkAiAccess() で未加入扱いになり、ユーザーは Paywall に戻される。
+  // → 1.5s 間隔で最大 3 回 customerInfo を再取得して sync をリトライ。
+  //   それでも entitlement が見えない場合は Webhook 到着を信じて
+  //   AI タブに遷移する (Webhook が後で正本反映する)。
   const goToAiAfterPurchase = useCallback(
     async (customerInfo: unknown, productId?: string) => {
       if (leavingRef.current) return;
       leavingRef.current = true;
       try {
-        await syncSubscriptionAfterPurchase(customerInfo, productId);
+        let synced = await syncSubscriptionAfterPurchase(customerInfo, productId);
+        for (let i = 0; i < 3 && !synced; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const fresh = await fetchCustomerInfo();
+          if (!fresh) break; // stub モード等
+          synced = await syncSubscriptionAfterPurchase(fresh, productId);
+        }
       } catch (e) {
         if (__DEV__) console.warn('[Paywall] sync after purchase failed', e);
       }

@@ -48,12 +48,50 @@ interface UIMessage {
   choicesDisabled?: boolean;
 }
 
-const SUGGESTIONS = [
+const SUGGESTIONS_JA = [
   '今月の目標を一緒に決めたい',
   '中長期で何を目指すか整理したい',
   '半期目標の進捗を振り返りたい',
   '前回立てた目標を見直したい',
 ];
+
+const SUGGESTIONS_EN = [
+  "Let's set this month's goal together",
+  'Help me clarify my long-term direction',
+  'Reflect on my half-year goal progress',
+  'Revisit the goals I set last time',
+];
+
+const STR = {
+  ja: {
+    title: '目標設定AI',
+    subtitle: 'あなた専用のコーチ',
+    resetTitle: 'コーチング履歴をリセット',
+    resetBody: '目標設定AIとの過去の会話をすべて削除します。AIは新しい状態からスタートします。よろしいですか？',
+    cancel: 'キャンセル',
+    delete: '削除',
+    emptyTitle: '目標について話しましょう',
+    emptySub: 'このAIは過去の会話をすべて覚えています。\nあなたの価値観や状況を踏まえた\nパーソナライズドなコーチングを行います。',
+    placeholder: '目標について話してみる…',
+    errSubscription: '試運転期間が終了しています。プランを選んでください。',
+    errBalance: '今月のトークンを使い切りました。',
+    errGeneric: 'エラーが発生しました',
+  },
+  en: {
+    title: 'Goal Coach AI',
+    subtitle: 'Your personal coach',
+    resetTitle: 'Reset coaching history',
+    resetBody: 'This will delete all past conversations with the Goal Coach. It will start from scratch. Continue?',
+    cancel: 'Cancel',
+    delete: 'Delete',
+    emptyTitle: "Let's talk about your goals",
+    emptySub: 'This AI remembers every past conversation.\nIt coaches you in a way that fits your values\nand the realities of your life.',
+    placeholder: 'Tell the coach about your goals…',
+    errSubscription: 'Your trial has ended. Please choose a plan.',
+    errBalance: "You've used up this month's tokens.",
+    errGeneric: 'An error occurred',
+  },
+};
 
 export default function GoalCoachScreen() {
   const router = useRouter();
@@ -63,6 +101,8 @@ export default function GoalCoachScreen() {
   const params = useLocalSearchParams<{ prefill?: string }>();
   const { user } = useAuth();
   const { lang } = useLanguage();
+  const s = lang === 'en' ? STR.en : STR.ja;
+  const suggestions = lang === 'en' ? SUGGESTIONS_EN : SUGGESTIONS_JA;
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -154,12 +194,12 @@ export default function GoalCoachScreen() {
   const handleResetCoach = () => {
     if (messages.length === 0) return;
     Alert.alert(
-      'コーチング履歴をリセット',
-      '目標設定AIとの過去の会話をすべて削除します。AIは新しい状態からスタートします。よろしいですか？',
+      s.resetTitle,
+      s.resetBody,
       [
-        { text: 'キャンセル', style: 'cancel' },
+        { text: s.cancel, style: 'cancel' },
         {
-          text: '削除',
+          text: s.delete,
           style: 'destructive',
           onPress: async () => {
             if (!user) return;
@@ -244,10 +284,10 @@ export default function GoalCoachScreen() {
       });
     } catch (e: any) {
       const message = e?.code === 'subscription_required'
-        ? '試運転期間が終了しています。プランを選んでください。'
+        ? s.errSubscription
         : e?.code === 'insufficient_balance'
-        ? '今月のトークンを使い切りました。'
-        : e?.message || 'エラーが発生しました';
+        ? s.errBalance
+        : e?.message || s.errGeneric;
       assistantBuf = `⚠️ ${message}`;
       setMessages((prev) =>
         prev.map((m) =>
@@ -264,7 +304,7 @@ export default function GoalCoachScreen() {
       setSending(false);
       scrollToBottom();
     }
-  }, [sending, user, router, scrollToBottom]);
+  }, [sending, user, router, scrollToBottom, s]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -306,8 +346,8 @@ export default function GoalCoachScreen() {
               <Target size={14} color="#fff" strokeWidth={2.4} />
             </LinearGradient>
             <View>
-              <Text style={styles.headerTitle}>目標設定AI</Text>
-              <Text style={styles.headerSubtitle}>あなた専用のコーチ</Text>
+              <Text style={styles.headerTitle}>{s.title}</Text>
+              <Text style={styles.headerSubtitle}>{s.subtitle}</Text>
             </View>
           </View>
 
@@ -349,22 +389,18 @@ export default function GoalCoachScreen() {
                 >
                   <Target size={36} color="#8B5CF6" strokeWidth={2} />
                 </LinearGradient>
-                <Text style={styles.emptyTitle}>目標について話しましょう</Text>
-                <Text style={styles.emptySub}>
-                  このAIは過去の会話をすべて覚えています。{'\n'}
-                  あなたの価値観や状況を踏まえた{'\n'}
-                  パーソナライズドなコーチングを行います。
-                </Text>
+                <Text style={styles.emptyTitle}>{s.emptyTitle}</Text>
+                <Text style={styles.emptySub}>{s.emptySub}</Text>
                 <View style={styles.suggestionsWrap}>
-                  {SUGGESTIONS.map((s) => (
+                  {suggestions.map((sugg) => (
                     <TouchableOpacity
-                      key={s}
+                      key={sugg}
                       style={styles.suggestionChip}
-                      onPress={() => sendMessage(s)}
+                      onPress={() => sendMessage(sugg)}
                       activeOpacity={0.7}
                     >
                       <Target size={12} color="#8B5CF6" strokeWidth={2.2} />
-                      <Text style={styles.suggestionText}>{s}</Text>
+                      <Text style={styles.suggestionText}>{sugg}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -410,7 +446,7 @@ export default function GoalCoachScreen() {
                 style={styles.input}
                 value={input}
                 onChangeText={setInput}
-                placeholder="目標について話してみる…"
+                placeholder={s.placeholder}
                 placeholderTextColor="#94A3B8"
                 multiline
                 maxLength={2000}

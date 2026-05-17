@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Linking,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BookOpen, Square, CheckSquare } from 'lucide-react-native';
@@ -16,6 +17,10 @@ interface Props {
   onAccept: () => void;
 }
 
+// `<Modal>` でラップして全画面表示する。
+// これが無いと _layout.tsx の <Stack> と兄弟要素として縦に積まれ、
+// 画面の下半分しか占有できず、上半分にタブバー等が透けて見える
+// (LanguagePickerModal も同じ理由で <Modal> を使用)。
 export default function ConsentScreen({ onAccept }: Props) {
   const { t } = useLanguage();
   const [termsChecked, setTermsChecked] = useState(false);
@@ -24,8 +29,9 @@ export default function ConsentScreen({ onAccept }: Props) {
   const canAccept = termsChecked && privacyChecked;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+    <Modal visible animationType="fade" transparent={false} statusBarTranslucent>
+      <SafeAreaView style={styles.container}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.logoSection}>
           <View style={styles.logoContainer}>
             <BookOpen size={40} color="#1a1a2e" />
@@ -96,11 +102,12 @@ export default function ConsentScreen({ onAccept }: Props) {
           <Text style={styles.acceptButtonText}>{t('consent.acceptStart')}</Text>
         </TouchableOpacity>
 
-        <Text style={styles.footerNote}>
-          {t('consent.footerNote')}
-        </Text>
-      </ScrollView>
-    </SafeAreaView>
+          <Text style={styles.footerNote}>
+            {t('consent.footerNote')}
+          </Text>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 

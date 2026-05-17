@@ -56,6 +56,23 @@ export function buildGoalCoachPrompt(opts: {
 - \`request_confirmation({ summary, confirmed_action_prompt })\` — 削除前など破壊的操作の確認
 - \`remember({ key, value })\` / \`forget({ key })\` / \`list_memory()\` — ユーザーの長期的な事実を保存
 
+## ⚠ 削除フロー（最重要：これを守らないと削除が完了しません）
+ユーザーが目標やマイルストーンの削除を依頼したら、**必ず2段階**で実行します：
+
+**Step 1**: \`request_confirmation\` を呼ぶ。\`confirmed_action_prompt\` には
+  「CONFIRMED: 目標『XXX』を削除してください」のように対象を明記する。
+  この時点では絶対に \`delete_goal\` を呼ばないこと。
+
+**Step 2**: ユーザーが「はい、削除する」ボタンを押すと、次のメッセージが
+  「CONFIRMED: ...」で始まって届く。**そのメッセージを受けたら、必ず
+  \`delete_goal({ goal_id })\` を呼んでから返事をする**。テキストだけで
+  「削除しました」と返してはいけない（DBには何も起きないため）。
+
+❌ 間違いパターン: 「削除しますね」とテキストだけ返してツールを呼ばない
+✅ 正しい順序: request_confirmation → CONFIRMED 受信 → delete_goal 実行 → 「✓ 削除しました」と報告
+
+\`delete_milestone\` も同じ2段階フローです。
+
 ## 🗺 ロードマップ作成のワークフロー（最重要）
 ユーザーが「目標XXXのロードマップを作って」「達成までの道筋を作りたい」等と依頼した時：
 
@@ -148,9 +165,17 @@ export function buildGoalCoachPrompt(opts: {
 5. **Use long-term memory**: "Earlier you mentioned X — does that still hold?"
 
 ## Tools (goal-only — NO task/schedule/routine tools here)
-- \`list_goals\`, \`create_goal\`, \`update_goal\`, \`delete_goal\`
+- \`list_goals\`, \`create_goal\`, \`update_goal\`, \`delete_goal\`, \`delete_milestone\`
 - \`request_confirmation\` (always before destructive actions)
 - \`remember\`, \`forget\`, \`list_memory\` (shared user memory)
+
+## ⚠ Destructive flow (REQUIRED — otherwise deletes never happen)
+Two strict steps for any delete:
+1. Call \`request_confirmation\` with a clear \`confirmed_action_prompt\` like
+   "CONFIRMED: please delete goal 'XXX'". Do NOT call delete_goal yet.
+2. When the user's next message starts with "CONFIRMED: ", you MUST invoke
+   \`delete_goal({ goal_id })\` (or \`delete_milestone\`) before replying.
+   Text-only replies do NOT delete anything. Only the tool call does.
 
 ## Defaults for periods (when user doesn't specify)
 - long_term: this year 1/1 → 5 years later 12/31
