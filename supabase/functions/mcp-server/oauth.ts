@@ -616,10 +616,15 @@ function consentPage(opts: ConsentPageOpts): string {
     <h2>ToSche にサインイン</h2>
     <form id="login-form">
       <label>メールアドレス<input type="email" id="email" required autocomplete="email"></label>
-      <label>パスワード<input type="password" id="password" required autocomplete="current-password"></label>
+      <label>パスワード <span class="muted">(Apple / Google サインインの方は空欄でOK)</span><input type="password" id="password" autocomplete="current-password"></label>
       <button type="submit" id="login-btn">サインイン</button>
     </form>
+    <p class="muted" style="margin-top:10px">
+      パスワードが分からない場合は
+      <a href="#" id="magic-link-btn">メールでサインインリンクを送る</a>
+    </p>
     <p id="login-err" class="err" hidden></p>
+    <p id="magic-link-ok" class="muted" hidden>メールを送りました。届いたリンクを開くと、新しいタブが立ち上がってこの承認画面が表示されます。そこで「許可」をクリックしてください。</p>
   </section>
 
   <section id="consent-section" hidden>
@@ -671,6 +676,12 @@ function consentPage(opts: ConsentPageOpts): string {
     $("login-btn").disabled = true;
     const email = $("email").value.trim();
     const password = $("password").value;
+    if (!password) {
+      $("login-err").textContent = "パスワードを入力するか、下の「メールでサインインリンク」を使ってください。";
+      $("login-err").hidden = false;
+      $("login-btn").disabled = false;
+      return;
+    }
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     $("login-btn").disabled = false;
     if (error || !data?.session) {
@@ -680,6 +691,38 @@ function consentPage(opts: ConsentPageOpts): string {
     }
     await showConsent(data.session);
   });
+
+  $("magic-link-btn").addEventListener("click", async (e) => {
+    e.preventDefault();
+    $("login-err").hidden = true;
+    $("magic-link-ok").hidden = true;
+    const email = $("email").value.trim();
+    if (!email) {
+      $("login-err").textContent = "メールアドレスを先に入力してください。";
+      $("login-err").hidden = false;
+      return;
+    }
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.href,
+        shouldCreateUser: false,
+      },
+    });
+    if (error) {
+      $("login-err").textContent = "送信に失敗しました: " + error.message;
+      $("login-err").hidden = false;
+      return;
+    }
+    $("magic-link-ok").hidden = false;
+  });
+
+  // Re-check session every 2 seconds while waiting for magic link
+  setInterval(async () => {
+    if (!$("consent-section").hidden) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) await showConsent(session);
+  }, 2000);
 
   $("deny-btn").addEventListener("click", () => {
     // Redirect back with error per OAuth spec

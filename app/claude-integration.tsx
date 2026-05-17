@@ -164,20 +164,19 @@ export default function ClaudeIntegrationScreen() {
           </Text>
         </View>
 
-        {/* Setup: Claude */}
+        {/* Setup: Claude (OAuth — recommended) */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>セットアップ (Claude / MCP)</Text>
+          <Text style={styles.sectionTitle}>Claude.ai に接続 (推奨・OAuth)</Text>
+          <Text style={styles.muted}>
+            キーのコピペ不要。下のURLを Claude.ai に貼り付けるだけで、
+            ToSche の認可画面が立ち上がります。承認すれば連携完了。
+          </Text>
 
-          <Step n="1" title="APIキーを生成">
-            下の「新しいキーを生成」をタップ。1度だけ表示されるのでメモ。
+          <Step n="1" title="claude.ai → Connectors → Add custom connector">
+            (Claude Pro/Team が必要)
           </Step>
 
-          <Step n="2" title="claude.ai または Claude Code を開く">
-            claude.ai → 設定 → Connectors → カスタムコネクター追加
-            {'\n'}または `claude mcp add tosche --transport http <下のURL> --header "Authorization: Bearer <キー>"`
-          </Step>
-
-          <Step n="3" title="サーバーURLを貼り付け">
+          <Step n="2" title="MCP server URL を貼り付け">
             <TouchableOpacity
               onPress={() => handleCopy(mcpUrl, 'MCP URLをコピーしました')}
               style={styles.codeBox}
@@ -189,24 +188,24 @@ export default function ClaudeIntegrationScreen() {
             </TouchableOpacity>
           </Step>
 
-          <Step n="4" title="APIキーを貼り付けて接続">
-            Bearer トークンとして上で生成したキーを貼り付け
+          <Step n="3" title="認可画面で「許可」">
+            メールアドレス+パスワード、または「メールでサインインリンク」(Apple/Google サインインの方) → 「許可する」
           </Step>
         </View>
 
         {/* Setup: ChatGPT */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>セットアップ (ChatGPT Custom GPT)</Text>
+          <Text style={styles.sectionTitle}>ChatGPT Custom GPT に接続</Text>
+          <Text style={styles.muted}>
+            Custom GPT (ChatGPT Plus/Pro) で OpenAPI Action として組み込み。
+            こちらは下の APIキー が必要。
+          </Text>
 
-          <Step n="1" title="同じAPIキーを使う">
-            下のキー生成は1度だけでOK。Claude用とChatGPT用で共通。
+          <Step n="1" title="chat.openai.com → My GPTs → Create → Configure → Actions">
+            「Import from URL」を選択
           </Step>
 
-          <Step n="2" title="chat.openai.com で Custom GPT を作成">
-            My GPTs → Create → Configure → Actions → 「Import from URL」
-          </Step>
-
-          <Step n="3" title="OpenAPIスキーマURLを貼り付け">
+          <Step n="2" title="OpenAPI スキーマURLを貼り付け">
             <TouchableOpacity
               onPress={() => handleCopy(openApiUrl, 'OpenAPI URLをコピーしました')}
               style={styles.codeBox}
@@ -218,8 +217,8 @@ export default function ClaudeIntegrationScreen() {
             </TouchableOpacity>
           </Step>
 
-          <Step n="4" title="Authentication = API Key, Auth Type = Bearer">
-            生成したキーをBearer Tokenとして設定して保存
+          <Step n="3" title="Authentication = API Key, Auth Type = Bearer">
+            下で生成したキーを Bearer Token として設定
           </Step>
         </View>
 
@@ -440,6 +439,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sectionTitleCount: { fontSize: 12, color: '#94a3b8', marginBottom: 12 },
+  muted: { fontSize: 12, color: '#64748b', lineHeight: 18, marginBottom: 12 },
 
   step: { flexDirection: 'row', marginBottom: 14, gap: 12 },
   stepNum: {

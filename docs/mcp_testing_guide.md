@@ -1,5 +1,37 @@
 # MCP連携の実機テスト手順
 
+## 接続方法は3種類
+
+| 方法 | クライアント | キー操作 | 推奨度 |
+| :---- | :---- | :---- | :---- |
+| **A. OAuth (Spyglass式)** | Claude.ai (Pro/Team) | 不要 | ★★★ 推奨 |
+| **B. Custom GPT Action** | ChatGPT (Plus/Pro) | 必要 (APIキー) | ★★ |
+| **C. 手動APIキー** | Claude Code CLI, 任意のMCPクライアント | 必要 | ★ (上級者向け) |
+
+---
+
+## A. Claude.ai に OAuth で接続 (一番楽)
+
+1. claude.ai を開く → Settings → Connectors → "Add custom connector"
+2. **MCP Server URL**: `https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server`
+3. Claude.ai が自動でOAuthフローを開始 → ToSche の承認画面 (Cloudflare Worker hosted) が立ち上がる
+4. メール+パスワード でサインイン
+   - **Apple/Google サインインの方**は、パスワード欄を空にして「メールでサインインリンクを送る」をクリック → 届いたリンクから新規タブで承認
+5. 「許可する」をクリック → claude.ai に自動で戻る → 接続完了
+
+ToScheアプリでキーを生成する必要なし。
+
+## B. ChatGPT Custom GPT に接続
+
+ChatGPT Plus/Pro:
+1. アプリで設定 → Claude 連携 → APIキーを生成 (1度だけ表示されるのでコピー)
+2. chat.openai.com → My GPTs → Create → Configure → Actions
+3. **Import from URL**: `https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server/openapi.json`
+4. Authentication → **API Key** → Auth Type **Bearer** → 上のキーを貼り付け
+5. Save → 5ツール (list_goals 等) が見えればOK
+
+## C. 手動APIキー (Claude Code CLI など)
+
 **目的**: Expo Go + Claude Code CLI で、EASビルド料金を払わずにMCP連携をE2Eテストする。
 
 **検証状況** (2026-05-18):
