@@ -68,19 +68,31 @@ function jsonResponse(payload: unknown, status = 200) {
 //   ToSche Basic      / ToSche.std.1.2           / 月額
 //   ToSche Yearly     / tosche_basic_yearly      / 年額
 //
-// product_id の命名は不揃いだが ASC 側の実物がこれなので、コードを実物に
-// 合わせる (ASC 側は変更しない前提)。
+// Google Play は product_id に大文字を許可しないため、月額3商品は別名で登録する。
+// 年額3商品は既に lowercase なので iOS と同じ ID を再利用する。
+// Play 側で Tsukui-san が以下のID で6商品を作成する前提:
+//   pro 月額      → tosche_ai_pro_monthly
+//   pro 年額      → tosche_ai_pro_yearly (iOS と共通)
+//   standard 月額 → tosche_ai_standard_monthly
+//   standard 年額 → tosche_ai_standard_yearly (iOS と共通)
+//   basic 月額    → tosche_basic_monthly
+//   basic 年額    → tosche_basic_yearly (iOS と共通)
 // ------------------------------------------------------------
 type PlanTier = "basic" | "standard" | "pro";
 type Cycle = "monthly" | "yearly";
 
 const PRODUCT_MAP: Record<string, { plan: PlanTier; cycle: Cycle }> = {
+  // iOS (App Store)
   "ToSche.AI.Pro.1.2": { plan: "pro", cycle: "monthly" },
   "tosche_ai_pro_yearly": { plan: "pro", cycle: "yearly" },
   "ToSche.AI.std.1.2": { plan: "standard", cycle: "monthly" },
   "tosche_ai_standard_yearly": { plan: "standard", cycle: "yearly" },
   "ToSche.std.1.2": { plan: "basic", cycle: "monthly" },
   "tosche_basic_yearly": { plan: "basic", cycle: "yearly" },
+  // Android (Google Play) — 月額3商品は別ID。年額は上記と共通。
+  "tosche_ai_pro_monthly": { plan: "pro", cycle: "monthly" },
+  "tosche_ai_standard_monthly": { plan: "standard", cycle: "monthly" },
+  "tosche_basic_monthly": { plan: "basic", cycle: "monthly" },
 };
 
 // PRODUCT_CHANGE で差額付与を計算するための plan → 月次付与額 (yen)。

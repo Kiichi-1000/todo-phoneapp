@@ -94,70 +94,51 @@ export interface PurchaseResult {
 // Default placeholder offerings used when RevenueCat is not yet configured
 // (stub モード / web / API キー未設定時のフォールバック表示用)。
 //
-// identifier は App Store Connect に実在する6商品の product_id に厳密に一致
-// させること。SDK 経由で取得した実 Offering の product_id とこの identifier を
-// 突き合わせて価格を上書きするため (getOfferings 参照)、ズレると価格が出ない。
+// identifier は App Store Connect / Google Play に実在する商品の product_id に
+// 厳密に一致させること。SDK 経由で取得した実 Offering の product_id とこの
+// identifier を突き合わせて価格を上書きするため (getOfferings 参照)、ズレると
+// 価格が出ない。
 //
-// ASC 実商品 (参照名 / product_id / 周期):
-//   AI Pro             / ToSche.AI.Pro.1.2         / 月額
-//   AI Pro Yearly      / tosche_ai_pro_yearly      / 年額
-//   AI Standard        / ToSche.AI.std.1.2         / 月額
-//   AI Standard Yearly / tosche_ai_standard_yearly / 年額
-//   ToSche Basic       / ToSche.std.1.2            / 月額
-//   ToSche Yearly      / tosche_basic_yearly       / 年額
+// iOS と Android で月額3商品は product_id が異なる (Play は大文字不可のため):
+//   iOS                       / Android                       / 周期
+//   ToSche.std.1.2            / tosche_basic_monthly          / 月額 basic
+//   ToSche.AI.std.1.2         / tosche_ai_standard_monthly    / 月額 standard
+//   ToSche.AI.Pro.1.2         / tosche_ai_pro_monthly         / 月額 pro
+// 年額3商品は両プラットフォームで共通 (元から lowercase):
+//   tosche_basic_yearly / tosche_ai_standard_yearly / tosche_ai_pro_yearly
 //
-// priceString / priceMicros は「仮置き」。実価格は RevenueCat / ASC から
+// priceString / priceMicros は「仮置き」。実価格は RevenueCat / Store から
 // 取得した値 (getOfferings 内で SDK の pkg.product から上書き) が正となる。
-const PLACEHOLDER_OFFERINGS: PriceOption[] = [
-  {
-    identifier: 'ToSche.std.1.2',
-    plan: 'basic',
-    cycle: 'monthly',
-    priceString: '¥300', // 仮置き — 実価格は RevenueCat/ASC から取得
-    priceMicros: 300_000_000,
-    currencyCode: 'JPY',
-  },
-  {
-    identifier: 'tosche_basic_yearly',
-    plan: 'basic',
-    cycle: 'yearly',
-    priceString: '¥3,240', // 月額×12×0.9 (10%割引) — 実価格は RevenueCat/ASC から取得
-    priceMicros: 3_240_000_000,
-    currencyCode: 'JPY',
-  },
-  {
-    identifier: 'ToSche.AI.std.1.2',
-    plan: 'standard',
-    cycle: 'monthly',
-    priceString: '¥1,200', // 仮置き — 実価格は RevenueCat/ASC から取得
-    priceMicros: 1_200_000_000,
-    currencyCode: 'JPY',
-  },
-  {
-    identifier: 'tosche_ai_standard_yearly',
-    plan: 'standard',
-    cycle: 'yearly',
-    priceString: '¥12,960', // 月額×12×0.9 (10%割引) — 実価格は RevenueCat/ASC から取得
-    priceMicros: 12_960_000_000,
-    currencyCode: 'JPY',
-  },
-  {
-    identifier: 'ToSche.AI.Pro.1.2',
-    plan: 'pro',
-    cycle: 'monthly',
-    priceString: '¥2,000', // 仮置き — 実価格は RevenueCat/ASC から取得
-    priceMicros: 2_000_000_000,
-    currencyCode: 'JPY',
-  },
-  {
-    identifier: 'tosche_ai_pro_yearly',
-    plan: 'pro',
-    cycle: 'yearly',
-    priceString: '¥21,600', // 月額×12×0.9 (10%割引) — 実価格は RevenueCat/ASC から取得
-    priceMicros: 21_600_000_000,
-    currencyCode: 'JPY',
-  },
+const PLACEHOLDER_OFFERINGS_IOS: PriceOption[] = [
+  { identifier: 'ToSche.std.1.2',           plan: 'basic',    cycle: 'monthly', priceString: '¥300',    priceMicros: 300_000_000,    currencyCode: 'JPY' },
+  { identifier: 'tosche_basic_yearly',      plan: 'basic',    cycle: 'yearly',  priceString: '¥3,240',  priceMicros: 3_240_000_000,  currencyCode: 'JPY' },
+  { identifier: 'ToSche.AI.std.1.2',        plan: 'standard', cycle: 'monthly', priceString: '¥1,200',  priceMicros: 1_200_000_000,  currencyCode: 'JPY' },
+  { identifier: 'tosche_ai_standard_yearly',plan: 'standard', cycle: 'yearly',  priceString: '¥12,960', priceMicros: 12_960_000_000, currencyCode: 'JPY' },
+  { identifier: 'ToSche.AI.Pro.1.2',        plan: 'pro',      cycle: 'monthly', priceString: '¥2,000',  priceMicros: 2_000_000_000,  currencyCode: 'JPY' },
+  { identifier: 'tosche_ai_pro_yearly',     plan: 'pro',      cycle: 'yearly',  priceString: '¥21,600', priceMicros: 21_600_000_000, currencyCode: 'JPY' },
 ];
+
+const PLACEHOLDER_OFFERINGS_ANDROID: PriceOption[] = [
+  { identifier: 'tosche_basic_monthly',       plan: 'basic',    cycle: 'monthly', priceString: '¥300',    priceMicros: 300_000_000,    currencyCode: 'JPY' },
+  { identifier: 'tosche_basic_yearly',        plan: 'basic',    cycle: 'yearly',  priceString: '¥3,240',  priceMicros: 3_240_000_000,  currencyCode: 'JPY' },
+  { identifier: 'tosche_ai_standard_monthly', plan: 'standard', cycle: 'monthly', priceString: '¥1,200',  priceMicros: 1_200_000_000,  currencyCode: 'JPY' },
+  { identifier: 'tosche_ai_standard_yearly',  plan: 'standard', cycle: 'yearly',  priceString: '¥12,960', priceMicros: 12_960_000_000, currencyCode: 'JPY' },
+  { identifier: 'tosche_ai_pro_monthly',      plan: 'pro',      cycle: 'monthly', priceString: '¥2,000',  priceMicros: 2_000_000_000,  currencyCode: 'JPY' },
+  { identifier: 'tosche_ai_pro_yearly',       plan: 'pro',      cycle: 'yearly',  priceString: '¥21,600', priceMicros: 21_600_000_000, currencyCode: 'JPY' },
+];
+
+// `getOfferings` の placeholder 探索は iOS/Android 両方を含むテーブルを引く
+// (SDK が返す productId はプラットフォーム由来なのでどちらの ID も来うる)。
+// フォールバック表示は現プラットフォームの 6 商品だけにする。
+const PLACEHOLDER_OFFERINGS_ALL: PriceOption[] = [
+  ...PLACEHOLDER_OFFERINGS_IOS,
+  ...PLACEHOLDER_OFFERINGS_ANDROID.filter(
+    (a) => !PLACEHOLDER_OFFERINGS_IOS.some((i) => i.identifier === a.identifier),
+  ),
+];
+
+const PLACEHOLDER_OFFERINGS: PriceOption[] =
+  Platform.OS === 'android' ? PLACEHOLDER_OFFERINGS_ANDROID : PLACEHOLDER_OFFERINGS_IOS;
 
 let initPromise: Promise<void> | null = null;
 let initialized = false;
@@ -252,7 +233,9 @@ export async function getOfferings(): Promise<PriceOption[]> {
     const result: PriceOption[] = [];
     for (const pkg of current.availablePackages ?? []) {
       const productId = pkg.product?.identifier ?? pkg.identifier;
-      const placeholder = PLACEHOLDER_OFFERINGS.find((p) => p.identifier === productId);
+      // PLACEHOLDER_OFFERINGS_ALL は iOS + Android 両方のIDを含む。SDK が返す
+      // productId はプラットフォーム由来なのでどちらでも引けるよう全集合で探す。
+      const placeholder = PLACEHOLDER_OFFERINGS_ALL.find((p) => p.identifier === productId);
       if (!placeholder) continue;
       result.push({
         ...placeholder,
