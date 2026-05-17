@@ -40,6 +40,9 @@ function getMcpServerUrl(): string {
     'https://utfyxsvxyvzxjqcgzjjl.supabase.co';
   return `${url.replace(/\/$/, '')}/functions/v1/mcp-server`;
 }
+function getOpenApiUrl(): string {
+  return `${getMcpServerUrl()}/openapi.json`;
+}
 
 export default function ClaudeIntegrationScreen() {
   const router = useRouter();
@@ -51,6 +54,7 @@ export default function ClaudeIntegrationScreen() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
 
   const mcpUrl = getMcpServerUrl();
+  const openApiUrl = getOpenApiUrl();
 
   useEffect(() => {
     loadKeys();
@@ -143,7 +147,7 @@ export default function ClaudeIntegrationScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBack}>
           <ArrowLeft size={22} color="#0f172a" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Claude 連携</Text>
+        <Text style={styles.headerTitle}>AI 連携</Text>
         <View style={{ width: 22 }} />
       </View>
 
@@ -153,28 +157,29 @@ export default function ClaudeIntegrationScreen() {
           <View style={styles.heroIconWrap}>
             <Sparkles size={28} color="#6366F1" />
           </View>
-          <Text style={styles.heroTitle}>Claude で目標を立てる</Text>
+          <Text style={styles.heroTitle}>Claude / ChatGPT で目標を立てる</Text>
           <Text style={styles.heroSub}>
-            Claude.ai と ToSche をつなぐと、Claude が立てた目標・ロードマップが
+            Claude.ai や ChatGPT と ToSche をつなぐと、AI が立てた目標・ロードマップが
             自動で ToSche に流れ込みます。日々のタスク分解は ToSche AI が引き受けます。
           </Text>
         </View>
 
-        {/* Setup steps */}
+        {/* Setup: Claude */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>セットアップ</Text>
+          <Text style={styles.sectionTitle}>セットアップ (Claude / MCP)</Text>
 
           <Step n="1" title="APIキーを生成">
             下の「新しいキーを生成」をタップ。1度だけ表示されるのでメモ。
           </Step>
 
-          <Step n="2" title="claude.ai を開く">
-            Claude.ai → 設定 → Connectors → カスタムコネクター追加
+          <Step n="2" title="claude.ai または Claude Code を開く">
+            claude.ai → 設定 → Connectors → カスタムコネクター追加
+            {'\n'}または `claude mcp add tosche --transport http <下のURL> --header "Authorization: Bearer <キー>"`
           </Step>
 
           <Step n="3" title="サーバーURLを貼り付け">
             <TouchableOpacity
-              onPress={() => handleCopy(mcpUrl, 'URLをコピーしました')}
+              onPress={() => handleCopy(mcpUrl, 'MCP URLをコピーしました')}
               style={styles.codeBox}
             >
               <Text style={styles.codeText} numberOfLines={1}>
@@ -186,6 +191,35 @@ export default function ClaudeIntegrationScreen() {
 
           <Step n="4" title="APIキーを貼り付けて接続">
             Bearer トークンとして上で生成したキーを貼り付け
+          </Step>
+        </View>
+
+        {/* Setup: ChatGPT */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>セットアップ (ChatGPT Custom GPT)</Text>
+
+          <Step n="1" title="同じAPIキーを使う">
+            下のキー生成は1度だけでOK。Claude用とChatGPT用で共通。
+          </Step>
+
+          <Step n="2" title="chat.openai.com で Custom GPT を作成">
+            My GPTs → Create → Configure → Actions → 「Import from URL」
+          </Step>
+
+          <Step n="3" title="OpenAPIスキーマURLを貼り付け">
+            <TouchableOpacity
+              onPress={() => handleCopy(openApiUrl, 'OpenAPI URLをコピーしました')}
+              style={styles.codeBox}
+            >
+              <Text style={styles.codeText} numberOfLines={1}>
+                {openApiUrl}
+              </Text>
+              <Copy size={16} color="#475569" />
+            </TouchableOpacity>
+          </Step>
+
+          <Step n="4" title="Authentication = API Key, Auth Type = Bearer">
+            生成したキーをBearer Tokenとして設定して保存
           </Step>
         </View>
 

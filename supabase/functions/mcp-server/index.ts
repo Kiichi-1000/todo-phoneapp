@@ -34,7 +34,7 @@ const SERVER_VERSION = "1.4.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id",
   "Access-Control-Expose-Headers": "mcp-session-id",
@@ -164,25 +164,150 @@ async function handleToolsCall(
   }
 }
 
+// ------------- OpenAPI 3.1 surface (for ChatGPT Custom GPT Actions) -------------
+//
+// ChatGPT's consumer UI does not yet accept arbitrary MCP server URLs the way
+// Claude.ai does. The most reliable way to expose the same tools to ChatGPT
+// users is a Custom GPT with an OpenAPI 3.x Action pointing at our REST surface.
+//
+// Endpoints:
+//   GET  /functions/v1/mcp-server/openapi.json       → schema for Custom GPT setup
+//   POST /functions/v1/mcp-server/api/<tool_name>    → call a tool (same Bearer auth)
+
+const REST_BASE_PATH = "/functions/v1/mcp-server";
+
+function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
+  const paths: Record<string, unknown> = {};
+  for (const tool of MCP_TOOL_DEFS) {
+    const required = tool.inputSchema.required ?? [];
+    paths[`/api/${tool.name}`] = {
+      post: {
+        operationId: tool.name,
+        summary: tool.description.split("\n")[0].slice(0, 200),
+        description: tool.description,
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: required.length > 0,
+          content: {
+            "application/json": { schema: tool.inputSchema },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Tool result. `ok=true` on success with `data`, `ok=false` on validation/permission failure with `error`.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok: { type: "boolean" },
+                    data: { type: "object", additionalProperties: true },
+                    error: { type: "string" },
+                  },
+                  required: ["ok"],
+                },
+              },
+            },
+          },
+          "401": { description: "Unauthorized — missing or revoked API key" },
+          "404": { description: "Unknown tool" },
+          "500": { description: "Server error" },
+        },
+      },
+    };
+  }
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "ToSche Goals API",
+      version: SERVER_VERSION,
+      description:
+        "REST surface over the ToSche MCP server. Designed for ChatGPT Custom GPT Actions. " +
+        "Auth: Bearer token, same key generated in the ToSche app (Settings → Claude integration). " +
+        "Calls write to the user's own ToSche account; that user is resolved from the key.",
+    },
+    servers: [{ url: baseUrl }],
+    components: {
+      securitySchemes: {
+        bearerAuth: { type: "http", scheme: "bearer" },
+      },
+    },
+    paths,
+  };
+}
+
+async function handleRestCall(
+  toolName: string,
+  bodyJson: unknown,
+  ctx: ToolContext,
+): Promise<Response> {
+  const executor = MCP_TOOL_EXECUTORS[toolName];
+  if (!executor) {
+    return httpError(404, { ok: false, error: `Unknown tool: ${toolName}` });
+  }
+  const args =
+    bodyJson && typeof bodyJson === "object"
+      ? (bodyJson as Record<string, unknown>)
+      : {};
+  try {
+    const result = await executor(args, ctx);
+    return new Response(JSON.stringify(result), {
+      // 200 even on validation errors so Custom GPT sees the error field
+      // and can react/retry. Reserve non-200 for transport-level problems.
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e: any) {
+    return httpError(500, { ok: false, error: e?.message ?? String(e) });
+  }
+}
+
 // ------------- HTTP entrypoint -------------
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
-  // Health check / discovery: GET returns server info (no auth required).
-  if (req.method === "GET") {
+
+  const url = new URL(req.url);
+  // Normalize path: Supabase strips the `/functions/v1/<name>` prefix in some
+  // runtimes but not others. Handle both shapes, plus trailing slashes.
+  let path = url.pathname;
+  if (path.startsWith(REST_BASE_PATH)) {
+    path = path.slice(REST_BASE_PATH.length);
+  } else if (path.startsWith("/mcp-server")) {
+    path = path.slice("/mcp-server".length);
+  }
+  if (path === "") path = "/";
+  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+
+  // --- GET / : server info (no auth) ---
+  if (req.method === "GET" && path === "/") {
     return httpError(200, {
       server: SERVER_NAME,
       version: SERVER_VERSION,
       protocol: MCP_PROTOCOL_VERSION,
       transport: "streamable-http",
+      surfaces: {
+        mcp: { method: "POST", path: "/" },
+        openapi: { method: "GET", path: "/openapi.json" },
+        rest: { method: "POST", path: "/api/<tool_name>" },
+      },
       docs:
-        "POST a JSON-RPC 2.0 request with Authorization: Bearer <api-key>. Generate keys at: tosche app → Settings → Claude integration.",
+        "Bearer auth. Keys are generated in the ToSche app → Settings → Claude integration.",
     });
   }
-  if (req.method !== "POST") {
-    return httpError(405, { error: "Method not allowed" });
+
+  // --- GET /openapi.json : schema for ChatGPT Custom GPT Action ---
+  if (req.method === "GET" && path === "/openapi.json") {
+    // Force https because Supabase terminates TLS at the edge and the
+    // internal req.url surfaces as http://; ChatGPT Custom GPT Actions
+    // reject non-https `servers.url`.
+    const baseUrl = `https://${url.host}${REST_BASE_PATH}`;
+    return new Response(JSON.stringify(buildOpenApiSpec(baseUrl)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -192,12 +317,41 @@ Deno.serve(async (req: Request) => {
   }
   const adminClient = createClient(supabaseUrl, serviceKey);
 
-  // Parse Authorization header
+  // Parse Authorization header (used by both MCP and REST paths)
   const authHeader = req.headers.get("Authorization") || "";
   const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader);
   const rawKey = bearerMatch?.[1]?.trim() ?? "";
 
-  // Parse JSON-RPC body
+  // --- POST /api/<tool_name> : REST surface for ChatGPT ---
+  if (req.method === "POST" && path.startsWith("/api/")) {
+    const toolName = path.slice("/api/".length);
+    const auth = await authenticateApiKey(adminClient, rawKey);
+    if (!auth) {
+      return httpError(401, {
+        ok: false,
+        error:
+          "Unauthorized: missing or invalid API key. Generate one in the ToSche app → Settings → Claude integration.",
+      });
+    }
+    let bodyJson: unknown = {};
+    try {
+      const text = await req.text();
+      bodyJson = text ? JSON.parse(text) : {};
+    } catch {
+      return httpError(400, { ok: false, error: "Invalid JSON body" });
+    }
+    return handleRestCall(toolName, bodyJson, {
+      userId: auth.userId,
+      adminClient,
+      now: new Date(),
+    });
+  }
+
+  // --- POST / : MCP JSON-RPC 2.0 (Claude.ai, Claude Code, Cursor, etc.) ---
+  if (req.method !== "POST" || path !== "/") {
+    return httpError(404, { error: "Not found" });
+  }
+
   let body: JsonRpcRequest;
   try {
     body = await req.json();
@@ -211,8 +365,7 @@ Deno.serve(async (req: Request) => {
   const isNotification = body.id === undefined;
 
   // initialize / notifications/initialized are allowed without auth so the
-  // MCP client can probe the server before sending credentials. (Some
-  // clients negotiate then prompt for the key.) We DO still gate tools.
+  // MCP client can probe the server before sending credentials.
   if (body.method === "initialize") {
     return handleInitialize(body.id);
   }
@@ -220,11 +373,9 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 202, headers: corsHeaders });
   }
   if (isNotification) {
-    // Unknown notification — accept silently.
     return new Response(null, { status: 202, headers: corsHeaders });
   }
 
-  // From here on, methods require a valid API key.
   const auth = await authenticateApiKey(adminClient, rawKey);
   if (!auth) {
     return jsonRpcError(

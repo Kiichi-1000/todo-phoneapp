@@ -725,8 +725,8 @@ export default function SettingsScreen() {
               <View style={styles.settingLeft}>
                 <KeyRound size={20} color="#6366F1" />
                 <View>
-                  <Text style={styles.settingText}>Claude 連携</Text>
-                  <Text style={styles.settingSub}>Claude.aiで目標を立てて ToSche に流し込む</Text>
+                  <Text style={styles.settingText}>AI 連携 (Claude / ChatGPT)</Text>
+                  <Text style={styles.settingSub}>外部のAIで目標を立てて ToSche に流し込む</Text>
                 </View>
               </View>
               <ChevronRight size={18} color="#999" />

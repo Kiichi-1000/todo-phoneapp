@@ -88,6 +88,24 @@ Claude.ai Pro/Team 限定:
 4. **Authorization**: `Bearer tsche_xxxxxxxx...`
 5. 接続 → 5ツールが見えればOK
 
+## ステップ6: ChatGPT (Custom GPT) でセットアップ
+
+ChatGPT Plus/Pro:
+1. chat.openai.com → My GPTs → Create
+2. Configure タブ → Actions → **Create new action**
+3. **Import from URL** をクリック、貼り付け:
+   ```
+   https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server/openapi.json
+   ```
+4. Authentication → **API Key** → Auth Type **Bearer**
+5. API Key欄に `tsche_xxxxxxxx...` を貼り付け
+6. 「Available actions」に5つ表示されればOK (list_goals / create_goal / list_milestones / create_milestones_batch / update_milestone)
+7. テスト: 「今月分の目標として『毎日30分英語学習』を追加して」と話しかける
+
+ChatGPTがOpenAPI Actionを呼び、ToScheに目標が追加されます。
+Claude/ChatGPT どちらで作った目標も、同じ `goals` テーブルに書き込まれます。
+**ToSche アプリの「目標設定AI」(goal-coach) は同じテーブルを読むので、Claude/ChatGPTが作った目標もそのまま見えて、続きの相談ができます** (= 引き継ぎ完了)。
+
 ---
 
 ## トラブルシューティング
