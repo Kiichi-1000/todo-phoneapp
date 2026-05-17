@@ -694,6 +694,29 @@ export default function SettingsScreen() {
             バックエンドの redeem-promo Edge Function は管理者用に残してあります。
           */}
 
+          {/*
+            プラン変更 (アップグレード / ダウングレード) のエントリ。
+            paywall は context=settings で起動するとどのプラン入口にも紐づかず
+            3 プランすべてを表示する。実際の解約は Apple サブスク設定 (Settings.app
+            → Apple ID → サブスクリプション) からのみ可能なので、ペイウォール内で
+            「現在のプランを変更する」リンクと一緒に解約導線を案内する。
+          */}
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/paywall?context=settings')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Sparkles size={20} color="#6366F1" />
+                <View>
+                  <Text style={styles.settingText}>プランを変更する</Text>
+                  <Text style={styles.settingSub}>アップグレード・ダウングレード・解約</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.settingItem}
             onPress={handleDeleteChatHistory}

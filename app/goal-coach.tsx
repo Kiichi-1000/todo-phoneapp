@@ -26,7 +26,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Send, Target, ArrowLeft, RotateCcw } from 'lucide-react-native';
+import { Send, Target, ArrowLeft, RotateCcw, Mic, Square as StopIcon } from 'lucide-react-native';
+import * as voiceInput from '@/lib/voiceInput';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -76,6 +77,15 @@ const STR = {
     errSubscription: '試運転期間が終了しています。プランを選んでください。',
     errBalance: '今月のトークンを使い切りました。',
     errGeneric: 'エラーが発生しました',
+    micA11yStart: '音声で入力',
+    micA11yStop: '録音を停止',
+    voiceErrTitle: '音声入力エラー',
+    voicePermDenied: 'マイクへのアクセスが許可されていません。設定アプリで許可してください。',
+    voicePermStart: 'マイクへのアクセスを許可してください。',
+    voiceErrTranscribe: '音声認識に失敗しました。',
+    voiceErrStart: '録音を開始できませんでした。',
+    voiceLimitTitle: '録音時間の上限に到達',
+    voiceLimitBody: '録音音声が長すぎます。55秒以内にしてください。\n録音されていた分は文字起こししました。',
   },
   en: {
     title: 'Goal Coach AI',
@@ -90,6 +100,15 @@ const STR = {
     errSubscription: 'Your trial has ended. Please choose a plan.',
     errBalance: "You've used up this month's tokens.",
     errGeneric: 'An error occurred',
+    micA11yStart: 'Voice input',
+    micA11yStop: 'Stop recording',
+    voiceErrTitle: 'Voice input error',
+    voicePermDenied: 'Microphone access is denied. Please grant permission in Settings.',
+    voicePermStart: 'Please grant microphone access.',
+    voiceErrTranscribe: 'Could not transcribe audio.',
+    voiceErrStart: 'Could not start recording.',
+    voiceLimitTitle: 'Recording limit reached',
+    voiceLimitBody: 'Recording was too long. Please keep it under 55 seconds.\nWhat was recorded has been transcribed.',
   },
 };
 
@@ -107,8 +126,14 @@ export default function GoalCoachScreen() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
+  // 音声入力 (Speech-to-Text) state — ai.tsx と同じパターン
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [balanceYen, setBalanceYen] = useState<number | null>(null);
+  // バッジで「プラン上限に対する%」を出すために必要。standard=4000、pro=7000。
+  // ai-chat と同じ式: yen × 10 = AIトークン量。
+  const [planMaxTokens, setPlanMaxTokens] = useState<number | null>(null);
   const [accessReason, setAccessReason] = useState<
     'active_subscription' | 'promo' | 'release_promo' | 'none' | null
   >(null);
@@ -116,6 +141,8 @@ export default function GoalCoachScreen() {
   const flatListRef = useRef<FlatList>(null);
 
   const toolNameByIdRef = useRef<Record<string, string>>({});
+  // 55秒の自動停止に到達したかどうかのフラグ (handleMicPress 内で参照)
+  const autoStoppedRef = useRef(false);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
@@ -125,6 +152,15 @@ export default function GoalCoachScreen() {
   // でないと画面に居続けられない。Basic プラン契約者 / 未契約者がこの画面に到達した
   // 場合、自動的に /paywall に遷移して「AI Standard 以上で利用可能」を促す。
   // チェックは画面マウント時に 1 回。Standard/Pro なら何もせず通過。
+  //
+  // 加えて (2026-05-16 追加):
+  //   開いた瞬間に AIトークン残量バッジ (ドーナツ) を表示するため、access チェックと
+  //   同じタイミングで ai_token_balances と user_subscriptions.plan を取得し、
+  //   バッジ用の state を初期化する。これがないと SSE で 1 ターン返ってくるまで
+  //   バッジが空のまま、という UX バグが残る。
+  //
+  //   注意: ai-chat と goal-coach は同じ ai_token_balances テーブル (= 同一 user_id)
+  //   を共有しているので、ここで取得した残高は AI エージェント側と完全に一致する。
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -135,6 +171,36 @@ export default function GoalCoachScreen() {
         // basic_plan_no_ai / none いずれの理由でも paywall に飛ばす。
         // goal-coach 画面はそのまま残るが、Apple 画面遷移で前面に paywall が乗る。
         router.replace('/paywall');
+        return;
+      }
+      // access OK → バッジ初期表示用に残高とプランを取得。
+      setAccessReason(access.reason);
+      setAccessExpiresAt(access.expiresAt);
+      try {
+        const [{ data: bal }, { data: sub }] = await Promise.all([
+          supabase
+            .from('ai_token_balances')
+            .select('current_grant_yen, carryover_yen')
+            .eq('user_id', user.id)
+            .maybeSingle(),
+          supabase
+            .from('user_subscriptions')
+            .select('plan')
+            .eq('user_id', user.id)
+            .maybeSingle(),
+        ]);
+        if (cancelled) return;
+        if (bal) {
+          setBalanceYen(
+            (Number(bal.current_grant_yen) || 0) + (Number(bal.carryover_yen) || 0),
+          );
+        }
+        const planKey = (sub?.plan as string | null) ?? null;
+        if (planKey === 'standard') setPlanMaxTokens(4000);
+        else if (planKey === 'pro') setPlanMaxTokens(7000);
+        else setPlanMaxTokens(null);
+      } catch {
+        // 失敗は無視 (SSE 経由で後から更新される)
       }
     })();
     return () => {
@@ -186,10 +252,6 @@ export default function GoalCoachScreen() {
       setInput(params.prefill);
     }
   }, [params.prefill]);
-
-  // Voice input is intentionally NOT exposed here. The Goal-Coach is meant to
-  // be a slow, reflective text dialogue. For quick voice capture, the workspace
-  // has a dedicated Voice-Task tool that bypasses the AI agent entirely.
 
   const handleResetCoach = () => {
     if (messages.length === 0) return;
@@ -312,6 +374,62 @@ export default function GoalCoachScreen() {
     sendMessage(text);
   };
 
+  // 音声入力 (Speech-to-Text) — ai.tsx と同じパターン
+  // - 1 タップで録音開始 / 再タップで停止+文字起こし
+  // - 55 秒経過で自動停止 → 文字起こし完了後に「上限到達」アラート
+  // - 'raw' モード: Google STT v2 の生テキストをそのまま input に追記
+  const handleMicPress = useCallback(async () => {
+    if (sending || transcribing) return;
+
+    if (recording) {
+      const wasAutoStopped = autoStoppedRef.current;
+      autoStoppedRef.current = false;
+      setRecording(false);
+      setTranscribing(true);
+      try {
+        const result = await voiceInput.stopAndTranscribe(
+          (lang === 'en' ? 'en' : 'ja') as 'ja' | 'en',
+          'raw',
+        );
+        const newText = (result.text || '').trim();
+        if (newText) {
+          setInput((prev) => (prev ? `${prev} ${newText}` : newText));
+        }
+        if (wasAutoStopped) {
+          Alert.alert(s.voiceLimitTitle, s.voiceLimitBody);
+        }
+      } catch (e: any) {
+        const msg =
+          e?.message === 'mic_permission_denied'
+            ? s.voicePermDenied
+            : e?.message || s.voiceErrTranscribe;
+        Alert.alert(s.voiceErrTitle, msg);
+      } finally {
+        setTranscribing(false);
+      }
+      return;
+    }
+
+    try {
+      autoStoppedRef.current = false;
+      await voiceInput.startRecording({
+        onAutoStop: () => {
+          autoStoppedRef.current = true;
+          setTimeout(() => {
+            handleMicPress();
+          }, 0);
+        },
+      });
+      setRecording(true);
+    } catch (e: any) {
+      const msg =
+        e?.message === 'mic_permission_denied'
+          ? s.voicePermStart
+          : e?.message || s.voiceErrStart;
+      Alert.alert(s.voiceErrTitle, msg);
+    }
+  }, [recording, transcribing, sending, lang, s]);
+
   const handleChoiceTap = (prompt: string) => {
     if (sending) return;
     sendMessage(prompt);
@@ -366,6 +484,7 @@ export default function GoalCoachScreen() {
             balanceYen={balanceYen}
             accessReason={accessReason}
             expiresAt={accessExpiresAt}
+            planMaxTokens={planMaxTokens}
           />
         </View>
 
@@ -438,8 +557,8 @@ export default function GoalCoachScreen() {
             />
           )}
 
-          {/* Goal-coach is text-only by design. Voice dictation lives in the
-              workspace where it directly inserts todos without invoking AI. */}
+          {/* Input — テキスト + 音声 (Speech-to-Text)。Mic ボタンは送信ボタンの左隣。
+              録音中は赤背景＋停止アイコン、文字起こし中はスピナー。 */}
           <View style={styles.inputBarWrap}>
             <View style={[styles.inputBar, inputFocused && styles.inputBarFocused]}>
               <TextInput
@@ -457,6 +576,26 @@ export default function GoalCoachScreen() {
                 returnKeyType="send"
                 blurOnSubmit
               />
+
+              <TouchableOpacity
+                style={[
+                  styles.micBtn,
+                  recording && styles.micBtnActive,
+                  transcribing && styles.micBtnTranscribing,
+                ]}
+                onPress={handleMicPress}
+                disabled={sending}
+                activeOpacity={0.75}
+                accessibilityLabel={recording ? s.micA11yStop : s.micA11yStart}
+              >
+                {transcribing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : recording ? (
+                  <StopIcon size={16} color="#fff" strokeWidth={2.5} fill="#fff" />
+                ) : (
+                  <Mic size={18} color="#475569" strokeWidth={2.2} />
+                )}
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
@@ -559,12 +698,6 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: Platform.OS === 'ios' ? 8 : 12,
   },
-  voiceModeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingBottom: 4,
-  },
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
     paddingHorizontal: 6, paddingVertical: 6,
@@ -595,19 +728,4 @@ const styles = StyleSheet.create({
   },
   micBtnActive: { backgroundColor: '#DC2626' },
   micBtnTranscribing: { backgroundColor: '#7C3AED' },
-
-  recordingBar: {
-    flexDirection: 'row', alignItems: 'center',
-    marginHorizontal: 14, marginBottom: 8,
-    paddingHorizontal: 14, paddingVertical: 10,
-    backgroundColor: '#FEF2F2', borderRadius: 14,
-    borderWidth: 1, borderColor: '#FECACA', gap: 10,
-  },
-  recordingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#DC2626' },
-  recordingText: { fontSize: 13, color: '#7F1D1D', flex: 1, fontWeight: '500' },
-  recordingCancel: {
-    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8,
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#FCA5A5',
-  },
-  recordingCancelText: { fontSize: 12, color: '#B91C1C', fontWeight: '700' },
 });

@@ -16,7 +16,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Send, Sparkles, RotateCcw, MessageSquare } from 'lucide-react-native';
+import { Send, Sparkles, RotateCcw, MessageSquare, Mic, Square as StopIcon } from 'lucide-react-native';
+import * as voiceInput from '@/lib/voiceInput';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/lib/supabase';
@@ -68,7 +69,15 @@ export default function AIScreen() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
+  // 音声入力 (Speech-to-Text) の状態。録音中 → true、API 文字起こし待ち → transcribing。
+  // 既存 lib/voiceInput.ts が startRecording/stopAndTranscribe を提供しているので、
+  // ここではトグル UI と state のみを管理する。
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [balanceYen, setBalanceYen] = useState<number | null>(null);
+  // 現在のプラン (active_subscription 時のみ意味あり)。バッジで「プラン上限に対する%」
+  // を出すために必要。基本: standard → 4000 トークン上限、pro → 7000 トークン上限。
+  const [planMaxTokens, setPlanMaxTokens] = useState<number | null>(null);
   const [accessReason, setAccessReason] = useState<
     | 'active_subscription'
     | 'promo'
@@ -107,29 +116,73 @@ export default function AIScreen() {
   //    実際の利用上限はトークン残高で別途制御される。
   // ----------------------------------------------------------------------
   const hasGatedRef = useRef(false); // 同じ focus 中に二重 push しない
+
+  // 共通の access 再評価ロジック。useFocusEffect (タブ切替時) と useEffect
+  // (user.id hydration 時) の両方から呼ぶ。これにより:
+  //   - アプリ起動直後で user 未確定の瞬間にバッジが「未契約」っぽく見える
+  //     hydration race を解消 (user.id が変わったタイミングで必ず再評価)
+  //   - タブ切替や paywall から戻った時にも再評価される (= 既存挙動を維持)
+  const evaluateAccess = useCallback(async () => {
+    if (!user?.id) return;
+    const access = await checkAiAccess(user.id);
+    setAccessReason(access.allowed ? access.reason : 'none');
+    setAccessExpiresAt(access.expiresAt);
+    if (!access.allowed && !hasGatedRef.current) {
+      hasGatedRef.current = true;
+      router.push('/paywall?context=ai');
+    }
+    // あわせて残高とプランをフェッチしてバッジに反映
+    // (バッジが古い値で残らないように、また % 表示の分母 = プラン上限を確定するため)
+    try {
+      const [{ data: bal }, { data: sub }] = await Promise.all([
+        supabase
+          .from('ai_token_balances')
+          .select('current_grant_yen, carryover_yen')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('user_subscriptions')
+          .select('plan')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ]);
+      if (bal) {
+        setBalanceYen(
+          (Number(bal.current_grant_yen) || 0) + (Number(bal.carryover_yen) || 0),
+        );
+      }
+      // プラン → トークン上限 (yen × 10)。Standard ¥400 = 4000 トークン、Pro ¥700 = 7000。
+      // monthly-token-grant の PLAN_GRANT_YEN と合わせること。
+      const planKey = (sub?.plan as string | null) ?? null;
+      if (planKey === 'standard') setPlanMaxTokens(4000);
+      else if (planKey === 'pro') setPlanMaxTokens(7000);
+      else setPlanMaxTokens(null);
+    } catch {
+      // 失敗は無視 (バッジが ai-chat の SSE 経由で後から更新される)
+    }
+  }, [user?.id, router]);
+
+  // user.id 確定タイミングでの再評価。useFocusEffect だけだと
+  // 「AI タブが最初の focus 時に user 未確定 → return → そのまま」になるため。
+  useEffect(() => {
+    void evaluateAccess();
+    // user.id が undefined → 値 に変わった瞬間に走らせたいので、
+    // dependency に evaluateAccess (= user?.id 依存) を入れる。
+  }, [evaluateAccess]);
+
   useFocusEffect(
     useCallback(() => {
       if (!user) return;
       hasGatedRef.current = false;
       let cancelled = false;
-
       (async () => {
-        const access = await checkAiAccess(user.id);
         if (cancelled) return;
-        // 反映: チャット内のバッジ等で使われている state も同期しておく
-        setAccessReason(access.allowed ? access.reason : 'none');
-        setAccessExpiresAt(access.expiresAt);
-
-        if (!access.allowed && !hasGatedRef.current) {
-          hasGatedRef.current = true;
-          router.push('/paywall?context=ai');
-        }
+        await evaluateAccess();
       })();
-
       return () => {
         cancelled = true;
       };
-    }, [user, router]),
+    }, [user, evaluateAccess]),
   );
 
   // Note: voice input was removed from this chat. Pure dictation is now done
@@ -335,6 +388,83 @@ export default function AIScreen() {
     sendMessage(text);
   };
 
+  // ----------------------------------------------------------------------
+  // 音声入力 (Speech-to-Text)
+  //   - 1 タップで録音開始 → アイコンが「停止」ボタンに変わる
+  //   - もう 1 タップで録音停止 → transcribe-audio Edge Function に送信
+  //   - 結果を input に "追記" する (既存テキストを上書きしないよう ' ' 区切りで連結)
+  //   - 55 秒上限 (Google STT v2 inline の制限) で自動停止 → 同じく transcribe へ。
+  //     その際は文字起こし完了後に「録音時間の上限」アラートを出してユーザーに
+  //     「なぜ自動で止まったか」を伝える。
+  // ----------------------------------------------------------------------
+  const autoStoppedRef = useRef(false);
+
+  const handleMicPress = useCallback(async () => {
+    if (sending || transcribing) return;
+
+    if (recording) {
+      const wasAutoStopped = autoStoppedRef.current;
+      autoStoppedRef.current = false;
+      setRecording(false);
+      setTranscribing(true);
+      try {
+        // 'raw' = Google STT の生テキストをそのまま返す (Claude 後処理を経由しない)。
+        // トークン消費を抑えるため & ユーザーが話した通りの入力にするための選択。
+        // 後処理 (clean / summary / bullet) は将来のオプション機能として残す。
+        const result = await voiceInput.stopAndTranscribe(
+          (lang === 'en' ? 'en' : 'ja') as 'ja' | 'en',
+          'raw',
+        );
+        const newText = (result.text || '').trim();
+        if (newText) {
+          setInput((prev) => (prev ? `${prev} ${newText}` : newText));
+        }
+        // 55 秒の上限に達して自動停止していた場合は、ユーザーに理由を明示する。
+        if (wasAutoStopped) {
+          Alert.alert(
+            lang === 'ja' ? '録音時間の上限に到達' : 'Recording limit reached',
+            lang === 'ja'
+              ? '録音音声が長すぎます。55秒以内にしてください。\n録音されていた分は文字起こししました。'
+              : 'Recording was too long. Please keep it under 55 seconds.\nWhat was recorded has been transcribed.',
+          );
+        }
+      } catch (e: any) {
+        const msg =
+          e?.message === 'mic_permission_denied'
+            ? lang === 'ja'
+              ? 'マイクへのアクセスが許可されていません。設定アプリで許可してください。'
+              : 'Microphone access is denied. Please grant permission in Settings.'
+            : e?.message || (lang === 'ja' ? '音声認識に失敗しました。' : 'Could not transcribe audio.');
+        Alert.alert(lang === 'ja' ? '音声入力エラー' : 'Voice input error', msg);
+      } finally {
+        setTranscribing(false);
+      }
+      return;
+    }
+
+    try {
+      autoStoppedRef.current = false;
+      await voiceInput.startRecording({
+        onAutoStop: () => {
+          // 55 秒経過。Alert は文字起こし完了後に出すので、ここでは flag だけ立てる。
+          autoStoppedRef.current = true;
+          setTimeout(() => {
+            handleMicPress();
+          }, 0);
+        },
+      });
+      setRecording(true);
+    } catch (e: any) {
+      const msg =
+        e?.message === 'mic_permission_denied'
+          ? lang === 'ja'
+            ? 'マイクへのアクセスを許可してください。'
+            : 'Please grant microphone access.'
+          : e?.message || (lang === 'ja' ? '録音を開始できませんでした。' : 'Could not start recording.');
+      Alert.alert(lang === 'ja' ? '音声入力エラー' : 'Voice input error', msg);
+    }
+  }, [recording, transcribing, sending, lang]);
+
   const handleChoiceTap = (prompt: string) => {
     if (sending) return;
     sendMessage(prompt);
@@ -402,6 +532,7 @@ export default function AIScreen() {
             balanceYen={balanceYen}
             accessReason={accessReason}
             expiresAt={accessExpiresAt}
+            planMaxTokens={planMaxTokens}
           />
         </View>
 
@@ -478,9 +609,10 @@ export default function AIScreen() {
             />
           )}
 
-          {/* Input — text-only. Voice dictation is intentionally NOT here:
-              it lives in the workspace as a pure transcription→insert tool
-              that bypasses the AI agent. */}
+          {/* Input — テキスト入力 + 音声入力 (Speech-to-Text)。
+              音声は lib/voiceInput.ts (expo-av + transcribe-audio Edge Function)
+              を使う。録音中は Mic アイコンが停止アイコン (赤背景) に変わり、
+              再タップで停止 → 文字起こし結果を input に追記する。 */}
           <View style={styles.inputBarWrap}>
             <View style={[styles.inputBar, inputFocused && styles.inputBarFocused]}>
               <TextInput
@@ -500,6 +632,32 @@ export default function AIScreen() {
                 returnKeyType="send"
                 blurOnSubmit
               />
+
+              {/* 音声入力ボタン: 入力欄が空 (or 短い) ときに最も活躍するので
+                  send ボタンの左隣に置く。録音中は赤背景、文字起こし中はスピナー。 */}
+              <TouchableOpacity
+                style={[
+                  styles.micBtn,
+                  recording && styles.micBtnActive,
+                  transcribing && styles.micBtnTranscribing,
+                ]}
+                onPress={handleMicPress}
+                disabled={sending}
+                activeOpacity={0.75}
+                accessibilityLabel={
+                  recording
+                    ? lang === 'ja' ? '録音を停止' : 'Stop recording'
+                    : lang === 'ja' ? '音声で入力' : 'Voice input'
+                }
+              >
+                {transcribing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : recording ? (
+                  <StopIcon size={16} color="#fff" strokeWidth={2.5} fill="#fff" />
+                ) : (
+                  <Mic size={18} color="#475569" strokeWidth={2.2} />
+                )}
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
