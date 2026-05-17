@@ -46,7 +46,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id",
-  "Access-Control-Expose-Headers": "mcp-session-id",
+  // Expose WWW-Authenticate so browser-based MCP clients (claude.ai)
+  // can read it on 401 responses and trigger the OAuth discovery flow.
+  "Access-Control-Expose-Headers": "mcp-session-id, WWW-Authenticate",
 };
 
 function jsonRpcResult(id: unknown, result: unknown): Response {
@@ -421,10 +423,31 @@ Deno.serve(async (req: Request) => {
 
   const auth = await authenticateBearer(adminClient, rawKey);
   if (!auth) {
-    return jsonRpcError(
-      body.id,
-      -32001,
-      "Unauthorized: missing or invalid API key. Generate one in the ToSche app → Settings → Claude integration.",
+    // MCP Authorization Spec 2025-06-18: when authentication is required and
+    // missing/invalid, return HTTP 401 with a `WWW-Authenticate: Bearer
+    // resource_metadata="<URL>"` header pointing at the OAuth protected-
+    // resource metadata. This is the signal MCP clients (Claude.ai etc.)
+    // use to discover the auth server and trigger the OAuth flow.
+    const resourceMetadataUrl =
+      `https://${url.host}${REST_BASE_PATH}/.well-known/oauth-protected-resource`;
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: body.id,
+        error: {
+          code: -32001,
+          message:
+            "Unauthorized: missing or invalid token. Complete the OAuth flow at the authorization_endpoint, or generate a static API key in the ToSche app → Settings → AI連携.",
+        },
+      }),
+      {
+        status: 401,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+          "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+        },
+      },
     );
   }
 

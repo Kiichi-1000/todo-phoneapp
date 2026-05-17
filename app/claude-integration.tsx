@@ -20,9 +20,16 @@ import {
   Platform,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { ArrowLeft, Copy, KeyRound, Sparkles, Trash2, X } from 'lucide-react-native';
+import { ArrowLeft, Copy, ExternalLink, KeyRound, Sparkles, Trash2, X } from 'lucide-react-native';
+import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 import Constants from 'expo-constants';
+
+// Pre-registered OAuth client IDs (see oauth_clients table).
+// Users paste these into Claude.ai's "Advanced settings" when adding the
+// connector. Stable across deployments.
+const CLAUDE_WEB_CLIENT_ID = 'tsche_claude_web';
+const CLAUDE_CODE_CLIENT_ID = 'tsche_claude_code';
 
 interface McpKey {
   id: string;
@@ -168,15 +175,23 @@ export default function ClaudeIntegrationScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Claude.ai に接続 (推奨・OAuth)</Text>
           <Text style={styles.muted}>
-            キーのコピペ不要。下のURLを Claude.ai に貼り付けるだけで、
-            ToSche の認可画面が立ち上がります。承認すれば連携完了。
+            キー手動コピペ不要。Claude.ai を開いて、下の2つの値を貼り付ければ、
+            ToSche の認可画面が出ます。承認すれば連携完了。
           </Text>
 
-          <Step n="1" title="claude.ai → Connectors → Add custom connector">
-            (Claude Pro/Team が必要)
-          </Step>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() =>
+              Linking.openURL(
+                'https://claude.ai/customize/connectors?modal=add-custom-connector',
+              )
+            }
+          >
+            <ExternalLink size={16} color="#fff" />
+            <Text style={styles.primaryBtnText}>Claude.ai を開く</Text>
+          </TouchableOpacity>
 
-          <Step n="2" title="MCP server URL を貼り付け">
+          <Step n="1" title="MCP Server URL を貼り付け">
             <TouchableOpacity
               onPress={() => handleCopy(mcpUrl, 'MCP URLをコピーしました')}
               style={styles.codeBox}
@@ -188,9 +203,43 @@ export default function ClaudeIntegrationScreen() {
             </TouchableOpacity>
           </Step>
 
-          <Step n="3" title="認可画面で「許可」">
-            メールアドレス+パスワード、または「メールでサインインリンク」(Apple/Google サインインの方) → 「許可する」
+          <Step n="2" title="詳細設定 → OAuth Client ID を貼り付け">
+            <TouchableOpacity
+              onPress={() => handleCopy(CLAUDE_WEB_CLIENT_ID, 'Client IDをコピーしました')}
+              style={styles.codeBox}
+            >
+              <Text style={styles.codeText} numberOfLines={1}>
+                {CLAUDE_WEB_CLIENT_ID}
+              </Text>
+              <Copy size={16} color="#475569" />
+            </TouchableOpacity>
           </Step>
+
+          <Step n="3" title="認可画面で「許可する」">
+            ToSche のサインインダイアログが出ます。メール+パスワード、または「メールでサインインリンク」(Apple/Google サインインの方) でログイン → 「許可する」
+          </Step>
+        </View>
+
+        {/* Setup: Claude Code CLI */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Claude Code CLI に接続</Text>
+          <Text style={styles.muted}>
+            ターミナルで以下のコマンドを実行。OAuthが自動で起動して、ブラウザで承認するだけ。
+          </Text>
+          <TouchableOpacity
+            onPress={() =>
+              handleCopy(
+                `claude mcp add tosche --transport http ${mcpUrl} --oauth-client-id ${CLAUDE_CODE_CLIENT_ID}`,
+                'コマンドをコピーしました',
+              )
+            }
+            style={styles.codeBox}
+          >
+            <Text style={styles.codeText} numberOfLines={2}>
+              {`claude mcp add tosche --transport http ${mcpUrl} --oauth-client-id ${CLAUDE_CODE_CLIENT_ID}`}
+            </Text>
+            <Copy size={16} color="#475569" />
+          </TouchableOpacity>
         </View>
 
         {/* Setup: ChatGPT */}
@@ -498,6 +547,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   createBtnText: { fontSize: 14, fontWeight: '600', color: '#6366F1' },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#6366F1',
+    borderRadius: 10,
+    paddingVertical: 13,
+    marginBottom: 14,
+  },
+  primaryBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 
   disclaimer: {
     fontSize: 11,

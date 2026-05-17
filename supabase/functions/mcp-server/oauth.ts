@@ -87,6 +87,35 @@ async function pkceS256(verifier: string): Promise<string> {
   return b64urlFromBytes(new Uint8Array(hash));
 }
 
+// Match an incoming redirect_uri against a registered one. Exact match by
+// default, except for loopback http URIs (RFC 8252), where the port is
+// allowed to differ — Claude Code picks an ephemeral port per session so
+// `http://127.0.0.1/callback` registered must match
+// `http://127.0.0.1:54321/callback` at runtime, etc.
+function redirectUriMatches(registered: string, incoming: string): boolean {
+  if (registered === incoming) return true;
+  try {
+    const r = new URL(registered);
+    const i = new URL(incoming);
+    const isLoopback =
+      r.protocol === "http:" &&
+      i.protocol === "http:" &&
+      (r.hostname === "127.0.0.1" || r.hostname === "localhost") &&
+      r.hostname === i.hostname;
+    if (!isLoopback) return false;
+    return r.pathname === i.pathname && r.search === i.search;
+  } catch {
+    return false;
+  }
+}
+
+function findMatchingRedirectUri(registered: string[], incoming: string): string | null {
+  for (const r of registered) {
+    if (redirectUriMatches(r, incoming)) return r;
+  }
+  return null;
+}
+
 // Resolve the canonical issuer URL (always https) from the incoming request.
 export function issuerFromRequest(req: Request, basePath: string): string {
   const url = new URL(req.url);
@@ -292,7 +321,7 @@ export async function handleAuthorizeGet(req: Request, admin: any): Promise<Resp
   if (!client) {
     return html(errorPage("Unknown client_id"), 400);
   }
-  if (!(client.redirect_uris as string[]).includes(parsed.redirect_uri)) {
+  if (!findMatchingRedirectUri(client.redirect_uris as string[], parsed.redirect_uri)) {
     return html(errorPage(
       "redirect_uri is not registered for this client. " +
       "Re-register the client with this redirect_uri or use a different one.",
@@ -361,7 +390,7 @@ export async function handleAuthorizeApprove(req: Request, admin: any, anonKey: 
     .eq("client_id", clientId)
     .maybeSingle();
   if (!client) return json({ error: "Unknown client" }, 400);
-  if (!(client.redirect_uris as string[]).includes(redirectUri)) {
+  if (!findMatchingRedirectUri(client.redirect_uris as string[], redirectUri)) {
     return json({ error: "redirect_uri not registered" }, 400);
   }
 
@@ -487,7 +516,10 @@ async function handleAuthCodeGrant(params: URLSearchParams, admin: any): Promise
   if (codeRow.client_id !== clientId) {
     return json({ error: "invalid_grant", error_description: "client_id mismatch" }, 400);
   }
-  if (codeRow.redirect_uri !== redirectUri) {
+  // For loopback URIs Claude Code uses ephemeral ports — accept port differences
+  // (same scheme/host/path) so the token request from a freshly-bound port
+  // still matches the stored auth code.
+  if (!redirectUriMatches(codeRow.redirect_uri, redirectUri)) {
     return json({ error: "invalid_grant", error_description: "redirect_uri mismatch" }, 400);
   }
   // PKCE verification
