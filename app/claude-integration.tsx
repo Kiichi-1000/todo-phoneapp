@@ -20,7 +20,21 @@ import {
   Platform,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { ArrowLeft, Copy, ExternalLink, KeyRound, Sparkles, Trash2, X } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  Box,
+  ChevronRight,
+  Copy,
+  Edit3,
+  ExternalLink,
+  KeyRound,
+  MessageSquare,
+  MoreHorizontal,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react-native';
 import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 import Constants from 'expo-constants';
@@ -277,21 +291,53 @@ export default function ClaudeIntegrationScreen() {
                 Claude と違って、ChatGPT は通常のチャットからは ToSche に話しかけても反応しません。
               </Text>
               <Text style={styles.warnText}>
-                必ず ChatGPT のサイドバー (左側) から「ToSche目標設定コーチ」を開いてからチャットしてください。
-                開いた状態で「今月の目標を立てたい」「目標を一覧表示して」のように話しかけると、ToSche に反映されます。
+                ChatGPT のサイドバー (左側) を開き、{'\n'}
+                「GPT」セクションの「ToSche - 目標設定コーチ」をタップしてからチャットしてください。
+                開いた状態で「今月の目標を立てたい」「目標を一覧表示して」と話しかけると、ToSche に反映されます。
               </Text>
             </View>
+
+            <Text style={styles.mockCaption}>↓ ChatGPT のサイドバー イメージ</Text>
             <View style={styles.gptSidebarMock}>
-              <View style={styles.gptSidebarBar}>
-                <Text style={styles.gptSidebarBarText}>＋ 新しいチャット</Text>
+              <View style={styles.gptSidebarHeader}>
+                <Text style={styles.gptSidebarLogo}>ChatGPT</Text>
               </View>
-              <View style={styles.gptSidebarBar}>
-                <Text style={styles.gptSidebarBarText}>🔍 検索</Text>
+
+              <View style={[styles.gptSidebarRow, styles.gptSidebarRowHover]}>
+                <Edit3 size={14} color="#ECECF1" />
+                <Text style={styles.gptSidebarRowText}>新しいチャット</Text>
               </View>
-              <Text style={styles.gptSidebarLabel}>GPT</Text>
-              <View style={[styles.gptSidebarBar, styles.gptSidebarBarActive]}>
-                <Text style={styles.gptSidebarBarActiveText}>📋 ToSche目標設定コーチ</Text>
-                <Text style={styles.gptSidebarTap}>👆ここをタップ</Text>
+              <View style={styles.gptSidebarRow}>
+                <Search size={14} color="#ECECF1" />
+                <Text style={styles.gptSidebarRowText}>チャットを検索</Text>
+              </View>
+              <View style={styles.gptSidebarRow}>
+                <MessageSquare size={14} color="#ECECF1" />
+                <Text style={styles.gptSidebarRowText}>Codex</Text>
+              </View>
+              <View style={styles.gptSidebarRow}>
+                <MoreHorizontal size={14} color="#ECECF1" />
+                <Text style={styles.gptSidebarRowText}>さらに表示</Text>
+              </View>
+
+              <Text style={styles.gptSidebarSectionLabel}>GPT</Text>
+
+              <View style={styles.gptSidebarTargetRow}>
+                <View style={[styles.gptSidebarRow, styles.gptSidebarRowActive]}>
+                  <Box size={14} color="#ECECF1" />
+                  <Text style={styles.gptSidebarRowActiveText} numberOfLines={1}>
+                    ToSche - 目標設定コーチ
+                  </Text>
+                </View>
+                <View style={styles.gptSidebarPointer}>
+                  <ChevronRight size={14} color="#fff" />
+                  <Text style={styles.gptSidebarPointerText}>ここをタップ</Text>
+                </View>
+              </View>
+
+              <View style={styles.gptSidebarRow}>
+                <Box size={14} color="#ECECF1" />
+                <Text style={styles.gptSidebarRowText}>GPT の詳細を見る</Text>
               </View>
             </View>
           </Step>
@@ -556,42 +602,85 @@ const styles = StyleSheet.create({
   },
   warnTitle: { fontSize: 12.5, fontWeight: '700', color: '#7c2d12' },
   warnText: { fontSize: 12, color: '#7c2d12', lineHeight: 18 },
-  gptSidebarMock: {
-    backgroundColor: '#f7f7f8',
-    borderRadius: 8,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginTop: 4,
-    gap: 4,
+  mockCaption: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 8,
+    marginBottom: 4,
+    fontWeight: '600',
   },
-  gptSidebarBar: {
+  gptSidebarMock: {
+    backgroundColor: '#0F0F0F',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#27272A',
+    marginTop: 4,
+    gap: 2,
+  },
+  gptSidebarHeader: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  gptSidebarLogo: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: -0.2,
+  },
+  gptSidebarRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 6,
+    gap: 9,
   },
-  gptSidebarBarText: { fontSize: 11, color: '#0f172a' },
-  gptSidebarLabel: {
-    fontSize: 9,
-    color: '#94a3b8',
+  gptSidebarRowHover: {
+    backgroundColor: '#202020',
+  },
+  gptSidebarRowText: { fontSize: 12, color: '#ECECF1' },
+  gptSidebarSectionLabel: {
+    fontSize: 10,
+    color: '#8E8EA0',
     paddingHorizontal: 10,
-    paddingTop: 4,
-    paddingBottom: 2,
-    letterSpacing: 0.6,
+    paddingTop: 12,
+    paddingBottom: 4,
+    letterSpacing: 0.5,
     fontWeight: '700',
   },
-  gptSidebarBarActive: {
+  gptSidebarTargetRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#fffbeb',
-    borderWidth: 2,
-    borderColor: '#f59e0b',
+    gap: 8,
   },
-  gptSidebarBarActiveText: { fontSize: 12, color: '#0f172a', fontWeight: '700' },
-  gptSidebarTap: { fontSize: 10, color: '#f59e0b', fontWeight: '700' },
+  gptSidebarRowActive: {
+    flex: 1,
+    borderWidth: 2,
+    borderColor: '#818CF8',
+    backgroundColor: 'rgba(129,140,248,0.18)',
+  },
+  gptSidebarRowActiveText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#fff',
+    fontWeight: '700',
+  },
+  gptSidebarPointer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6366F1',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 2,
+  },
+  gptSidebarPointerText: {
+    fontSize: 10,
+    color: '#fff',
+    fontWeight: '700',
+  },
 
   emptyText: { fontSize: 13, color: '#94a3b8', textAlign: 'center', paddingVertical: 16 },
 
