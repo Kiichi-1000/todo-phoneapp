@@ -1,0 +1,159 @@
+# MCP連携の実機テスト手順
+
+## 接続方法は3種類
+
+| 方法 | クライアント | キー操作 | 推奨度 |
+| :---- | :---- | :---- | :---- |
+| **A. OAuth (Spyglass式)** | Claude.ai (Pro/Team) | 不要 | ★★★ 推奨 |
+| **B. Custom GPT Action** | ChatGPT (Plus/Pro) | 必要 (APIキー) | ★★ |
+| **C. 手動APIキー** | Claude Code CLI, 任意のMCPクライアント | 必要 | ★ (上級者向け) |
+
+---
+
+## A. Claude.ai に OAuth で接続 (一番楽)
+
+1. claude.ai を開く → Settings → Connectors → "Add custom connector"
+2. **MCP Server URL**: `https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server`
+3. Claude.ai が自動でOAuthフローを開始 → ToSche の承認画面 (Cloudflare Worker hosted) が立ち上がる
+4. メール+パスワード でサインイン
+   - **Apple/Google サインインの方**は、パスワード欄を空にして「メールでサインインリンクを送る」をクリック → 届いたリンクから新規タブで承認
+5. 「許可する」をクリック → claude.ai に自動で戻る → 接続完了
+
+ToScheアプリでキーを生成する必要なし。
+
+## B. ChatGPT Custom GPT に接続
+
+ChatGPT Plus/Pro:
+1. アプリで設定 → Claude 連携 → APIキーを生成 (1度だけ表示されるのでコピー)
+2. chat.openai.com → My GPTs → Create → Configure → Actions
+3. **Import from URL**: `https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server/openapi.json`
+4. Authentication → **API Key** → Auth Type **Bearer** → 上のキーを貼り付け
+5. Save → 5ツール (list_goals 等) が見えればOK
+
+## C. 手動APIキー (Claude Code CLI など)
+
+**目的**: Expo Go + Claude Code CLI で、EASビルド料金を払わずにMCP連携をE2Eテストする。
+
+**検証状況** (2026-05-18):
+- ✅ サーバー側 (mcp-server / mcp-keys / DB) は全7パターン curl テスト合格
+- ⚠️ アプリ画面 (`claude-integration.tsx`) は実機未テスト ← ここをテスト
+- ⚠️ Claude.ai or Claude Code との実接続は未テスト ← ここをテスト
+
+---
+
+## ステップ1: Expo Goでアプリ起動
+
+```bash
+cd /Users/tsukuikiichi/Documents/todoapp-main
+npm run go
+```
+
+(LANモードで起動。出てきたQRをiPhoneのExpo Goアプリでスキャン)
+
+**期待する挙動:**
+- アプリが起動する
+- ログイン画面 → メール+パスワードでログイン (Apple/Googleもいけますが念のためメール推奨)
+
+**もし起動しない場合:** RevenueCat関連エラーが出ても無視してOK (lazy require + try/catchで握り潰される設計)。AI課金画面だけ動かないだけで他は動く。
+
+---
+
+## ステップ2: アプリ内でAPIキー生成
+
+1. 下タブ「設定」を開く
+2. 「AI アシスタント」セクション内の **「Claude 連携」** をタップ
+3. 「+ 新しいキーを生成」をタップ
+4. ラベル入力 (例: 「Mac Claude Code テスト」) → 「生成する」
+5. **`tsche_xxxxxxxx...` のキーが1度だけ表示される** → 「コピー」をタップ
+
+⚠️ このキーは2度と見られません。コピーしておくこと。
+
+---
+
+## ステップ3: Claude Code CLIにMCPサーバーを登録
+
+ターミナルで:
+
+```bash
+claude mcp add tosche \
+  --transport http \
+  --header "Authorization: Bearer tsche_xxxxxxxx..." \
+  https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server
+```
+
+(`tsche_xxxxxxxx...` を ステップ2でコピーしたキーに置き換える)
+
+確認:
+```bash
+claude mcp list
+# tosche が表示されればOK
+```
+
+---
+
+## ステップ4: 動作確認 (Claude Code内で)
+
+Claude Codeを開いて、以下のように話しかけてみる:
+
+> 「ToSche MCPを使って、僕の今月の目標を確認して」
+
+→ Claudeが `tosche__list_goals` を呼んで結果を返すはず。
+
+> 「『毎日30分英語学習』という月間目標を、今月分で追加して」
+
+→ Claudeが `tosche__create_goal` を呼ぶ。
+→ ToSche アプリの「目標」タブをリロードすると新規追加された目標が出る。
+
+> 「いま追加した目標に、ロードマップを5ステップで作って」
+
+→ Claudeが `tosche__create_milestones_batch` を呼ぶ。
+→ ToScheアプリで目標を開くと5ステップが見える。
+
+---
+
+## ステップ5: claude.ai (Web)でテストする場合 (オプション)
+
+Claude.ai Pro/Team 限定:
+1. claude.ai → 設定 → Connectors → Custom Connector追加
+2. **Name**: ToSche
+3. **MCP Server URL**: `https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server`
+4. **Authorization**: `Bearer tsche_xxxxxxxx...`
+5. 接続 → 5ツールが見えればOK
+
+## ステップ6: ChatGPT (Custom GPT) でセットアップ
+
+ChatGPT Plus/Pro:
+1. chat.openai.com → My GPTs → Create
+2. Configure タブ → Actions → **Create new action**
+3. **Import from URL** をクリック、貼り付け:
+   ```
+   https://utfyxsvxyvzxjqcgzjjl.supabase.co/functions/v1/mcp-server/openapi.json
+   ```
+4. Authentication → **API Key** → Auth Type **Bearer**
+5. API Key欄に `tsche_xxxxxxxx...` を貼り付け
+6. 「Available actions」に5つ表示されればOK (list_goals / create_goal / list_milestones / create_milestones_batch / update_milestone)
+7. テスト: 「今月分の目標として『毎日30分英語学習』を追加して」と話しかける
+
+ChatGPTがOpenAPI Actionを呼び、ToScheに目標が追加されます。
+Claude/ChatGPT どちらで作った目標も、同じ `goals` テーブルに書き込まれます。
+**ToSche アプリの「目標設定AI」(goal-coach) は同じテーブルを読むので、Claude/ChatGPTが作った目標もそのまま見えて、続きの相談ができます** (= 引き継ぎ完了)。
+
+---
+
+## トラブルシューティング
+
+| 症状 | 原因 | 対処 |
+| :---- | :---- | :---- |
+| Expo Go起動時に「Invariant Violation: react-native-purchases」 | iOS Apple Sign In 起動時のRC初期化失敗 | 一度アプリを閉じてもう一度開く (lazy初期化なので2回目以降は握り潰される) |
+| 設定画面に「Claude 連携」が出ない | ビルドが古い | Expo Go の右上「Reload」を押して最新コードを再読み込み |
+| キー生成で「読み込み失敗」「Authorization required」 | Supabaseセッションが切れた | アプリで一度ログアウト→ログイン |
+| Claude Codeで「Unauthorized」 | キーをコピーミス or 既にrevoke済み | アプリでキーを再生成して登録し直し |
+| Claude Codeで「Method not found」 | MCP transportが違う | `--transport http` を付けたか確認 (sse じゃない) |
+| Claudeが「list_goals」を見つけられない | ツール名のプレフィックス問題 | `tosche__list_goals` のように mcp名がprefixになる場合あり |
+
+---
+
+## テストできたら教えてください
+
+実機テストで動いたら、Android対応 (Phase 2.5の続き) に進めます。
+逆に何かバグや改善点があれば、その場で直してから次に進みます。

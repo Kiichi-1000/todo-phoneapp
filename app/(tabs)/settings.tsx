@@ -719,6 +719,22 @@ export default function SettingsScreen() {
 
           <TouchableOpacity
             style={styles.settingItem}
+            onPress={() => router.push('/claude-integration')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <KeyRound size={20} color="#6366F1" />
+                <View>
+                  <Text style={styles.settingText}>AI 連携 (Claude / ChatGPT)</Text>
+                  <Text style={styles.settingSub}>外部のAIで目標を立てて ToSche に流し込む</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
             onPress={handleDeleteChatHistory}
             disabled={chatStats.conversations === 0}
           >

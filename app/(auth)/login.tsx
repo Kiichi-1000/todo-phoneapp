@@ -225,20 +225,24 @@ export default function LoginScreen() {
               <View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity
-              style={[styles.appleButton, appleLoading && styles.submitButtonDisabled]}
-              onPress={handleAppleSignIn}
-              disabled={loading || appleLoading || googleLoading}
-            >
-              {appleLoading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <>
-                  <Apple size={18} color="#fff" />
-                  <Text style={styles.appleButtonText}>{t('auth.continueWithApple')}</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {/* Apple Sign In is only available on iOS and Web (Safari).
+                Android users see only Email + Google sign-in. */}
+            {Platform.OS !== 'android' && (
+              <TouchableOpacity
+                style={[styles.appleButton, appleLoading && styles.submitButtonDisabled]}
+                onPress={handleAppleSignIn}
+                disabled={loading || appleLoading || googleLoading}
+              >
+                {appleLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Apple size={18} color="#fff" />
+                    <Text style={styles.appleButtonText}>{t('auth.continueWithApple')}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[styles.googleButton, googleLoading && styles.submitButtonDisabled]}

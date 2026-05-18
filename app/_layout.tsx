@@ -144,6 +144,7 @@ function RootNavigator() {
           }}
         />
         <Stack.Screen name="goal-coach" />
+        <Stack.Screen name="claude-integration" />
         <Stack.Screen name="+not-found" />
       </Stack>
 

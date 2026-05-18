@@ -68,19 +68,40 @@ function jsonResponse(payload: unknown, status = 200) {
 //   ToSche Basic      / ToSche.std.1.2           / 月額
 //   ToSche Yearly     / tosche_basic_yearly      / 年額
 //
-// product_id の命名は不揃いだが ASC 側の実物がこれなので、コードを実物に
-// 合わせる (ASC 側は変更しない前提)。
+// Google Play は product_id に大文字を許可しないため、月額3商品は別名で登録する。
+// 年額3商品は既に lowercase なので iOS と同じ ID を再利用する。
+// Play 側で Tsukui-san が以下のID で6商品を作成する前提:
+//   pro 月額      → tosche_ai_pro_monthly
+//   pro 年額      → tosche_ai_pro_yearly (iOS と共通)
+//   standard 月額 → tosche_ai_standard_monthly
+//   standard 年額 → tosche_ai_standard_yearly (iOS と共通)
+//   basic 月額    → tosche_basic_monthly
+//   basic 年額    → tosche_basic_yearly (iOS と共通)
 // ------------------------------------------------------------
 type PlanTier = "basic" | "standard" | "pro";
 type Cycle = "monthly" | "yearly";
 
 const PRODUCT_MAP: Record<string, { plan: PlanTier; cycle: Cycle }> = {
+  // iOS (App Store)
   "ToSche.AI.Pro.1.2": { plan: "pro", cycle: "monthly" },
   "tosche_ai_pro_yearly": { plan: "pro", cycle: "yearly" },
   "ToSche.AI.std.1.2": { plan: "standard", cycle: "monthly" },
   "tosche_ai_standard_yearly": { plan: "standard", cycle: "yearly" },
   "ToSche.std.1.2": { plan: "basic", cycle: "monthly" },
   "tosche_basic_yearly": { plan: "basic", cycle: "yearly" },
+  // Android (Google Play) — 月額3商品は別ID。年額は上記と共通。
+  "tosche_ai_pro_monthly": { plan: "pro", cycle: "monthly" },
+  "tosche_ai_standard_monthly": { plan: "standard", cycle: "monthly" },
+  "tosche_basic_monthly": { plan: "basic", cycle: "monthly" },
+};
+
+// PRODUCT_CHANGE で差額付与を計算するための plan → 月次付与額 (yen)。
+// monthly-token-grant/index.ts の PLAN_GRANT_YEN と一致させること。
+// basic は AI トークン無しのため 0 円。
+const PLAN_GRANT_YEN: Record<PlanTier, number> = {
+  basic: 0,
+  standard: 400,
+  pro: 700,
 };
 
 // RevenueCat の event.store → user_subscriptions.platform
@@ -281,11 +302,159 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "db_upsert_failed", detail: upsertErr.message }, 500);
   }
 
+  // 6. PRODUCT_CHANGE のアップグレード差額付与
+  //
+  // ユーザーが期中に上位プランに乗り換えた場合 (例: Standard ¥400 → Pro ¥700)、
+  // user_subscriptions.plan の更新だけだと当月分のトークンは旧プランのまま
+  // (差額 ¥300 が反映されない)。月次バッチ (monthly-token-grant) は
+  // next_grant_at 到来まで動かないため、ここで即時に差額を付与する。
+  //
+  // ダウングレード (Pro → Standard) は付与済みトークンを剥がさない (UX 優先)。
+  //
+  // 冪等性: 同じ event.id が ai_token_transactions.metadata に既に
+  // 記録されていればスキップ (RC の再送対策)。
+  const upgradeResult = await handleProductChangeDiff({
+    adminClient,
+    eventType,
+    eventId: (event.id as string | undefined) || null,
+    userId: appUserId,
+    oldPlan: existing?.plan as PlanTier | null | undefined,
+    newPlan: plan as PlanTier | null,
+    currentGrantExpiresAt:
+      (row.current_period_end as string | undefined) ?? null,
+  });
+
   return jsonResponse({
     ok: true,
     event_type: eventType,
     user_id: appUserId,
     status,
     plan: row.plan,
+    upgrade: upgradeResult,
   });
 });
+
+// ------------------------------------------------------------
+// PRODUCT_CHANGE 差額付与
+// ------------------------------------------------------------
+async function handleProductChangeDiff(args: {
+  adminClient: ReturnType<typeof createClient>;
+  eventType: string;
+  eventId: string | null;
+  userId: string;
+  oldPlan: PlanTier | null | undefined;
+  newPlan: PlanTier | null;
+  currentGrantExpiresAt: string | null;
+}): Promise<{ applied: boolean; reason?: string; diff_yen?: number }> {
+  const { adminClient, eventType, eventId, userId, oldPlan, newPlan } = args;
+
+  if (eventType !== "PRODUCT_CHANGE") {
+    return { applied: false, reason: "not_product_change" };
+  }
+  if (!oldPlan || !newPlan || oldPlan === newPlan) {
+    return { applied: false, reason: "no_plan_change" };
+  }
+  const oldGrant = PLAN_GRANT_YEN[oldPlan] ?? 0;
+  const newGrant = PLAN_GRANT_YEN[newPlan] ?? 0;
+  const diff = newGrant - oldGrant;
+  if (diff <= 0) {
+    return { applied: false, reason: "downgrade_or_equal", diff_yen: diff };
+  }
+
+  // 冪等性チェック: 同じ event_id が既に処理済みなら skip
+  if (eventId) {
+    const { data: dup, error: dupErr } = await adminClient
+      .from("ai_token_transactions")
+      .select("id")
+      .eq("user_id", userId)
+      .filter("metadata->>event_id", "eq", eventId)
+      .limit(1)
+      .maybeSingle();
+    if (dupErr) {
+      console.error("[product_change] dup check failed:", dupErr.message);
+      // 続行 (重複付与の方がユーザーに不利益が無い)
+    }
+    if (dup) {
+      return { applied: false, reason: "already_processed", diff_yen: diff };
+    }
+  }
+
+  // 残高 read
+  const { data: bal, error: balErr } = await adminClient
+    .from("ai_token_balances")
+    .select(
+      "current_grant_yen, current_grant_expires_at, carryover_yen, carryover_expires_at, total_granted_yen, total_consumed_yen, total_expired_yen",
+    )
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (balErr) {
+    console.error("[product_change] balance read failed:", balErr.message);
+    return { applied: false, reason: "balance_read_failed" };
+  }
+
+  const oldCurrent = Number(bal?.current_grant_yen ?? 0);
+  const oldTotalGranted = Number(bal?.total_granted_yen ?? 0);
+  const carryover = Number(bal?.carryover_yen ?? 0);
+  const newCurrent = oldCurrent + diff;
+  const newTotalGranted = oldTotalGranted + diff;
+  const balanceAfter = newCurrent + carryover;
+
+  // current_grant_expires_at は既存の値を温存 (アップグレード時の有効期限延長は
+  // しない: 当月分の差額を埋めるだけ)。ただし残高行が無い場合は newPlan の
+  // 次サイクルまでで設定する必要がある。
+  const newExpiresAt =
+    bal?.current_grant_expires_at ?? args.currentGrantExpiresAt;
+
+  if (!bal) {
+    // ai_token_balances 行が無いケース (basic から upgrade など)
+    const { error: insErr } = await adminClient
+      .from("ai_token_balances")
+      .insert({
+        user_id: userId,
+        current_grant_yen: newCurrent,
+        current_grant_expires_at: newExpiresAt,
+        carryover_yen: 0,
+        carryover_expires_at: null,
+        total_granted_yen: newTotalGranted,
+        total_consumed_yen: 0,
+        total_expired_yen: 0,
+      });
+    if (insErr) {
+      console.error("[product_change] balance insert failed:", insErr.message);
+      return { applied: false, reason: "balance_insert_failed" };
+    }
+  } else {
+    const { error: updErr } = await adminClient
+      .from("ai_token_balances")
+      .update({
+        current_grant_yen: newCurrent,
+        total_granted_yen: newTotalGranted,
+      })
+      .eq("user_id", userId);
+    if (updErr) {
+      console.error("[product_change] balance update failed:", updErr.message);
+      return { applied: false, reason: "balance_update_failed" };
+    }
+  }
+
+  const { error: txErr } = await adminClient.from("ai_token_transactions")
+    .insert({
+      user_id: userId,
+      kind: "grant",
+      amount_yen: diff,
+      balance_after_yen: balanceAfter,
+      metadata: {
+        source: "product_change_upgrade",
+        from_plan: oldPlan,
+        to_plan: newPlan,
+        event_id: eventId,
+      },
+    });
+  if (txErr) {
+    console.error("[product_change] tx insert failed:", txErr.message);
+    // 残高は更新済み。ログだけ失敗の状態だが、ユーザー影響は無いので続行。
+  }
+
+  return { applied: true, diff_yen: diff };
+}
