@@ -269,6 +269,32 @@ export default function ClaudeIntegrationScreen() {
           <Step n="3" title="Authentication = API Key, Auth Type = Bearer">
             下で生成したキーを Bearer Token として設定
           </Step>
+
+          <Step n="4" title="保存後、必ずサイドバーから「ToSche目標設定コーチ」を選んでチャット">
+            <View style={styles.warnBox}>
+              <Text style={styles.warnTitle}>⚠️ ChatGPT 特有の重要ポイント</Text>
+              <Text style={styles.warnText}>
+                Claude と違って、ChatGPT は通常のチャットからは ToSche に話しかけても反応しません。
+              </Text>
+              <Text style={styles.warnText}>
+                必ず ChatGPT のサイドバー (左側) から「ToSche目標設定コーチ」を開いてからチャットしてください。
+                開いた状態で「今月の目標を立てたい」「目標を一覧表示して」のように話しかけると、ToSche に反映されます。
+              </Text>
+            </View>
+            <View style={styles.gptSidebarMock}>
+              <View style={styles.gptSidebarBar}>
+                <Text style={styles.gptSidebarBarText}>＋ 新しいチャット</Text>
+              </View>
+              <View style={styles.gptSidebarBar}>
+                <Text style={styles.gptSidebarBarText}>🔍 検索</Text>
+              </View>
+              <Text style={styles.gptSidebarLabel}>GPT</Text>
+              <View style={[styles.gptSidebarBar, styles.gptSidebarBarActive]}>
+                <Text style={styles.gptSidebarBarActiveText}>📋 ToSche目標設定コーチ</Text>
+                <Text style={styles.gptSidebarTap}>👆ここをタップ</Text>
+              </View>
+            </View>
+          </Step>
         </View>
 
         {/* Key list */}
@@ -515,6 +541,57 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   codeText: { flex: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 11, color: '#0f172a' },
+
+  // ChatGPT 特有の警告枠 + サイドバーから GPT を選ばないと動かない件を視覚化するモック。
+  warnBox: {
+    backgroundColor: '#fff7ed',
+    borderLeftWidth: 3,
+    borderLeftColor: '#f59e0b',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 10,
+    gap: 6,
+  },
+  warnTitle: { fontSize: 12.5, fontWeight: '700', color: '#7c2d12' },
+  warnText: { fontSize: 12, color: '#7c2d12', lineHeight: 18 },
+  gptSidebarMock: {
+    backgroundColor: '#f7f7f8',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginTop: 4,
+    gap: 4,
+  },
+  gptSidebarBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  gptSidebarBarText: { fontSize: 11, color: '#0f172a' },
+  gptSidebarLabel: {
+    fontSize: 9,
+    color: '#94a3b8',
+    paddingHorizontal: 10,
+    paddingTop: 4,
+    paddingBottom: 2,
+    letterSpacing: 0.6,
+    fontWeight: '700',
+  },
+  gptSidebarBarActive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fffbeb',
+    borderWidth: 2,
+    borderColor: '#f59e0b',
+  },
+  gptSidebarBarActiveText: { fontSize: 12, color: '#0f172a', fontWeight: '700' },
+  gptSidebarTap: { fontSize: 10, color: '#f59e0b', fontWeight: '700' },
 
   emptyText: { fontSize: 13, color: '#94a3b8', textAlign: 'center', paddingVertical: 16 },
 
