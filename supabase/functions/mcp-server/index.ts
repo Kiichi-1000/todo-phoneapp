@@ -171,7 +171,11 @@ function handleInitialize(id: unknown): Response {
       title: "ToSche",
       version: SERVER_VERSION,
       iconUrl: ICON_URL,
-      icons: [{ src: ICON_URL, mimeType: "image/png", sizes: "256x256" }],
+      // `sizes` MUST be an array of WxH strings per the MCP icon schema —
+      // Claude Code's Zod validator rejects a plain string here. The web
+      // standard (link rel=icon) also accepts space-separated values inside
+      // a single string, but MCP follows the JSON-Resource-Manifest shape.
+      icons: [{ src: ICON_URL, mimeType: "image/png", sizes: ["256x256"] }],
       _meta: { iconUrl: ICON_URL },
     },
     instructions:
