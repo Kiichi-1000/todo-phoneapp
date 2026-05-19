@@ -137,7 +137,10 @@ const PLACEHOLDER_OFFERINGS_ALL: PriceOption[] = [
   ),
 ];
 
-const PLACEHOLDER_OFFERINGS: PriceOption[] =
+// Exported so the Paywall can paint instantly with these known-correct
+// prices while the live store fetch (slow on Android's Play Billing) is
+// still in flight, then swap in the real PriceOptions when they arrive.
+export const PLACEHOLDER_OFFERINGS: PriceOption[] =
   Platform.OS === 'android' ? PLACEHOLDER_OFFERINGS_ANDROID : PLACEHOLDER_OFFERINGS_IOS;
 
 let initPromise: Promise<void> | null = null;

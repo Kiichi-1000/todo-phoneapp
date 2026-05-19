@@ -65,6 +65,7 @@ import {
   restorePurchases,
   syncSubscriptionAfterPurchase,
   fetchCustomerInfo,
+  PLACEHOLDER_OFFERINGS,
   type PriceOption,
   type Plan,
   type Cycle,
@@ -455,9 +456,18 @@ export default function PaywallScreen() {
   const visiblePlans: Plan[] =
     entryContext === 'ai' ? ['standard', 'pro'] : ['basic', 'standard', 'pro'];
 
-  const [loading, setLoading] = useState(true);
+  // Android's Play Billing handshake (configure + getOfferings) is markedly
+  // slower than iOS StoreKit, so a full-screen spinner there reads as "the
+  // paywall is slow to open". Seed Android with the known-correct placeholder
+  // prices so the design paints instantly, then `load()` swaps in the live
+  // store prices the moment they arrive. iOS keeps the spinner (its fetch is
+  // fast enough that a placeholder flash would look worse than a brief load).
+  const optimistic = Platform.OS === 'android';
+  const [loading, setLoading] = useState(!optimistic);
   const [loadError, setLoadError] = useState(false);
-  const [offerings, setOfferings] = useState<GroupedOfferings | null>(null);
+  const [offerings, setOfferings] = useState<GroupedOfferings | null>(
+    optimistic ? groupOfferings(PLACEHOLDER_OFFERINGS) : null,
+  );
   const [selectedPlan, setSelectedPlan] = useState<Plan>(initialPlan);
   const [selectedCycle, setSelectedCycle] = useState<Cycle>('monthly');
   const [purchasing, setPurchasing] = useState(false);
@@ -647,7 +657,11 @@ export default function PaywallScreen() {
   );
 
   // ── ローディング ─────────────────────────────
-  if (loading) {
+  // Only block the whole screen when we have nothing to paint yet. On
+  // Android `offerings` is pre-seeded with placeholders, so we fall through
+  // to the real layout immediately and never show this spinner; the live
+  // prices stream in via load() without a visible reload.
+  if (loading && !offerings) {
     return (
       <View style={styles.container}>
         {renderCloseButton()}
@@ -659,7 +673,11 @@ export default function PaywallScreen() {
   }
 
   // ── 読み込みエラー ───────────────────────────
-  if (loadError || !offerings) {
+  // Only show the error/retry screen when we truly have nothing to display.
+  // On Android the placeholder seed means a transient getOfferings() failure
+  // still leaves correct prices on screen (purchasePackage re-fetches live
+  // offerings at tap time anyway), so we avoid a jarring paywall→error flash.
+  if (loadError && !offerings) {
     return (
       <View style={styles.container}>
         {renderCloseButton()}
@@ -685,6 +703,12 @@ export default function PaywallScreen() {
   }
 
   // ── 本体 ─────────────────────────────────────
+  // Type guard: by this point `offerings` is always populated — Android
+  // seeds it with placeholders, and on iOS we only fall through here once
+  // load() has set it (otherwise the loading/error gates above returned).
+  // This narrows the type to non-null for the render below.
+  if (!offerings) return null;
+
   const selectedOpt = offerings[selectedPlan]?.[selectedCycle];
   const selectedName =
     lang === 'ja' ? PLAN_META[selectedPlan].nameJa : PLAN_META[selectedPlan].nameEn;
