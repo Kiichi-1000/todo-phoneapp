@@ -15,6 +15,7 @@
     "**/*.json"
   ],
   "exclude": [
-    "supabase/functions/**"
+    "supabase/functions/**",
+    "oauth-worker/**"
   ]
 }

@@ -135,8 +135,10 @@ export default function GoalCoachScreen() {
   // バッジで「プラン上限に対する%」を出すために必要。standard=4000、pro=7000。
   // ai-chat と同じ式: yen × 10 = AIトークン量。
   const [planMaxTokens, setPlanMaxTokens] = useState<number | null>(null);
+  // Must include every variant of lib/aiAccess.ts#AccessReason, otherwise
+  // setAccessReason(access.reason) rejects the basic_plan_no_ai case.
   const [accessReason, setAccessReason] = useState<
-    'active_subscription' | 'promo' | 'release_promo' | 'none' | null
+    'active_subscription' | 'promo' | 'release_promo' | 'basic_plan_no_ai' | 'none' | null
   >(null);
   const [accessExpiresAt, setAccessExpiresAt] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
