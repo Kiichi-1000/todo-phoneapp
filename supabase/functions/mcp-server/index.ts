@@ -179,7 +179,13 @@ function handleInitialize(id: unknown): Response {
       _meta: { iconUrl: ICON_URL },
     },
     instructions:
-      "ToSche MCP server. Use list_goals first to see what the user has, then create_goal / create_milestones_batch to add new goals and roadmaps. Mark progress with update_milestone.",
+      "ToSche MCP server. Read first (list_goals / list_milestones). " +
+      "Add with create_goal / create_milestones_batch. " +
+      "Mark progress with update_milestone. " +
+      "DESTRUCTIVE TOOLS (delete_goal / delete_milestone) follow a two-phase " +
+      "protocol: first call with confirm omitted returns a deletion preview; " +
+      "only after the user explicitly approves in chat, call again with " +
+      "confirm: true. Never pre-confirm deletions on the user's behalf.",
   }, { "Mcp-Session-Id": generateMcpSessionId() });
 }
 

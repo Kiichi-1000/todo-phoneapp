@@ -5,12 +5,16 @@
 // If a tool's behavior diverges from ai-chat, document the divergence
 // explicitly. For now they are 1:1.
 //
-// Exposed tools (v1.4 launch — read + safe writes only, no destructive):
-//   - list_goals
-//   - list_milestones
-//   - create_goal
-//   - create_milestones_batch
-//   - update_milestone
+// Exposed tools:
+//   Read-only:        list_goals, list_milestones
+//   Safe writes:      create_goal, create_milestones_batch, update_milestone
+//   Destructive:      delete_goal, delete_milestone
+//
+// Destructive tools follow a two-phase confirmation protocol — see the
+// `confirm` parameter on each. Phase 1 (confirm omitted or false) returns
+// a deletion preview; phase 2 (confirm: true) performs the delete. The
+// tool descriptions instruct the AI to present the preview to the user
+// and obtain explicit consent before passing confirm: true.
 
 export interface ToolDefinition {
   name: string;
@@ -158,6 +162,64 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
         target_date: { type: "string", description: "YYYY-MM-DD, or empty string to clear." },
         is_completed: { type: "boolean" },
         sort_order: { type: "integer" },
+      },
+      required: ["milestone_id"],
+    },
+  },
+  {
+    name: "delete_goal",
+    description:
+      "DESTRUCTIVE. Permanently delete a goal. " +
+      "USE A TWO-PHASE PROTOCOL: " +
+      "(1) FIRST call with confirm omitted or false — this returns a preview " +
+      "listing what will be deleted (the goal itself, all of its milestones, " +
+      "and side-effects: child goals become orphans / linked tasks become " +
+      "unlinked but NEITHER is deleted). Show the preview to the user in " +
+      "natural language and explicitly ask whether to proceed. " +
+      "(2) ONLY after the user has unambiguously approved in the conversation, " +
+      "call again with confirm: true to actually perform the deletion. " +
+      "NEVER pass confirm: true on the first invocation. NEVER pass " +
+      "confirm: true based on inferred consent — the user must have said " +
+      "yes (or equivalent) to deletion of THIS specific goal in the chat. " +
+      "If the user is ambiguous, default to the preview phase and ask again.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal_id: { type: "string", description: "ID of the goal to delete." },
+        confirm: {
+          type: "boolean",
+          description:
+            "Omit or pass false to get the deletion preview (default). Pass true " +
+            "ONLY after the user has explicitly approved deletion of this exact " +
+            "goal in the chat. Default: false.",
+        },
+      },
+      required: ["goal_id"],
+    },
+  },
+  {
+    name: "delete_milestone",
+    description:
+      "DESTRUCTIVE. Permanently delete a single milestone (roadmap step). " +
+      "USE A TWO-PHASE PROTOCOL: " +
+      "(1) FIRST call with confirm omitted or false — this returns a preview " +
+      "of the milestone that would be deleted. Show it to the user and ask " +
+      "whether to proceed. " +
+      "(2) ONLY after the user has unambiguously approved, call again with " +
+      "confirm: true to actually delete. " +
+      "NEVER pass confirm: true on the first invocation. The user must have " +
+      "explicitly said yes to deleting THIS specific milestone in the chat.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        milestone_id: { type: "string", description: "ID of the milestone to delete." },
+        confirm: {
+          type: "boolean",
+          description:
+            "Omit or pass false to get the deletion preview (default). Pass true " +
+            "ONLY after the user has explicitly approved deletion of this exact " +
+            "milestone in the chat. Default: false.",
+        },
       },
       required: ["milestone_id"],
     },
@@ -315,5 +377,152 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     if (error) return fail(error.message);
     if (!data) return fail("Milestone not found");
     return ok({ milestone: data });
+  },
+
+  delete_goal: async (input, ctx) => {
+    const goalId = input.goal_id as string;
+    if (!goalId) return fail("goal_id is required");
+    const confirmed = input.confirm === true;
+
+    // Fetch the goal + its impact footprint in one round-trip pattern.
+    // RLS: scope every query to ctx.userId so a delete preview never leaks
+    // info about someone else's data even if a wrong id is passed.
+    const { data: goal, error: goalErr } = await ctx.adminClient
+      .from("goals")
+      .select("id, level, title, period_start, period_end, parent_id, is_completed")
+      .eq("id", goalId)
+      .eq("user_id", ctx.userId)
+      .maybeSingle();
+    if (goalErr) return fail(goalErr.message);
+    if (!goal) return fail("Goal not found or not owned by you");
+
+    // Count related rows so the preview can describe the blast radius.
+    const [milestonesRes, childrenRes, todosRes] = await Promise.all([
+      ctx.adminClient
+        .from("goal_milestones")
+        .select("id, title", { count: "exact" })
+        .eq("goal_id", goalId)
+        .eq("user_id", ctx.userId),
+      ctx.adminClient
+        .from("goals")
+        .select("id, level, title", { count: "exact" })
+        .eq("parent_id", goalId)
+        .eq("user_id", ctx.userId),
+      ctx.adminClient
+        .from("todos")
+        .select("id", { count: "exact", head: true })
+        .eq("goal_id", goalId)
+        .eq("user_id", ctx.userId),
+    ]);
+
+    const milestones = (milestonesRes.data ?? []) as { id: string; title: string }[];
+    const children = (childrenRes.data ?? []) as { id: string; level: string; title: string }[];
+    const milestonesCount = milestonesRes.count ?? milestones.length;
+    const childrenCount = childrenRes.count ?? children.length;
+    const todosCount = todosRes.count ?? 0;
+
+    const preview = {
+      goal: {
+        id: goal.id,
+        level: goal.level,
+        title: goal.title,
+        period_start: goal.period_start,
+        period_end: goal.period_end,
+        is_completed: goal.is_completed,
+      },
+      will_delete: {
+        // Cascaded by foreign key (goal_milestones.goal_id ON DELETE CASCADE).
+        milestones_count: milestonesCount,
+        milestones_sample: milestones.slice(0, 5).map((m) => ({ id: m.id, title: m.title })),
+      },
+      will_unlink_but_keep: {
+        // goals.parent_id ON DELETE SET NULL — child goals survive as orphans.
+        child_goals_count: childrenCount,
+        child_goals_sample: children
+          .slice(0, 5)
+          .map((c) => ({ id: c.id, level: c.level, title: c.title })),
+        // todos.goal_id ON DELETE SET NULL — tasks survive, just lose the link.
+        linked_todos_count: todosCount,
+      },
+    };
+
+    if (!confirmed) {
+      return ok({
+        phase: "preview",
+        preview,
+        next_step:
+          "Show the preview to the user in natural language and ask whether to proceed. " +
+          "Only call delete_goal again with confirm: true after they explicitly approve " +
+          "deletion of this specific goal.",
+      });
+    }
+
+    // Phase 2: actually delete. Milestones cascade automatically.
+    const { error: delErr } = await ctx.adminClient
+      .from("goals")
+      .delete()
+      .eq("id", goalId)
+      .eq("user_id", ctx.userId);
+    if (delErr) return fail(delErr.message);
+
+    return ok({
+      phase: "deleted",
+      deleted_goal: preview.goal,
+      cascaded: {
+        milestones_deleted: milestonesCount,
+      },
+      side_effects: {
+        child_goals_orphaned: childrenCount,
+        todos_unlinked: todosCount,
+      },
+    });
+  },
+
+  delete_milestone: async (input, ctx) => {
+    const milestoneId = input.milestone_id as string;
+    if (!milestoneId) return fail("milestone_id is required");
+    const confirmed = input.confirm === true;
+
+    const { data: milestone, error: msErr } = await ctx.adminClient
+      .from("goal_milestones")
+      .select("id, goal_id, title, target_date, is_completed, sort_order")
+      .eq("id", milestoneId)
+      .eq("user_id", ctx.userId)
+      .maybeSingle();
+    if (msErr) return fail(msErr.message);
+    if (!milestone) return fail("Milestone not found or not owned by you");
+
+    const preview = {
+      milestone: {
+        id: milestone.id,
+        goal_id: milestone.goal_id,
+        title: milestone.title,
+        target_date: milestone.target_date,
+        is_completed: milestone.is_completed,
+        sort_order: milestone.sort_order,
+      },
+    };
+
+    if (!confirmed) {
+      return ok({
+        phase: "preview",
+        preview,
+        next_step:
+          "Show this milestone to the user and ask whether to delete it. " +
+          "Only call delete_milestone again with confirm: true after they approve.",
+      });
+    }
+
+    const { error: delErr } = await ctx.adminClient
+      .from("goal_milestones")
+      .delete()
+      .eq("id", milestoneId)
+      .eq("user_id", ctx.userId);
+    if (delErr) return fail(delErr.message);
+
+    return ok({
+      phase: "deleted",
+      deleted_milestone: preview.milestone,
+    });
   },
 };
