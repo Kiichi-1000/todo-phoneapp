@@ -51,11 +51,28 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "mcp-session-id, WWW-Authenticate",
 };
 
-function jsonRpcResult(id: unknown, result: unknown): Response {
+function jsonRpcResult(
+  id: unknown,
+  result: unknown,
+  extraHeaders?: Record<string, string>,
+): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), {
     status: 200,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...(extraHeaders ?? {}),
+    },
   });
+}
+
+// Random session ID for MCP streamable-http transport. Claude Code 2.1.104+
+// rejects servers that don't emit Mcp-Session-Id on initialize as "Failed to
+// connect" in `claude mcp list`. We don't actually maintain per-session state
+// server-side — the Bearer token in Authorization is the real identity — but
+// the header presence is what the probe checks.
+function generateMcpSessionId(): string {
+  return crypto.randomUUID();
 }
 
 function jsonRpcError(
@@ -136,6 +153,14 @@ interface JsonRpcRequest {
 // ------------- MCP method handlers -------------
 
 function handleInitialize(id: unknown): Response {
+  // Advertise an icon under several field names so each client implementation
+  // can pick whichever it understands. The MCP spec (2025-06-18) doesn't yet
+  // standardize icons, but Claude.ai and other clients look at:
+  //   - serverInfo.icons[] (an array with src/mimeType/sizes)
+  //   - serverInfo.iconUrl (single URL)
+  //   - serverInfo._meta.iconUrl (vendor extension)
+  // We also serve /favicon.ico and /icon.png on the same host as a fallback.
+  const ICON_URL = "https://tosche-oauth.kiichitsukui111806.workers.dev/icon.png";
   return jsonRpcResult(id, {
     protocolVersion: MCP_PROTOCOL_VERSION,
     capabilities: {
@@ -143,11 +168,15 @@ function handleInitialize(id: unknown): Response {
     },
     serverInfo: {
       name: SERVER_NAME,
+      title: "ToSche",
       version: SERVER_VERSION,
+      iconUrl: ICON_URL,
+      icons: [{ src: ICON_URL, mimeType: "image/png", sizes: "256x256" }],
+      _meta: { iconUrl: ICON_URL },
     },
     instructions:
       "ToSche MCP server. Use list_goals first to see what the user has, then create_goal / create_milestones_batch to add new goals and roadmaps. Mark progress with update_milestone.",
-  });
+  }, { "Mcp-Session-Id": generateMcpSessionId() });
 }
 
 function handleToolsList(id: unknown): Response {
@@ -198,11 +227,21 @@ function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
   const paths: Record<string, unknown> = {};
   for (const tool of MCP_TOOL_DEFS) {
     const required = tool.inputSchema.required ?? [];
+    // ChatGPT Custom GPT Actions caps operation `description` at 300 chars
+    // and requires concise `summary`. Trim aggressively.
+    const firstLine = tool.description.split("\n")[0];
+    const summary = firstLine.length > 100
+      ? firstLine.slice(0, 97) + "..."
+      : firstLine;
+    const fullDesc = tool.description.replace(/\s+/g, " ").trim();
+    const description = fullDesc.length > 290
+      ? fullDesc.slice(0, 287) + "..."
+      : fullDesc;
     paths[`/api/${tool.name}`] = {
       post: {
         operationId: tool.name,
-        summary: tool.description.split("\n")[0].slice(0, 200),
-        description: tool.description,
+        summary,
+        description,
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: required.length > 0,
@@ -212,7 +251,7 @@ function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
         },
         responses: {
           "200": {
-            description: "Tool result. `ok=true` on success with `data`, `ok=false` on validation/permission failure with `error`.",
+            description: "Tool result. ok=true on success with data, ok=false with error.",
             content: {
               "application/json": {
                 schema: {
@@ -227,7 +266,7 @@ function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
               },
             },
           },
-          "401": { description: "Unauthorized — missing or revoked API key" },
+          "401": { description: "Unauthorized" },
           "404": { description: "Unknown tool" },
           "500": { description: "Server error" },
         },
@@ -240,12 +279,13 @@ function buildOpenApiSpec(baseUrl: string): Record<string, unknown> {
       title: "ToSche Goals API",
       version: SERVER_VERSION,
       description:
-        "REST surface over the ToSche MCP server. Designed for ChatGPT Custom GPT Actions. " +
-        "Auth: Bearer token, same key generated in the ToSche app (Settings → Claude integration). " +
-        "Calls write to the user's own ToSche account; that user is resolved from the key.",
+        "REST surface over the ToSche MCP server. For ChatGPT Custom GPT Actions. " +
+        "Auth via OAuth (preferred) or Bearer API key.",
     },
     servers: [{ url: baseUrl }],
     components: {
+      // ChatGPT requires `schemas` to be an object — empty is fine.
+      schemas: {},
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer" },
       },

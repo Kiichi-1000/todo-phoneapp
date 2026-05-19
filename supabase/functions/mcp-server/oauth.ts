@@ -87,23 +87,48 @@ async function pkceS256(verifier: string): Promise<string> {
   return b64urlFromBytes(new Uint8Array(hash));
 }
 
-// Match an incoming redirect_uri against a registered one. Exact match by
-// default, except for loopback http URIs (RFC 8252), where the port is
-// allowed to differ — Claude Code picks an ephemeral port per session so
-// `http://127.0.0.1/callback` registered must match
-// `http://127.0.0.1:54321/callback` at runtime, etc.
+// Match an incoming redirect_uri against a registered one.
+//   - Exact match always wins.
+//   - Loopback http URIs (RFC 8252): port-agnostic (Claude Code picks an
+//     ephemeral port per session).
+//   - A `*` token in any path segment of the registered URI matches any
+//     single segment of the incoming URI. ChatGPT mints a fresh internal
+//     GPT id (`g-<hash>`) on every GPT save, so we need to allow
+//     `https://chat.openai.com/aip/g-*/oauth/callback`.
 function redirectUriMatches(registered: string, incoming: string): boolean {
   if (registered === incoming) return true;
   try {
     const r = new URL(registered);
     const i = new URL(incoming);
+
     const isLoopback =
       r.protocol === "http:" &&
       i.protocol === "http:" &&
       (r.hostname === "127.0.0.1" || r.hostname === "localhost") &&
       r.hostname === i.hostname;
-    if (!isLoopback) return false;
-    return r.pathname === i.pathname && r.search === i.search;
+    if (isLoopback) {
+      return r.pathname === i.pathname && r.search === i.search;
+    }
+
+    if (r.protocol !== i.protocol || r.host !== i.host) return false;
+    if (r.search !== i.search) return false;
+    if (!r.pathname.includes("*")) return false;
+    const rs = r.pathname.split("/");
+    const is = i.pathname.split("/");
+    if (rs.length !== is.length) return false;
+    for (let k = 0; k < rs.length; k++) {
+      if (rs[k] === "*") continue;
+      // Allow `g-*` style prefix wildcards within a segment too.
+      if (rs[k].includes("*")) {
+        const pattern = new RegExp(
+          "^" + rs[k].split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$",
+        );
+        if (!pattern.test(is[k])) return false;
+        continue;
+      }
+      if (rs[k] !== is[k]) return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -284,20 +309,26 @@ interface AuthorizeQuery {
 
 function parseAuthorizeQuery(url: URL): AuthorizeQuery | { error: string } {
   const q = url.searchParams;
-  const required = ["client_id", "redirect_uri", "response_type", "code_challenge", "code_challenge_method"];
+  // PKCE is required for public clients (MCP, Claude Code, CLI) but
+  // ChatGPT GPT Actions use classic OAuth 2.0 (client_id + client_secret,
+  // no PKCE). We allow either: code_challenge presence → PKCE flow,
+  // absence → confidential-client flow (validated in token exchange).
+  const required = ["client_id", "redirect_uri", "response_type"];
   for (const k of required) {
     if (!q.get(k)) return { error: `Missing required parameter: ${k}` };
   }
   if (q.get("response_type") !== "code") return { error: "response_type must be code" };
-  if (q.get("code_challenge_method") !== "S256") return { error: "code_challenge_method must be S256" };
+  const cc = q.get("code_challenge");
+  const ccm = q.get("code_challenge_method");
+  if (cc && ccm !== "S256") return { error: "code_challenge_method must be S256" };
   return {
     client_id: q.get("client_id")!,
     redirect_uri: q.get("redirect_uri")!,
     response_type: q.get("response_type")!,
     scope: q.get("scope") ?? undefined,
     state: q.get("state") ?? undefined,
-    code_challenge: q.get("code_challenge")!,
-    code_challenge_method: q.get("code_challenge_method")!,
+    code_challenge: cc ?? "",
+    code_challenge_method: cc ? "S256" : "",
   };
 }
 
@@ -366,10 +397,10 @@ export async function handleAuthorizeApprove(req: Request, admin: any, anonKey: 
   const scope = String(body.scope ?? SCOPE_DEFAULT);
   const state = body.state == null ? null : String(body.state);
 
-  if (!access_token || !clientId || !redirectUri || !codeChallenge) {
+  if (!access_token || !clientId || !redirectUri) {
     return json({ error: "Missing required fields" }, 400);
   }
-  if (codeChallengeMethod !== "S256") {
+  if (codeChallenge && codeChallengeMethod !== "S256") {
     return json({ error: "code_challenge_method must be S256" }, 400);
   }
 
@@ -497,7 +528,8 @@ async function handleAuthCodeGrant(params: URLSearchParams, admin: any): Promise
   const redirectUri = params.get("redirect_uri");
   const clientId = params.get("client_id");
   const codeVerifier = params.get("code_verifier");
-  if (!code || !redirectUri || !clientId || !codeVerifier) {
+  const clientSecret = params.get("client_secret");
+  if (!code || !redirectUri || !clientId) {
     return json({ error: "invalid_request", error_description: "Missing fields" }, 400);
   }
 
@@ -522,10 +554,34 @@ async function handleAuthCodeGrant(params: URLSearchParams, admin: any): Promise
   if (!redirectUriMatches(codeRow.redirect_uri, redirectUri)) {
     return json({ error: "invalid_grant", error_description: "redirect_uri mismatch" }, 400);
   }
-  // PKCE verification
-  const computed = await pkceS256(codeVerifier);
-  if (computed !== codeRow.code_challenge) {
-    return json({ error: "invalid_grant", error_description: "PKCE verification failed" }, 400);
+
+  if (codeRow.code_challenge) {
+    // PKCE flow (public client). Verify code_verifier matches stored challenge.
+    if (!codeVerifier) {
+      return json({ error: "invalid_request", error_description: "code_verifier required" }, 400);
+    }
+    const computed = await pkceS256(codeVerifier);
+    if (computed !== codeRow.code_challenge) {
+      return json({ error: "invalid_grant", error_description: "PKCE verification failed" }, 400);
+    }
+  } else {
+    // Confidential-client flow (no PKCE) — used by ChatGPT GPT Actions, which
+    // hold client_secret server-side. Validate against the stored hash.
+    if (!clientSecret) {
+      return json({ error: "invalid_client", error_description: "client_secret required" }, 401);
+    }
+    const { data: clientRow } = await admin
+      .from("oauth_clients")
+      .select("client_secret_hash")
+      .eq("client_id", clientId)
+      .maybeSingle();
+    if (!clientRow?.client_secret_hash) {
+      return json({ error: "invalid_client", error_description: "Client has no secret on file" }, 401);
+    }
+    const provided = await sha256Hex(clientSecret);
+    if (provided !== clientRow.client_secret_hash) {
+      return json({ error: "invalid_client", error_description: "client_secret mismatch" }, 401);
+    }
   }
 
   // Mark code used (one-time)
