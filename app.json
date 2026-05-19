@@ -20,6 +20,7 @@
     "android": {
       "package": "com.synthera.tosche",
       "versionCode": 1,
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
