@@ -69,6 +69,7 @@ import {
   type Plan,
   type Cycle,
 } from '@/lib/revenueCat';
+import { track } from '@/lib/posthog';
 
 // ヒーロー背景の都市写真。
 const CITY_IMG = require('../assets/images/paywall-city.jpg');
@@ -500,10 +501,20 @@ export default function PaywallScreen() {
     void load();
   }, [load, user?.id]);
 
+  // Analytics: fire paywall_view exactly once on mount, with the entry
+  // context so we can segment funnels by where the paywall opened from.
+  const paywallViewedRef = useRef(false);
+  useEffect(() => {
+    if (paywallViewedRef.current) return;
+    paywallViewedRef.current = true;
+    track('paywall_view', { context: params?.context ?? 'unknown' }).catch(() => {});
+  }, [params?.context]);
+
   // ── 閉じる（購入せず終了）→ workspace へ ────────
   const handleClose = useCallback(() => {
     if (leavingRef.current) return;
     leavingRef.current = true;
+    track('paywall_dismiss').catch(() => {});
     router.replace('/(tabs)/workspace');
   }, [router]);
 
@@ -550,17 +561,26 @@ export default function PaywallScreen() {
     fireHaptic('tap');
     setActionError(null);
     setPurchasing(true);
+    const productId = opt.identifier;
+    const planProps = { plan: selectedPlan, cycle: selectedCycle, product_id: productId };
+    track('subscription_purchase_started', planProps).catch(() => {});
     try {
-      const result = await purchasePackage(opt.identifier);
+      const result = await purchasePackage(productId);
       if (result.success) {
-        await goToAiAfterPurchase(result.customerInfo, opt.identifier);
+        track('subscription_purchase_success', planProps).catch(() => {});
+        await goToAiAfterPurchase(result.customerInfo, productId);
         return;
       }
-      if (result.cancelled) return;
+      if (result.cancelled) {
+        track('subscription_purchase_failure', { ...planProps, reason: 'cancelled' }).catch(() => {});
+        return;
+      }
       if (__DEV__) console.warn('[Paywall] purchase error', result.error);
+      track('subscription_purchase_failure', { ...planProps, reason: 'error' }).catch(() => {});
       setActionError(t.purchaseFailed);
     } catch (e) {
       if (__DEV__) console.warn('[Paywall] purchase threw', e);
+      track('subscription_purchase_failure', { ...planProps, reason: 'threw' }).catch(() => {});
       setActionError(t.purchaseFailed);
     } finally {
       setPurchasing(false);

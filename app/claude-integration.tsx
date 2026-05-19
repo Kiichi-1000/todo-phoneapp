@@ -38,6 +38,7 @@ import {
 import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 import Constants from 'expo-constants';
+import { track } from '@/lib/posthog';
 
 // Pre-registered OAuth client IDs (see oauth_clients table).
 // Users paste these into Claude.ai's "Advanced settings" when adding the
@@ -106,6 +107,8 @@ export default function ClaudeIntegrationScreen() {
       const key = (data as { key: string }).key;
       setCreatedKey(key);
       setNewKeyLabel('');
+      // Analytics: count *that* a key was generated — NEVER the key value or label.
+      track('mcp_key_generated').catch(() => {});
       await loadKeys();
     } catch (e: any) {
       Alert.alert('生成失敗', e?.message ?? '新規キーを生成できませんでした');

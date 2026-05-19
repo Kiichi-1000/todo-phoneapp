@@ -65,7 +65,9 @@
       "legalDocsHubUrl": "https://todo-phoneapp.pages.dev/legal/tosche/",
       "revenuecatApiKeyIos": "test_UPKKrhQDSziYTPCqXvfpuIQBtoG",
       "revenuecatApiKeyIosProd": "appl_CXatxAtqrKtxlIMUmDDBJsFSVzw",
-      "revenuecatApiKeyAndroid": ""
+      "revenuecatApiKeyAndroid": "",
+      "posthogApiKey": "phc_shaWGboRUGw3HsjfbVJ5KxMxDcHdRGYrZu7Y6epkvAyf",
+      "posthogHost": "https://us.i.posthog.com"
     },
     "owner": "kiichi.2022222"
   }

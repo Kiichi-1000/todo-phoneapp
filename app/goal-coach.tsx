@@ -36,6 +36,7 @@ import { checkAiAccess } from '@/lib/aiAccess';
 import ChatBubble from '@/components/ai/ChatBubble';
 import ToolResultCard from '@/components/ai/ToolResultCard';
 import TokenBalanceBadge from '@/components/ai/TokenBalanceBadge';
+import { track } from '@/lib/posthog';
 
 interface UIMessage {
   id: string;
@@ -164,6 +165,7 @@ export default function GoalCoachScreen() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+    track('ai_coach_open').catch(() => {});
     (async () => {
       const access = await checkAiAccess(user.id);
       if (cancelled) return;
@@ -284,6 +286,8 @@ export default function GoalCoachScreen() {
     setSending(true);
     setInput('');
     toolNameByIdRef.current = {};
+    // Analytics: count *that* a message was sent — NEVER the message body.
+    track('ai_coach_message_sent', { text_length: text.length }).catch(() => {});
 
     const userMsgId = 'u-' + Date.now();
     const assistantMsgId = 'a-' + Date.now();

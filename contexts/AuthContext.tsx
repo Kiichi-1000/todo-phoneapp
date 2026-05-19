@@ -6,6 +6,7 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
+import { identifyUser, resetIdentity, track } from '@/lib/posthog';
 
 interface AuthContextType {
   session: Session | null;
@@ -87,6 +88,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Analytics: identify the Supabase user to PostHog whenever a session is
+  // present; reset identity on sign-out. Email is intentionally NOT sent —
+  // only the opaque uid plus platform string.
+  const prevUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const uid = session?.user?.id ?? null;
+    const prevUid = prevUidRef.current;
+    if (uid && uid !== prevUid) {
+      identifyUser(uid, { platform: Platform.OS }).catch(() => {});
+      // Only fire the sign-in event on a real user transition, not on
+      // every session-object reference change.
+      if (!prevUid) {
+        track('sign_in_success', { platform: Platform.OS }).catch(() => {});
+      }
+    } else if (!uid && prevUid) {
+      track('sign_out').catch(() => {});
+      resetIdentity().catch(() => {});
+    }
+    prevUidRef.current = uid;
+  }, [session?.user?.id]);
 
   // Supabase の onAuthStateChange は通常 setSession を反映してくれるが、
   // ごく稀に (特に Cold start 直後の Google/Apple OAuth で) 発火が遅れる/取りこぼされる

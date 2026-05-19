@@ -19,6 +19,8 @@ import {
 } from '@/lib/notifications';
 import { scheduleGoalReminders } from '@/lib/goalReminders';
 import { supabase } from '@/lib/supabase';
+import { PostHogProvider } from 'posthog-react-native';
+import { POSTHOG_API_KEY, POSTHOG_HOST, initPostHog } from '@/lib/posthog';
 
 
 const CONSENT_KEY = 'tosche_consent_accepted';
@@ -44,6 +46,10 @@ function RootNavigator() {
   const handleAcceptConsent = async () => {
     await AsyncStorage.setItem(CONSENT_KEY, 'true');
     setConsentAccepted(true);
+    // Async, fire-and-forget — analytics failure must never block consent.
+    import('@/lib/posthog')
+      .then(({ track }) => track('consent_accepted'))
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -174,17 +180,51 @@ function RootNavigator() {
 export default function RootLayout() {
   useFrameworkReady();
 
+  // Eagerly create the singleton PostHog instance so manual `track()` calls
+  // outside the React tree (e.g. webhook reconciliation) work without
+  // waiting for the provider to mount.
+  useEffect(() => {
+    initPostHog().catch(() => {/* analytics-only failure; ignore */});
+  }, []);
+
+  const innerTree = (
+    <SafeAreaProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <FourGridSkinProvider>
+            <RootNavigator />
+          </FourGridSkinProvider>
+        </AuthProvider>
+      </LanguageProvider>
+    </SafeAreaProvider>
+  );
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <LanguageProvider>
-          <AuthProvider>
-            <FourGridSkinProvider>
-              <RootNavigator />
-            </FourGridSkinProvider>
-          </AuthProvider>
-        </LanguageProvider>
-      </SafeAreaProvider>
+      {POSTHOG_API_KEY ? (
+        <PostHogProvider
+          apiKey={POSTHOG_API_KEY}
+          options={{
+            host: POSTHOG_HOST,
+            enableSessionReplay: true,
+            sessionReplayConfig: {
+              maskAllTextInputs: true,
+              maskAllImages: false,
+              maskAllSandboxedViews: false,
+              throttleDelayMs: 1000,
+            },
+            captureAppLifecycleEvents: true,
+          }}
+          autocapture={{
+            captureScreens: true,
+            captureTouches: true,
+          }}
+        >
+          {innerTree}
+        </PostHogProvider>
+      ) : (
+        innerTree
+      )}
     </GestureHandlerRootView>
   );
 }
