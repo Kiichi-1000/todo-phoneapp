@@ -46,6 +46,14 @@ import { track } from '@/lib/posthog';
 const CLAUDE_WEB_CLIENT_ID = 'tsche_claude_web';
 const CLAUDE_CODE_CLIENT_ID = 'tsche_claude_code';
 
+// claude.ai web's custom-connector OAuth discovery doesn't reliably honor
+// path-prefixed `.well-known/oauth-authorization-server`, so for the
+// claude.ai paste path we route through the Cloudflare Worker frontend,
+// which serves all OAuth + MCP surfaces at root paths. Claude Code CLI
+// and ChatGPT Custom GPT keep using the Supabase URL directly because
+// neither has the discovery quirk.
+const CLAUDE_WEB_MCP_URL = 'https://tosche-oauth.kiichitsukui111806.workers.dev';
+
 interface McpKey {
   id: string;
   key_prefix: string;
@@ -186,6 +194,15 @@ export default function ClaudeIntegrationScreen() {
             Claude.ai や ChatGPT と ToSche をつなぐと、AI が立てた目標・ロードマップが
             自動で ToSche に流れ込みます。日々のタスク分解は ToSche AI が引き受けます。
           </Text>
+          <View style={styles.heroCapabilities}>
+            <Text style={styles.heroCapabilitiesText}>
+              使えること: 目標の一覧表示・新規作成・ロードマップ追加・進捗マーク・
+              <Text style={styles.heroCapabilitiesEmph}>削除 (要確認)</Text>
+            </Text>
+            <Text style={styles.heroCapabilitiesNote}>
+              ※ 削除は AI が必ず先に「本当に消して良いですか?」とあなたに確認してから実行します。
+            </Text>
+          </View>
         </View>
 
         {/* Setup: Claude (OAuth — recommended) */}
@@ -210,11 +227,11 @@ export default function ClaudeIntegrationScreen() {
 
           <Step n="1" title="MCP Server URL を貼り付け">
             <TouchableOpacity
-              onPress={() => handleCopy(mcpUrl, 'MCP URLをコピーしました')}
+              onPress={() => handleCopy(CLAUDE_WEB_MCP_URL, 'MCP URLをコピーしました')}
               style={styles.codeBox}
             >
               <Text style={styles.codeText} numberOfLines={1}>
-                {mcpUrl}
+                {CLAUDE_WEB_MCP_URL}
               </Text>
               <Copy size={16} color="#475569" />
             </TouchableOpacity>
@@ -395,8 +412,11 @@ export default function ClaudeIntegrationScreen() {
         </View>
 
         <Text style={styles.disclaimer}>
-          ※ APIキーはClaudeから ToSche の目標・ロードマップを読み書きする権限を持ちます。
-          流出した場合は速やかに破棄してください。タスク削除や他のデータ操作は MCP では行えません。
+          ※ APIキーは Claude / ChatGPT から ToSche の目標・ロードマップを読み書き、
+          および削除する権限を持ちます。流出した場合は速やかに破棄してください。
+          削除操作は AI が必ずあなたに確認を取ってから実行する仕様ですが、キーを
+          第三者に渡すと意図しない削除が起き得る点にご注意ください。タスク
+          (ToDo) の削除は MCP からは行えません。
         </Text>
       </ScrollView>
 
@@ -547,6 +567,32 @@ const styles = StyleSheet.create({
   },
   heroTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 6 },
   heroSub: { fontSize: 13, color: '#475569', lineHeight: 19, textAlign: 'center' },
+  heroCapabilities: {
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#eef2ff',
+    width: '100%',
+    gap: 4,
+  },
+  heroCapabilitiesText: {
+    fontSize: 12.5,
+    color: '#3730a3',
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  heroCapabilitiesEmph: {
+    fontWeight: '700',
+    color: '#4338ca',
+  },
+  heroCapabilitiesNote: {
+    fontSize: 11,
+    color: '#6366F1',
+    lineHeight: 16,
+    textAlign: 'center',
+    marginTop: 2,
+  },
 
   section: {
     backgroundColor: '#fff',
