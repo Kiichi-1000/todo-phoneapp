@@ -118,7 +118,11 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        // Android: let the native windowSoftInputMode=adjustResize handle the
+        // keyboard. On the New Architecture (Fabric), stacking behavior="height"
+        // on top of native resize causes the layout to oscillate ("ガタガタ").
+        // iOS still needs explicit "padding".
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
         <ScrollView
