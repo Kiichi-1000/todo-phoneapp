@@ -103,19 +103,31 @@ function RootNavigator() {
       return;
     }
 
-    const inAuthGroup = segments[0] === '(auth)';
+    const seg0 = segments[0];
+    const inAuthGroup = seg0 === '(auth)';
+    // segments === [] (= seg0 が undefined) はまだどのルートグループにも解決されて
+    // いない「ルート」状態。Android では起動直後にこの状態が続くことがあり、その間に
+    // セッションがあっても (inAuthGroup が false のため) タブへ遷移できず「ログイン
+    // 済みなのにログイン画面で固まる」バグになっていた。root も遷移対象に含め、
+    // paywall / statistics / support などの認証済み単体画面 (seg0 がそれら) は対象外と
+    // することで、両 OS で確実にルーティングしつつリダイレクトループを防ぐ。
+    const atRoot = seg0 === undefined;
 
-    if (!session && !inAuthGroup) {
-      setTimeout(() => {
+    if (!session) {
+      // 未認証でログイングループ外にいるならログインへ送る (root 含む)。
+      if (!inAuthGroup) {
         router.replace('/(auth)/login');
-      }, 0);
-    } else if (session && inAuthGroup) {
-      const inResetPassword = (segments as string[])[1] === 'reset-password';
-      if (!inResetPassword) {
-        router.replace('/(tabs)/workspace');
+      }
+    } else {
+      // 認証済み: 認証グループ内 or 未解決(root) のときだけタブへ送る。
+      if (inAuthGroup || atRoot) {
+        const inResetPassword = (segments as string[])[1] === 'reset-password';
+        if (!inResetPassword) {
+          router.replace('/(tabs)/workspace');
+        }
       }
     }
-  }, [session, loading, isPasswordRecovery, consentAccepted, langLoaded, hasSelectedLanguage]);
+  }, [session, loading, isPasswordRecovery, consentAccepted, langLoaded, hasSelectedLanguage, segments]);
 
   const showLoadingOverlay = !langLoaded || consentAccepted === null;
   const showLanguagePicker = langLoaded && !hasSelectedLanguage;

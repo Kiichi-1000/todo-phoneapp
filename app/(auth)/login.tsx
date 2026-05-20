@@ -53,9 +53,13 @@ export default function LoginScreen() {
     setLoading(true);
 
     if (isLogin) {
-      const { error: err } = await signIn(email.trim(), password);
-      if (err) {
-        setError(getErrorMessage(err));
+      try {
+        const { error: err } = await signIn(email.trim(), password);
+        if (err) {
+          setError(getErrorMessage(err));
+        }
+      } catch (e: any) {
+        setError(e?.message ?? 'unknown error');
       }
     } else {
       const { error: err } = await signUp(email.trim(), password);
