@@ -33,22 +33,22 @@ const SECTIONS_JA: Section[] = [
   {
     title: '第5条（サブスクリプションプラン）',
     body:
-      '1. 当社は、本アプリにおいて以下のサブスクリプションプラン（以下「本プラン」）を提供します。各プランの月額・年額・付与クレジット額は、本アプリ内のサブスクリプション購入画面（以下「Paywall」）に表示します。\n\n・ToSche プラン（月額または年額）\n・AI Standard プラン（月額または年額）\n・AI Pro プラン（月額または年額）\n\n2. 各プランには、毎月一定額相当の AI 利用クレジット（以下「AI クレジット」）が付与されます。AI クレジットは、AI アシスタント機能および目標コーチング機能の利用時に消費されます。\n3. AI クレジットは、付与月の翌月末日まで繰越されます。翌月末日を超えて未使用の残額は失効し、現金等への払戻はできません。\n4. AI クレジットは、Apple ID 単位での残高であり、解約後または別プラン変更後は、当該プランで付与された残額にアクセスできなくなる場合があります。\n5. 同一サブスクリプショングループ内のプラン間では、Apple の規約に従い、アップグレードまたはダウングレードが可能です。アップグレードは即時反映され、Apple により日割り精算されます。ダウングレードは、現在の請求期間の終了時に反映されます。',
+      '1. 当社は、本アプリにおいて以下のサブスクリプションプラン（以下「本プラン」）を提供します。各プランの月額・年額・付与クレジット額は、本アプリ内のサブスクリプション購入画面（以下「Paywall」）に表示します。\n\n・ToSche プラン（月額または年額）\n・AI Standard プラン（月額または年額）\n・AI Pro プラン（月額または年額）\n\n2. 各プランには、毎月一定額相当の AI 利用クレジット（以下「AI クレジット」）が付与されます。AI クレジットは、AI アシスタント機能および目標コーチング機能の利用時に消費されます。\n3. AI クレジットは、付与月の翌月末日まで繰越されます。翌月末日を超えて未使用の残額は失効し、現金等への払戻はできません。\n4. AI クレジットは、Apple ID（iOS）または Google アカウント（Android）単位での残高であり、解約後または別プラン変更後は、当該プランで付与された残額にアクセスできなくなる場合があります。\n5. 同一サブスクリプショングループ（Apple）または定期購入グループ（Google Play）内のプラン間では、各ストアの規約に従い、アップグレードまたはダウングレードが可能です。アップグレードは即時反映され、各プラットフォームにより精算されます。ダウングレードは、現在の請求期間の終了時に反映されます。',
   },
   {
     title: '第6条（自動更新）',
     body:
-      '1. 本プランは、自動更新型サブスクリプションです。請求期間（月額プランは1か月、年額プランは1年）の終了日の少なくとも24時間前までに自動更新を解除しない限り、同条件で自動的に更新されます。\n2. 各請求期間の終了の24時間以内に、Apple ID に登録された支払方法に対し、次の請求期間の料金が請求されます。\n3. 当社は、料金、付与クレジット額、その他の条件を変更することがあります。変更がある場合は、変更が効力を生じる前に、合理的な方法でユーザーに通知します。ユーザーが変更後の条件に同意しない場合は、次回更新前に第7条に定める方法でサブスクリプションを解約することができます。',
+      '1. 本プランは、自動更新型サブスクリプションです。請求期間（月額プランは1か月、年額プランは1年）の終了日の少なくとも24時間前までに自動更新を解除しない限り、同条件で自動的に更新されます。\n2. 各請求期間の終了の24時間以内に、Apple ID（iOS）または Google アカウント（Android）に登録された支払方法に対し、次の請求期間の料金が請求されます。\n3. 当社は、料金、付与クレジット額、その他の条件を変更することがあります。変更がある場合は、変更が効力を生じる前に、合理的な方法でユーザーに通知します。ユーザーが変更後の条件に同意しない場合は、次回更新前に第7条に定める方法でサブスクリプションを解約することができます。',
   },
   {
     title: '第7条（解約および返金）',
     body:
-      '1. サブスクリプションの解約は、Apple ID の設定画面から行います。具体的には、iOS 端末で以下の操作を行ってください。\n\n・「設定」アプリ →「Apple ID」（画面上部） →「サブスクリプション」→「ToSche」を選択 →「サブスクリプションをキャンセルする」\n\n2. 解約手続きを完了した場合、現在の請求期間の終了をもってサブスクリプションが終了します。期間中の機能利用は引き続き可能です。\n3. 本アプリ内で解約操作を完結することはできません。Apple のシステム仕様により、解約は Apple ID の設定画面からのみ可能です。\n4. 既に支払い済みの請求期間中の途中解約による日割り返金は、当社からは行いません。Apple の返金ポリシー（https://support.apple.com/ja-jp/HT204084）に従い、Apple に直接ご請求ください。\n5. 当社の重大な過失により本プランが利用不可能となった場合、当社は合理的な範囲で日割り相当額の補填（クレジット付与等）を行う場合があります。',
+      '1. サブスクリプションの解約は、購入したプラットフォームの設定画面から行います。\n\n【iOS（Apple）の場合】\n「設定」アプリ →「Apple ID」（画面上部） →「サブスクリプション」→「ToSche」を選択 →「サブスクリプションをキャンセルする」\n\n【Android（Google Play）の場合】\n「Google Play」アプリ → 右上のプロフィールアイコン →「お支払いと定期購入」→「定期購入」→「ToSche」を選択 →「定期購入を解約」\n\n2. 解約手続きを完了した場合、現在の請求期間の終了をもってサブスクリプションが終了します。期間中の機能利用は引き続き可能です。\n3. 本アプリ内で解約操作を完結することはできません。Apple および Google のシステム仕様により、解約は各プラットフォームの設定画面からのみ可能です。\n4. 既に支払い済みの請求期間中の途中解約による日割り返金は、当社からは行いません。返金は各プラットフォームのポリシーに従い、購入元（Apple: https://support.apple.com/ja-jp/HT204084 ／ Google Play: https://support.google.com/googleplay/answer/2479637 ）に直接ご請求ください。\n5. 当社の重大な過失により本プランが利用不可能となった場合、当社は合理的な範囲で日割り相当額の補填（クレジット付与等）を行う場合があります。',
   },
   {
     title: '第8条（無料試用期間）',
     body:
-      '1. 当社が無料試用期間付きのプランを提供する場合、その期間と条件は Paywall に表示します。\n2. 無料試用期間は、Apple ID 1 つにつき本アプリの初回サブスクリプション加入時のみ適用されます。\n3. 無料試用期間中に解約しない場合、試用期間終了時に自動的に有料サブスクリプションへ移行し、登録された支払方法に課金されます。',
+      '1. 当社が無料試用期間付きのプランを提供する場合、その期間と条件は Paywall に表示します。\n2. 無料試用期間は、Apple ID または Google アカウント 1 つにつき本アプリの初回サブスクリプション加入時のみ適用されます。\n3. 無料試用期間中に解約しない場合、試用期間終了時に自動的に有料サブスクリプションへ移行し、登録された支払方法に課金されます。',
   },
   {
     title: '第9条（プロモーションコード）',
@@ -139,22 +139,22 @@ const SECTIONS_EN: Section[] = [
   {
     title: 'Section 5 (Subscription Plans)',
     body:
-      '1. We provide the following subscription plans (the "Plans") in the App. The monthly, yearly, and credit grant amounts for each plan are displayed on the in-app subscription purchase screen (the "Paywall").\n\n• ToSche Plan (monthly or yearly)\n• AI Standard Plan (monthly or yearly)\n• AI Pro Plan (monthly or yearly)\n\n2. Each Plan grants a monthly AI usage credit (the "AI Credit") equivalent to a fixed amount. AI Credits are consumed when using AI assistant and goal-coaching features.\n3. AI Credits roll over until the end of the month following the grant. Any unused balance after that period expires and is not refundable in cash or equivalents.\n4. AI Credits are held against an Apple ID. After cancellation or plan change, you may lose access to the remaining balance granted by the previous plan.\n5. Within the same subscription group, upgrades and downgrades are possible per Apple\'s rules. Upgrades take effect immediately and are prorated by Apple. Downgrades take effect at the end of the current billing period.',
+      '1. We provide the following subscription plans (the "Plans") in the App. The monthly, yearly, and credit grant amounts for each plan are displayed on the in-app subscription purchase screen (the "Paywall").\n\n• ToSche Plan (monthly or yearly)\n• AI Standard Plan (monthly or yearly)\n• AI Pro Plan (monthly or yearly)\n\n2. Each Plan grants a monthly AI usage credit (the "AI Credit") equivalent to a fixed amount. AI Credits are consumed when using AI assistant and goal-coaching features.\n3. AI Credits roll over until the end of the month following the grant. Any unused balance after that period expires and is not refundable in cash or equivalents.\n4. AI Credits are held against an Apple ID (iOS) or Google account (Android). After cancellation or plan change, you may lose access to the remaining balance granted by the previous plan.\n5. Within the same subscription group (Apple) or subscription group (Google Play), upgrades and downgrades are possible per the respective store\'s rules. Upgrades take effect immediately and are prorated by the platform. Downgrades take effect at the end of the current billing period.',
   },
   {
     title: 'Section 6 (Auto-Renewal)',
     body:
-      "1. The Plans are auto-renewing subscriptions. Unless auto-renewal is canceled at least 24 hours before the end of the current billing period (1 month for monthly plans, 1 year for yearly plans), the subscription will automatically renew under the same terms.\n2. Within 24 hours of the end of each billing period, the payment method registered to your Apple ID will be charged for the next period.\n3. We may change pricing, credit grant amounts, or other terms. If we do, we will notify users in advance by a reasonable method. If you do not agree to the new terms, you may cancel before the next renewal as set out in Section 7.",
+      "1. The Plans are auto-renewing subscriptions. Unless auto-renewal is canceled at least 24 hours before the end of the current billing period (1 month for monthly plans, 1 year for yearly plans), the subscription will automatically renew under the same terms.\n2. Within 24 hours of the end of each billing period, the payment method registered to your Apple ID (iOS) or Google account (Android) will be charged for the next period.\n3. We may change pricing, credit grant amounts, or other terms. If we do, we will notify users in advance by a reasonable method. If you do not agree to the new terms, you may cancel before the next renewal as set out in Section 7.",
   },
   {
     title: 'Section 7 (Cancellation and Refunds)',
     body:
-      "1. Cancellation is performed from your Apple ID settings. On iOS:\n\n• Open Settings app → Apple ID (top of screen) → Subscriptions → ToSche → Cancel Subscription\n\n2. Once canceled, the subscription remains active until the end of the current billing period. Features remain usable during that period.\n3. You cannot complete cancellation entirely from within the App. By Apple's design, cancellation is only possible from your Apple ID settings.\n4. We do not provide prorated refunds for mid-period cancellation. Refund requests follow Apple's refund policy (https://support.apple.com/en-us/HT204084) and must be directed to Apple.\n5. If a Plan becomes unusable due to our gross negligence, we may, within reasonable scope, compensate with credit equivalent to the prorated period.",
+      "1. Cancellation is performed from the settings of the platform where you purchased.\n\n[iOS (Apple)]\nOpen Settings app → Apple ID (top of screen) → Subscriptions → ToSche → Cancel Subscription\n\n[Android (Google Play)]\nOpen the Google Play app → profile icon (top right) → Payments & subscriptions → Subscriptions → ToSche → Cancel subscription\n\n2. Once canceled, the subscription remains active until the end of the current billing period. Features remain usable during that period.\n3. You cannot complete cancellation entirely from within the App. By Apple's and Google's design, cancellation is only possible from each platform's settings.\n4. We do not provide prorated refunds for mid-period cancellation. Refunds follow each platform's policy and must be directed to the place of purchase (Apple: https://support.apple.com/en-us/HT204084 / Google Play: https://support.google.com/googleplay/answer/2479637).\n5. If a Plan becomes unusable due to our gross negligence, we may, within reasonable scope, compensate with credit equivalent to the prorated period.",
   },
   {
     title: 'Section 8 (Free Trial)',
     body:
-      "1. If we offer a Plan with a free trial, its duration and conditions are displayed on the Paywall.\n2. The free trial applies only to the user's first subscription per Apple ID.\n3. If you do not cancel during the trial period, you will automatically transition to the paid subscription and your registered payment method will be charged at the end of the trial.",
+      "1. If we offer a Plan with a free trial, its duration and conditions are displayed on the Paywall.\n2. The free trial applies only to the user's first subscription per Apple ID or Google account.\n3. If you do not cancel during the trial period, you will automatically transition to the paid subscription and your registered payment method will be charged at the end of the trial.",
   },
   {
     title: 'Section 9 (Promotional Codes)',
