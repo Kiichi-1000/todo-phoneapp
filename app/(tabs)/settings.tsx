@@ -13,8 +13,10 @@ import {
   Switch,
   ActivityIndicator,
   Linking,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
-import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX, Globe, Sparkles, MessageSquare, Brain, ChartBar as BarChart3, Target } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX, Globe, Sparkles, MessageSquare, Brain, ChartBar as BarChart3, Target, LayoutGrid, HelpCircle } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { getLegalDocumentsHubUrl } from '@/lib/legalUrls';
 import { useAuth } from '@/contexts/AuthContext';
@@ -31,11 +33,70 @@ import { useLanguage, Language } from '@/contexts/LanguageContext';
 import FourGridColorEditor from '@/components/FourGridColorEditor';
 // PromoCodeModal は App Store ガイドライン 3.1.1 対応で削除済み (App Store 版)
 
+// LayoutAnimation を Android で有効化 (iOS は標準で有効)。折りたたみの
+// 開閉アニメーションをスムーズにするため。
+if (
+  Platform.OS === 'android' &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Apple 設定アプリ風の折りたたみセクション。ヘッダーをタップすると本文が
+// 開閉する。トップページをコンパクトに保つため、デフォルトは全て閉じた状態。
+function CollapsibleSection({
+  title,
+  icon,
+  expanded,
+  onToggle,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.section}>
+      <TouchableOpacity
+        style={styles.collapsibleHeader}
+        onPress={onToggle}
+        activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+      >
+        <View style={styles.collapsibleHeaderLeft}>
+          {icon ? <View style={styles.collapsibleIcon}>{icon}</View> : null}
+          <Text style={styles.collapsibleTitle}>{title}</Text>
+        </View>
+        <ChevronRight
+          size={20}
+          color="#94a3b8"
+          style={expanded ? styles.collapsibleChevronOpen : undefined}
+        />
+      </TouchableOpacity>
+      {expanded ? <View style={styles.collapsibleBody}>{children}</View> : null}
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, signOut, updatePassword } = useAuth();
   const { skin: fourGridSkin, setSkin: setFourGridSkin } = useFourGridSkin();
   const { t, lang, setLang } = useLanguage();
+
+  // 折りたたみセクションの開閉状態。デフォルトは全て閉じてトップをコンパクトに。
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const toggleSection = (key: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+  const sectionProps = (key: string) => ({
+    expanded: !!expandedSections[key],
+    onToggle: () => toggleSection(key),
+  });
 
   const WORKSPACE_TYPES: { type: WorkspaceType; label: string; description: string }[] = [
     { type: 'four_grid', label: t('settings.workspaceFourGrid'), description: t('settings.workspaceFourGridDesc') },
@@ -418,8 +479,11 @@ export default function SettingsScreen() {
       <View style={styles.header} />
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.languageSection')}</Text>
+        <CollapsibleSection
+          title={t('settings.languageSection')}
+          icon={<Globe size={20} color="#3b82f6" />}
+          {...sectionProps('language')}
+        >
           <View style={styles.langRow}>
             {(['ja', 'en'] as Language[]).map(code => {
               const active = lang === code;
@@ -438,10 +502,13 @@ export default function SettingsScreen() {
               );
             })}
           </View>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.workspaceSettings')}</Text>
+        <CollapsibleSection
+          title={t('settings.workspaceSettings')}
+          icon={<LayoutGrid size={20} color="#3b82f6" />}
+          {...sectionProps('workspace')}
+        >
           <Text style={styles.sectionDescription}>
             {t('settings.workspaceSettingsDesc')}
           </Text>
@@ -548,10 +615,13 @@ export default function SettingsScreen() {
               />
             </View>
           )}
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.scheduleSettings')}</Text>
+        <CollapsibleSection
+          title={t('settings.scheduleSettings')}
+          icon={<CalendarSync size={20} color="#334155" />}
+          {...sectionProps('schedule')}
+        >
           <View style={styles.syncCard}>
             <View style={styles.syncLeft}>
               <CalendarSync size={20} color="#333" />
@@ -580,12 +650,14 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
-        </View>
+        </CollapsibleSection>
 
         {/* Goal reminders */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>目標リマインダー</Text>
-
+        <CollapsibleSection
+          title="目標リマインダー"
+          icon={<Target size={20} color="#8B5CF6" />}
+          {...sectionProps('goalReminder')}
+        >
           <View style={styles.syncCard}>
             <View style={styles.syncLeft}>
               <Target size={20} color="#8B5CF6" />
@@ -636,11 +708,13 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </TouchableOpacity>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.data')}</Text>
-
+        <CollapsibleSection
+          title={t('settings.data')}
+          icon={<BarChart3 size={20} color="#3B82F6" />}
+          {...sectionProps('data')}
+        >
           <TouchableOpacity
             style={styles.settingItem}
             onPress={() => router.push('/statistics')}
@@ -682,10 +756,13 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </TouchableOpacity>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.aiSection') || 'AI アシスタント'}</Text>
+        <CollapsibleSection
+          title={t('settings.aiSection') || 'AI アシスタント'}
+          icon={<Sparkles size={20} color="#6366F1" />}
+          {...sectionProps('ai')}
+        >
 
           {/*
             プロモコード入力 UI は App Store ガイドライン 3.1.1 に従い App Store 配布版から削除しました。
@@ -788,10 +865,13 @@ export default function SettingsScreen() {
               {chatStats.memory > 0 && <Trash2 size={18} color="#dc2626" />}
             </View>
           </TouchableOpacity>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.account')}</Text>
+        <CollapsibleSection
+          title={t('settings.account')}
+          icon={<KeyRound size={20} color="#334155" />}
+          {...sectionProps('account')}
+        >
           <View style={styles.infoCard}>
             <View style={styles.infoContent}>
               <Text style={styles.infoText}>{user?.email}</Text>
@@ -878,11 +958,13 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </TouchableOpacity>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.appInfo')}</Text>
-
+        <CollapsibleSection
+          title={t('settings.appInfo')}
+          icon={<Info size={20} color="#64748b" />}
+          {...sectionProps('appInfo')}
+        >
           <View style={styles.infoCard}>
             <Info size={20} color="#666" />
             <View style={styles.infoContent}>
@@ -893,11 +975,13 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </View>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.support')}</Text>
-
+        <CollapsibleSection
+          title={t('settings.support')}
+          icon={<MessageSquare size={20} color="#334155" />}
+          {...sectionProps('support')}
+        >
           <TouchableOpacity
             style={styles.settingItem}
             onPress={() => router.push('/support/usage-guide')}
@@ -967,10 +1051,13 @@ export default function SettingsScreen() {
               <ChevronRight size={18} color="#999" />
             </View>
           </TouchableOpacity>
-        </View>
+        </CollapsibleSection>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('settings.howTo')}</Text>
+        <CollapsibleSection
+          title={t('settings.howTo')}
+          icon={<HelpCircle size={20} color="#334155" />}
+          {...sectionProps('howTo')}
+        >
           <View style={styles.helpCard}>
             <Text style={styles.helpTitle}>{t('settings.howToDailyTitle')}</Text>
             <Text style={styles.helpText}>
@@ -989,7 +1076,7 @@ export default function SettingsScreen() {
               {t('settings.howToStatsBody')}
             </Text>
           </View>
-        </View>
+        </CollapsibleSection>
       </ScrollView>
 
       <DeleteAccountModal
@@ -1028,13 +1115,48 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   section: {
-    marginBottom: 24,
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000',
     marginBottom: 8,
+  },
+  // 折りたたみセクションのヘッダー (Apple 設定アプリ風のタップ可能な行)
+  collapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#ececec',
+  },
+  collapsibleHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    flexShrink: 1,
+  },
+  collapsibleIcon: {
+    width: 24,
+    alignItems: 'center',
+  },
+  collapsibleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
+    flexShrink: 1,
+  },
+  collapsibleChevronOpen: {
+    transform: [{ rotate: '90deg' }],
+  },
+  collapsibleBody: {
+    paddingTop: 12,
+    paddingHorizontal: 2,
   },
   sectionDescription: {
     fontSize: 14,
