@@ -475,7 +475,7 @@ export default function SettingsScreen() {
     setDeleteModalVisible(true);
   };
 
-  // バグ報告 — メールアプリにテンプレートを差し込んで開発チーム (support@synthera.jp)
+  // バグ報告 — メールアプリにテンプレートを差し込んで開発チーム (synthera.2025@gmail.com)
   // へ直接届くようにする。アプリ版/プラットフォーム/ユーザーID を自動付与して
   // 調査をしやすくする。メールアプリが無い端末では Web の問い合わせフォームへ。
   const handleBugReport = async () => {
@@ -506,7 +506,7 @@ export default function SettingsScreen() {
       `User ID: ${user?.id ?? 'unknown'}`,
     ].join('\n');
 
-    const mailto = `mailto:support@synthera.jp?subject=${encodeURIComponent(
+    const mailto = `mailto:synthera.2025@gmail.com?subject=${encodeURIComponent(
       subject,
     )}&body=${encodeURIComponent(body)}`;
     const fallbackUrl = 'https://www.synthera.jp/contact';
@@ -524,8 +524,8 @@ export default function SettingsScreen() {
       Alert.alert(
         lang === 'ja' ? 'エラー' : 'Error',
         lang === 'ja'
-          ? 'お手数ですが support@synthera.jp までご連絡ください。'
-          : 'Please contact us at support@synthera.jp.',
+          ? 'お手数ですが synthera.2025@gmail.com までご連絡ください。'
+          : 'Please contact us at synthera.2025@gmail.com.',
       );
     });
   };
