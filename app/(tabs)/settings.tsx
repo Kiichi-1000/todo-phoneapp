@@ -16,7 +16,8 @@ import {
   LayoutAnimation,
   UIManager,
 } from 'react-native';
-import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX, Globe, Sparkles, MessageSquare, Brain, ChartBar as BarChart3, Target, LayoutGrid, HelpCircle } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX, Globe, Sparkles, MessageSquare, Brain, ChartBar as BarChart3, Target, LayoutGrid, HelpCircle, Bug } from 'lucide-react-native';
+import Constants from 'expo-constants';
 import { supabase } from '@/lib/supabase';
 import { getLegalDocumentsHubUrl } from '@/lib/legalUrls';
 import { useAuth } from '@/contexts/AuthContext';
@@ -474,34 +475,198 @@ export default function SettingsScreen() {
     setDeleteModalVisible(true);
   };
 
+  // バグ報告 — メールアプリにテンプレートを差し込んで開発チーム (support@synthera.jp)
+  // へ直接届くようにする。アプリ版/プラットフォーム/ユーザーID を自動付与して
+  // 調査をしやすくする。メールアプリが無い端末では Web の問い合わせフォームへ。
+  const handleBugReport = async () => {
+    const version =
+      Constants.expoConfig?.version ??
+      (Constants as any).manifest?.version ??
+      'unknown';
+    const platform = `${Platform.OS} ${Platform.Version}`;
+    const subject = `[ToSche バグ報告] v${version}`;
+    const body = [
+      'ご報告ありがとうございます。以下をできるだけ詳しくご記入ください。',
+      '',
+      '■ 発生した不具合 / 改善要望:',
+      '',
+      '',
+      '■ 再現手順:',
+      '1. ',
+      '2. ',
+      '3. ',
+      '',
+      '■ 期待する動作:',
+      '',
+      '',
+      '------------------------------',
+      '↓ 調査用の情報です。削除しないでください ↓',
+      `App: ToSche v${version}`,
+      `Platform: ${platform}`,
+      `User ID: ${user?.id ?? 'unknown'}`,
+    ].join('\n');
+
+    const mailto = `mailto:support@synthera.jp?subject=${encodeURIComponent(
+      subject,
+    )}&body=${encodeURIComponent(body)}`;
+    const fallbackUrl = 'https://www.synthera.jp/contact';
+
+    try {
+      const supported = await Linking.canOpenURL(mailto);
+      if (supported) {
+        await Linking.openURL(mailto);
+        return;
+      }
+    } catch {
+      // canOpenURL / openURL が失敗したら下のフォールバックへ
+    }
+    Linking.openURL(fallbackUrl).catch(() => {
+      Alert.alert(
+        lang === 'ja' ? 'エラー' : 'Error',
+        lang === 'ja'
+          ? 'お手数ですが support@synthera.jp までご連絡ください。'
+          : 'Please contact us at support@synthera.jp.',
+      );
+    });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header} />
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        <CollapsibleSection
-          title={t('settings.languageSection')}
-          icon={<Globe size={20} color="#3b82f6" />}
-          {...sectionProps('language')}
+        {/* バグ報告 — 最上部に常時表示 (折りたたまない) */}
+        <TouchableOpacity
+          style={styles.bugReportCard}
+          onPress={handleBugReport}
+          activeOpacity={0.85}
+          accessibilityRole="button"
         >
-          <View style={styles.langRow}>
-            {(['ja', 'en'] as Language[]).map(code => {
-              const active = lang === code;
-              const label = code === 'ja' ? t('settings.languageJapanese') : t('settings.languageEnglish');
-              return (
-                <TouchableOpacity
-                  key={code}
-                  style={[styles.langOption, active && styles.langOptionActive]}
-                  onPress={() => setLang(code)}
-                  activeOpacity={0.8}
-                >
-                  <Globe size={18} color={active ? '#3b82f6' : '#666'} />
-                  <Text style={[styles.langLabel, active && styles.langLabelActive]}>{label}</Text>
-                  {active && <CheckCircle2 size={18} color="#3b82f6" />}
-                </TouchableOpacity>
-              );
-            })}
+          <View style={styles.bugReportLeft}>
+            <View style={styles.bugReportIconWrap}>
+              <Bug size={22} color="#dc2626" />
+            </View>
+            <View style={styles.bugReportTextWrap}>
+              <Text style={styles.bugReportTitle}>
+                {lang === 'ja' ? 'バグの報告はこちらから' : 'Report a bug'}
+              </Text>
+              <Text style={styles.bugReportSub}>
+                {lang === 'ja'
+                  ? '不具合や改善要望を開発チームに直接送信できます'
+                  : 'Send issues or feedback directly to our team'}
+              </Text>
+            </View>
           </View>
+          <ChevronRight size={20} color="#dc2626" />
+        </TouchableOpacity>
+
+        <CollapsibleSection
+          title={lang === 'ja' ? 'AI連携' : 'AI Integration'}
+          icon={<Sparkles size={20} color="#6366F1" />}
+          {...sectionProps('ai')}
+        >
+
+          {/*
+            プロモコード入力 UI は App Store ガイドライン 3.1.1 に従い App Store 配布版から削除しました。
+            (= IAP 以外で有料機能をアンロックする仕組みは禁止)
+            Apple Offer Codes (= App Store Connect → 「Offer Codes」機能) で同等の機能を提供します。
+            バックエンドの redeem-promo Edge Function は管理者用に残してあります。
+          */}
+
+          {/*
+            プラン変更 (アップグレード / ダウングレード) のエントリ。
+            paywall は context=settings で起動するとどのプラン入口にも紐づかず
+            3 プランすべてを表示する。実際の解約は Apple サブスク設定 (Settings.app
+            → Apple ID → サブスクリプション) からのみ可能なので、ペイウォール内で
+            「現在のプランを変更する」リンクと一緒に解約導線を案内する。
+          */}
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/paywall?context=settings')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Sparkles size={20} color="#6366F1" />
+                <View>
+                  <Text style={styles.settingText}>プランを変更する</Text>
+                  <Text style={styles.settingSub}>アップグレード・ダウングレード・解約</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/claude-integration')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <KeyRound size={20} color="#6366F1" />
+                <View>
+                  <Text style={styles.settingText}>AI 連携 (Claude / ChatGPT)</Text>
+                  <Text style={styles.settingSub}>外部のAIで目標を立てて ToSche に流し込む</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={handleDeleteChatHistory}
+            disabled={chatStats.conversations === 0}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <MessageSquare size={20} color={chatStats.conversations === 0 ? '#cbd5e1' : '#475569'} />
+                <View>
+                  <Text
+                    style={[
+                      styles.settingText,
+                      chatStats.conversations === 0 && { color: '#94a3b8' },
+                    ]}
+                  >
+                    チャット履歴を削除
+                  </Text>
+                  <Text style={styles.settingSub}>
+                    {chatStats.conversations === 0
+                      ? '履歴はまだありません'
+                      : `${chatStats.conversations} 件の会話を保存中`}
+                  </Text>
+                </View>
+              </View>
+              {chatStats.conversations > 0 && <Trash2 size={18} color="#dc2626" />}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={handleDeleteMemory}
+            disabled={chatStats.memory === 0}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <Brain size={20} color={chatStats.memory === 0 ? '#cbd5e1' : '#475569'} />
+                <View>
+                  <Text
+                    style={[
+                      styles.settingText,
+                      chatStats.memory === 0 && { color: '#94a3b8' },
+                    ]}
+                  >
+                    AIの記憶をリセット
+                  </Text>
+                  <Text style={styles.settingSub}>
+                    {chatStats.memory === 0
+                      ? 'まだ何も覚えていません'
+                      : `${chatStats.memory} 件の記憶を保持中`}
+                  </Text>
+                </View>
+              </View>
+              {chatStats.memory > 0 && <Trash2 size={18} color="#dc2626" />}
+            </View>
+          </TouchableOpacity>
         </CollapsibleSection>
 
         <CollapsibleSection
@@ -618,9 +783,9 @@ export default function SettingsScreen() {
         </CollapsibleSection>
 
         <CollapsibleSection
-          title={t('settings.scheduleSettings')}
-          icon={<CalendarSync size={20} color="#334155" />}
-          {...sectionProps('schedule')}
+          title={lang === 'ja' ? 'リマインド' : 'Reminders'}
+          icon={<Target size={20} color="#8B5CF6" />}
+          {...sectionProps('reminder')}
         >
           <View style={styles.syncCard}>
             <View style={styles.syncLeft}>
@@ -650,14 +815,6 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
-        </CollapsibleSection>
-
-        {/* Goal reminders */}
-        <CollapsibleSection
-          title="目標リマインダー"
-          icon={<Target size={20} color="#8B5CF6" />}
-          {...sectionProps('goalReminder')}
-        >
           <View style={styles.syncCard}>
             <View style={styles.syncLeft}>
               <Target size={20} color="#8B5CF6" />
@@ -711,160 +868,28 @@ export default function SettingsScreen() {
         </CollapsibleSection>
 
         <CollapsibleSection
-          title={t('settings.data')}
-          icon={<BarChart3 size={20} color="#3B82F6" />}
-          {...sectionProps('data')}
+          title={t('settings.languageSection')}
+          icon={<Globe size={20} color="#3b82f6" />}
+          {...sectionProps('language')}
         >
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={() => router.push('/statistics')}
-          >
-            <View style={styles.settingRowBetween}>
-              <View style={styles.settingLeft}>
-                <BarChart3 size={20} color="#3B82F6" />
-                <Text style={styles.settingText}>{t('tabs.statistics') || '統計'}</Text>
-              </View>
-              <ChevronRight size={18} color="#999" />
-            </View>
-          </TouchableOpacity>
-
-          {/* データエクスポート —
-              Web ではブラウザの Blob ダウンロードで動作するが、モバイル (iOS / Android)
-              では現状 expo-sharing 未実装のため WIP アラートが出るだけ。"動かないボタンを
-              見せる" のは Apple ガイドライン 2.3.0 リスクなので、モバイルでは非表示にする。
-              v1.3 で expo-sharing 経由のネイティブ Export を実装したら Platform.OS === 'web'
-              のチェックを外す。 */}
-          {Platform.OS === 'web' && (
-            <TouchableOpacity
-              style={styles.settingItem}
-              onPress={exportData}
-              disabled={isExporting}>
-              <View style={styles.settingLeft}>
-                <Download size={20} color="#000" />
-                <Text style={styles.settingText}>
-                  {isExporting ? t('settings.exporting') : t('settings.exportData')}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity style={styles.settingItem} onPress={clearAllData}>
-            <View style={styles.settingLeft}>
-              <Trash2 size={20} color="#ff3b30" />
-              <Text style={[styles.settingText, styles.dangerText]}>
-                {t('settings.deleteAllData')}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title={t('settings.aiSection') || 'AI アシスタント'}
-          icon={<Sparkles size={20} color="#6366F1" />}
-          {...sectionProps('ai')}
-        >
-
-          {/*
-            プロモコード入力 UI は App Store ガイドライン 3.1.1 に従い App Store 配布版から削除しました。
-            (= IAP 以外で有料機能をアンロックする仕組みは禁止)
-            Apple Offer Codes (= App Store Connect → 「Offer Codes」機能) で同等の機能を提供します。
-            バックエンドの redeem-promo Edge Function は管理者用に残してあります。
-          */}
-
-          {/*
-            プラン変更 (アップグレード / ダウングレード) のエントリ。
-            paywall は context=settings で起動するとどのプラン入口にも紐づかず
-            3 プランすべてを表示する。実際の解約は Apple サブスク設定 (Settings.app
-            → Apple ID → サブスクリプション) からのみ可能なので、ペイウォール内で
-            「現在のプランを変更する」リンクと一緒に解約導線を案内する。
-          */}
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={() => router.push('/paywall?context=settings')}
-          >
-            <View style={styles.settingRowBetween}>
-              <View style={styles.settingLeft}>
-                <Sparkles size={20} color="#6366F1" />
-                <View>
-                  <Text style={styles.settingText}>プランを変更する</Text>
-                  <Text style={styles.settingSub}>アップグレード・ダウングレード・解約</Text>
-                </View>
-              </View>
-              <ChevronRight size={18} color="#999" />
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={() => router.push('/claude-integration')}
-          >
-            <View style={styles.settingRowBetween}>
-              <View style={styles.settingLeft}>
-                <KeyRound size={20} color="#6366F1" />
-                <View>
-                  <Text style={styles.settingText}>AI 連携 (Claude / ChatGPT)</Text>
-                  <Text style={styles.settingSub}>外部のAIで目標を立てて ToSche に流し込む</Text>
-                </View>
-              </View>
-              <ChevronRight size={18} color="#999" />
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={handleDeleteChatHistory}
-            disabled={chatStats.conversations === 0}
-          >
-            <View style={styles.settingRowBetween}>
-              <View style={styles.settingLeft}>
-                <MessageSquare size={20} color={chatStats.conversations === 0 ? '#cbd5e1' : '#475569'} />
-                <View>
-                  <Text
-                    style={[
-                      styles.settingText,
-                      chatStats.conversations === 0 && { color: '#94a3b8' },
-                    ]}
-                  >
-                    チャット履歴を削除
-                  </Text>
-                  <Text style={styles.settingSub}>
-                    {chatStats.conversations === 0
-                      ? '履歴はまだありません'
-                      : `${chatStats.conversations} 件の会話を保存中`}
-                  </Text>
-                </View>
-              </View>
-              {chatStats.conversations > 0 && <Trash2 size={18} color="#dc2626" />}
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.settingItem}
-            onPress={handleDeleteMemory}
-            disabled={chatStats.memory === 0}
-          >
-            <View style={styles.settingRowBetween}>
-              <View style={styles.settingLeft}>
-                <Brain size={20} color={chatStats.memory === 0 ? '#cbd5e1' : '#475569'} />
-                <View>
-                  <Text
-                    style={[
-                      styles.settingText,
-                      chatStats.memory === 0 && { color: '#94a3b8' },
-                    ]}
-                  >
-                    AIの記憶をリセット
-                  </Text>
-                  <Text style={styles.settingSub}>
-                    {chatStats.memory === 0
-                      ? 'まだ何も覚えていません'
-                      : `${chatStats.memory} 件の記憶を保持中`}
-                  </Text>
-                </View>
-              </View>
-              {chatStats.memory > 0 && <Trash2 size={18} color="#dc2626" />}
-            </View>
-          </TouchableOpacity>
+          <View style={styles.langRow}>
+            {(['ja', 'en'] as Language[]).map(code => {
+              const active = lang === code;
+              const label = code === 'ja' ? t('settings.languageJapanese') : t('settings.languageEnglish');
+              return (
+                <TouchableOpacity
+                  key={code}
+                  style={[styles.langOption, active && styles.langOptionActive]}
+                  onPress={() => setLang(code)}
+                  activeOpacity={0.8}
+                >
+                  <Globe size={18} color={active ? '#3b82f6' : '#666'} />
+                  <Text style={[styles.langLabel, active && styles.langLabelActive]}>{label}</Text>
+                  {active && <CheckCircle2 size={18} color="#3b82f6" />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </CollapsibleSection>
 
         <CollapsibleSection
@@ -961,6 +986,54 @@ export default function SettingsScreen() {
         </CollapsibleSection>
 
         <CollapsibleSection
+          title={t('settings.data')}
+          icon={<BarChart3 size={20} color="#3B82F6" />}
+          {...sectionProps('data')}
+        >
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/statistics')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <BarChart3 size={20} color="#3B82F6" />
+                <Text style={styles.settingText}>{t('tabs.statistics') || '統計'}</Text>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          {/* データエクスポート —
+              Web ではブラウザの Blob ダウンロードで動作するが、モバイル (iOS / Android)
+              では現状 expo-sharing 未実装のため WIP アラートが出るだけ。"動かないボタンを
+              見せる" のは Apple ガイドライン 2.3.0 リスクなので、モバイルでは非表示にする。
+              v1.3 で expo-sharing 経由のネイティブ Export を実装したら Platform.OS === 'web'
+              のチェックを外す。 */}
+          {Platform.OS === 'web' && (
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={exportData}
+              disabled={isExporting}>
+              <View style={styles.settingLeft}>
+                <Download size={20} color="#000" />
+                <Text style={styles.settingText}>
+                  {isExporting ? t('settings.exporting') : t('settings.exportData')}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.settingItem} onPress={clearAllData}>
+            <View style={styles.settingLeft}>
+              <Trash2 size={20} color="#ff3b30" />
+              <Text style={[styles.settingText, styles.dangerText]}>
+                {t('settings.deleteAllData')}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </CollapsibleSection>
+
+        <CollapsibleSection
           title={t('settings.appInfo')}
           icon={<Info size={20} color="#64748b" />}
           {...sectionProps('appInfo')}
@@ -978,7 +1051,7 @@ export default function SettingsScreen() {
         </CollapsibleSection>
 
         <CollapsibleSection
-          title={t('settings.support')}
+          title={lang === 'ja' ? 'サポート・使い方' : 'Support & Guide'}
           icon={<MessageSquare size={20} color="#334155" />}
           {...sectionProps('support')}
         >
@@ -1051,13 +1124,6 @@ export default function SettingsScreen() {
               <ChevronRight size={18} color="#999" />
             </View>
           </TouchableOpacity>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title={t('settings.howTo')}
-          icon={<HelpCircle size={20} color="#334155" />}
-          {...sectionProps('howTo')}
-        >
           <View style={styles.helpCard}>
             <Text style={styles.helpTitle}>{t('settings.howToDailyTitle')}</Text>
             <Text style={styles.helpText}>
@@ -1077,6 +1143,7 @@ export default function SettingsScreen() {
             </Text>
           </View>
         </CollapsibleSection>
+
       </ScrollView>
 
       <DeleteAccountModal
@@ -1116,6 +1183,46 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 12,
+  },
+  // バグ報告カード — 最上部に常時表示する強調カード (折りたたまない)
+  bugReportCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fef2f2',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    marginBottom: 16,
+  },
+  bugReportLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexShrink: 1,
+  },
+  bugReportIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#fee2e2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bugReportTextWrap: {
+    flexShrink: 1,
+  },
+  bugReportTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#b91c1c',
+  },
+  bugReportSub: {
+    fontSize: 12,
+    color: '#9b6b6b',
+    marginTop: 2,
   },
   sectionTitle: {
     fontSize: 18,
