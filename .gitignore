@@ -21,6 +21,9 @@ expo-env.d.ts
 google-services.json
 GoogleService-Info.plist
 
+# Google Play service account key (eas submit) — SECRET private key, never commit.
+google-play-service-account.json
+
 # metro
 .metro-health-check*
 
