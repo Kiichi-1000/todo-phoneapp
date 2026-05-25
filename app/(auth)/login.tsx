@@ -156,6 +156,10 @@ export default function LoginScreen() {
               </View>
             )}
 
+            {/* メール/パスワードはログイン(既存ユーザー救済)のみ。新規登録は
+                Google/Apple に一本化したため、サインアップモードでは非表示。 */}
+            {isLogin && (
+            <>
             <View style={styles.inputGroup}>
               <View style={styles.inputWrapper}>
                 <Mail size={18} color="#8a8a9a" style={styles.inputIcon} />
@@ -226,6 +230,18 @@ export default function LoginScreen() {
                 </Text>
               )}
             </TouchableOpacity>
+            </>
+            )}
+
+            {!isLogin && (
+              <View style={styles.signupNotice}>
+                <Text style={styles.signupNoticeText}>
+                  {Platform.OS === 'android'
+                    ? '新規アカウントは Google で作成します。下のボタンから続けてください。'
+                    : '新規アカウントは Google または Apple で作成します。下のボタンから続けてください。'}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.dividerContainer}>
               <View style={styles.dividerLine} />
@@ -396,6 +412,20 @@ const styles = StyleSheet.create({
   inputGroup: {
     gap: 12,
     marginBottom: 24,
+  },
+  signupNotice: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e2ea',
+    padding: 16,
+    marginBottom: 8,
+  },
+  signupNoticeText: {
+    fontSize: 14,
+    color: '#444',
+    textAlign: 'center',
+    lineHeight: 21,
   },
   inputWrapper: {
     flexDirection: 'row',

@@ -106,10 +106,28 @@ export default function WorkspaceScreen() {
   const loadedDates = useRef<Set<string>>(new Set());
   const initialScrollDone = useRef(false);
 
+  // ログイン直後、React 側の `user` がセットされても Supabase クライアントが
+  // access_token を HTTP ヘッダに付け切る前にここが走ると、user_settings /
+  // workspaces クエリが RLS で空を返し、ワークスペースが空のまま固まる
+  // (アプリ再起動の cold start では getSession() 済みで直る、という症状)。
+  // 最初の fetch の前に access_token が乗るまで短くポーリングして待つ。
   useEffect(() => {
     if (!user) return;
-    loadSettings();
-  }, [user]);
+    let cancelled = false;
+    (async () => {
+      for (let i = 0; i < 20; i++) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) break;
+        if (cancelled) return;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      if (cancelled) return;
+      loadSettings();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (settings && user) {
@@ -189,6 +207,10 @@ export default function WorkspaceScreen() {
 
   const loadSettings = async () => {
     try {
+      // Auth トークンが未伝播のうちに RLS 依存クエリを投げると空が返るため、
+      // access_token を確認してから取得する。
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
       const { data, error } = await supabase
         .from('user_settings')
         .select('*')
@@ -218,6 +240,8 @@ export default function WorkspaceScreen() {
   // — initial-mount behavior is unchanged.
   const loadWorkspaceDates = async (preserveCurrentDate: boolean = true) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
       const currentType = settings?.default_workspace_type || 'four_grid';
       const currentDateString = preserveCurrentDate && workspaceDates[currentIndex]
         ? workspaceDates[currentIndex] : null;
