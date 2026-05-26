@@ -16,7 +16,7 @@ import {
   LayoutAnimation,
   UIManager,
 } from 'react-native';
-import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX, Globe, Sparkles, MessageSquare, Brain, ChartBar as BarChart3, Target, LayoutGrid, HelpCircle, Bug } from 'lucide-react-native';
+import { Download, Trash2, Info, CircleCheck as CheckCircle2, LogOut, CalendarSync, KeyRound, ChevronRight, UserX, Globe, Sparkles, MessageSquare, Brain, ChartBar as BarChart3, Target, LayoutGrid, HelpCircle, Bug, ShieldCheck } from 'lucide-react-native';
 import Constants from 'expo-constants';
 import { supabase } from '@/lib/supabase';
 import { getLegalDocumentsHubUrl } from '@/lib/legalUrls';
@@ -84,7 +84,8 @@ function CollapsibleSection({
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, signOut, updatePassword } = useAuth();
+  const { user, signOut, updatePassword, sendEmailOtp, completeOtpLogin, setTwoFactorEnabled } = useAuth();
+  const twoFactorEnabled = user?.user_metadata?.two_factor_enabled === true;
   const { skin: fourGridSkin, setSkin: setFourGridSkin } = useFourGridSkin();
   const { t, lang, setLang } = useLanguage();
 
@@ -121,6 +122,12 @@ export default function SettingsScreen() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  // 2段階認証 (メールOTP) の管理 UI 用
+  const [show2faForm, setShow2faForm] = useState(false);
+  const [twoFaCodeSent, setTwoFaCodeSent] = useState(false);
+  const [twoFaCode, setTwoFaCode] = useState('');
+  const [twoFaLoading, setTwoFaLoading] = useState(false);
+  const [twoFaError, setTwoFaError] = useState<string | null>(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   // promoModalVisible state は App Store 版で削除済み (3.1.1 対応)
   const [chatStats, setChatStats] = useState<{ conversations: number; memory: number }>({
@@ -469,6 +476,85 @@ export default function SettingsScreen() {
     setNewPassword('');
     setConfirmNewPassword('');
     setPasswordError(null);
+  };
+
+  // --- 2段階認証 (メールOTP) ------------------------------------------------
+  const reset2faForm = () => {
+    setTwoFaCodeSent(false);
+    setTwoFaCode('');
+    setTwoFaError(null);
+    setTwoFaLoading(false);
+  };
+
+  const handleToggle2faForm = () => {
+    setShow2faForm((v) => !v);
+    reset2faForm();
+  };
+
+  // 有効化: 本人がメールを受け取れることを確認してから ON にする。
+  const handleSend2faCode = async () => {
+    const email = user?.email;
+    if (!email) {
+      setTwoFaError('メールアドレスが取得できません。再ログインしてください。');
+      return;
+    }
+    setTwoFaError(null);
+    setTwoFaLoading(true);
+    const { error: err } = await sendEmailOtp(email);
+    setTwoFaLoading(false);
+    if (err) {
+      setTwoFaError(
+        err.includes('rate limit')
+          ? 'コードの送信が制限されています。しばらく待ってからお試しください。'
+          : err,
+      );
+      return;
+    }
+    setTwoFaCodeSent(true);
+  };
+
+  const handleEnable2fa = async () => {
+    const email = user?.email;
+    if (!email) return;
+    const token = twoFaCode.replace(/\D/g, '');
+    if (token.length < 6) {
+      setTwoFaError('6桁の確認コードを入力してください');
+      return;
+    }
+    setTwoFaError(null);
+    setTwoFaLoading(true);
+    const { error: err } = await completeOtpLogin(email, token, true);
+    setTwoFaLoading(false);
+    if (err) {
+      setTwoFaError('確認コードが正しくないか、有効期限が切れています。再送信してお試しください。');
+      return;
+    }
+    setShow2faForm(false);
+    reset2faForm();
+    Alert.alert('2段階認証を有効にしました', '次回以降のログインで確認コードが必要になります。');
+  };
+
+  const handleDisable2fa = () => {
+    Alert.alert(
+      '2段階認証を無効にする',
+      '無効にすると、ログイン時の確認コードが不要になります。よろしいですか？',
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: '無効にする',
+          style: 'destructive',
+          onPress: async () => {
+            const { error: err } = await setTwoFactorEnabled(false);
+            if (err) {
+              Alert.alert('エラー', err);
+              return;
+            }
+            setShow2faForm(false);
+            reset2faForm();
+          },
+        },
+      ],
+    );
   };
 
   const handleDeleteAccount = () => {
@@ -954,6 +1040,95 @@ export default function SettingsScreen() {
                   <Text style={styles.passwordSubmitText}>{t('settings.passwordChangeButton')}</Text>
                 )}
               </TouchableOpacity>
+            </View>
+          )}
+
+          <TouchableOpacity style={styles.settingItem} onPress={handleToggle2faForm}>
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <ShieldCheck size={20} color="#000" />
+                <Text style={styles.settingText}>2段階認証</Text>
+              </View>
+              <Text style={twoFactorEnabled ? styles.twoFaStatusOn : styles.twoFaStatusOff}>
+                {twoFactorEnabled ? '有効' : '無効'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {show2faForm && (
+            <View style={styles.passwordForm}>
+              {twoFaError && (
+                <View style={styles.passwordErrorContainer}>
+                  <Text style={styles.passwordErrorText}>{twoFaError}</Text>
+                </View>
+              )}
+
+              {twoFactorEnabled ? (
+                <>
+                  <Text style={styles.twoFaHint}>
+                    ログイン時に、メールへ届く6桁コードでの本人確認が有効です。
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.twoFaDisableButton, twoFaLoading && styles.passwordSubmitDisabled]}
+                    onPress={handleDisable2fa}
+                    disabled={twoFaLoading}
+                  >
+                    <Text style={styles.twoFaDisableText}>2段階認証を無効にする</Text>
+                  </TouchableOpacity>
+                </>
+              ) : !twoFaCodeSent ? (
+                <>
+                  <Text style={styles.twoFaHint}>
+                    {`${user?.email ?? 'メール'} に確認コードを送信し、本人確認のうえ2段階認証を有効にします。`}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.passwordSubmitButton, twoFaLoading && styles.passwordSubmitDisabled]}
+                    onPress={handleSend2faCode}
+                    disabled={twoFaLoading}
+                  >
+                    {twoFaLoading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.passwordSubmitText}>確認コードを送信</Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.twoFaHint}>
+                    メールに記載の6桁コードを入力してください。
+                  </Text>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="確認コード（6桁）"
+                    placeholderTextColor="#8a8a9a"
+                    value={twoFaCode}
+                    onChangeText={(v) => setTwoFaCode(v.replace(/[^0-9]/g, '').slice(0, 6))}
+                    keyboardType="number-pad"
+                    textContentType="oneTimeCode"
+                    maxLength={6}
+                    editable={!twoFaLoading}
+                  />
+                  <TouchableOpacity
+                    style={[styles.passwordSubmitButton, twoFaLoading && styles.passwordSubmitDisabled]}
+                    onPress={handleEnable2fa}
+                    disabled={twoFaLoading}
+                  >
+                    {twoFaLoading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.passwordSubmitText}>2段階認証を有効にする</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.twoFaResendButton}
+                    onPress={handleSend2faCode}
+                    disabled={twoFaLoading}
+                  >
+                    <Text style={styles.twoFaResendText}>コードを再送信</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           )}
 
@@ -1604,6 +1779,46 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+  },
+  twoFaStatusOn: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#16a34a',
+  },
+  twoFaStatusOff: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#8a8a9a',
+  },
+  twoFaHint: {
+    fontSize: 13,
+    color: '#6b6b7b',
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  twoFaDisableButton: {
+    borderRadius: 10,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+  },
+  twoFaDisableText: {
+    color: '#dc2626',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  twoFaResendButton: {
+    alignSelf: 'center',
+    marginTop: 12,
+    paddingVertical: 4,
+  },
+  twoFaResendText: {
+    fontSize: 13,
+    color: '#6b6b7b',
+    textDecorationLine: 'underline',
   },
   langRow: {
     flexDirection: 'row',

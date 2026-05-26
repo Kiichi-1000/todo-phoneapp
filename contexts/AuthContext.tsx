@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Platform } from 'react-native';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseVerifier } from '@/lib/supabase';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -14,6 +14,27 @@ interface AuthContextType {
   loading: boolean;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  // 2FA (email OTP) login flow ---------------------------------------------
+  // Verify an email/password pair WITHOUT establishing an app session, and
+  // report whether the account has email 2FA enabled. The captured session
+  // tokens are returned so the caller can adopt them later (skip path).
+  verifyPasswordForLogin: (
+    email: string,
+    password: string,
+  ) => Promise<{ error: string | null; twoFactorEnabled: boolean; session: Session | null }>;
+  // Adopt a previously-verified session into the main client (no-2FA / "後で").
+  adoptSession: (session: Session) => Promise<{ error: string | null }>;
+  // Send a 6-digit email OTP code to the address (existing users only).
+  sendEmailOtp: (email: string) => Promise<{ error: string | null }>;
+  // Verify the OTP code; on success establishes the app session. When
+  // enroll=true, also flips the user's two_factor_enabled flag on.
+  completeOtpLogin: (
+    email: string,
+    token: string,
+    enroll: boolean,
+  ) => Promise<{ error: string | null }>;
+  // Enable/disable email 2FA for the currently authenticated user.
+  setTwoFactorEnabled: (enabled: boolean) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signInWithApple: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
@@ -31,6 +52,11 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signUp: async () => ({ error: null }),
   signIn: async () => ({ error: null }),
+  verifyPasswordForLogin: async () => ({ error: null, twoFactorEnabled: false, session: null }),
+  adoptSession: async () => ({ error: null }),
+  sendEmailOtp: async () => ({ error: null }),
+  completeOtpLogin: async () => ({ error: null }),
+  setTwoFactorEnabled: async () => ({ error: null }),
   signInWithGoogle: async () => ({ error: null }),
   signInWithApple: async () => ({ error: null }),
   signOut: async () => {},
@@ -135,6 +161,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error.message };
+    await forceSyncSession();
+    return { error: null };
+  };
+
+  // --- 2FA (email OTP) login flow ------------------------------------------
+  // Verify the password on the throwaway verifier client so the main client's
+  // auth state (and therefore the RootNavigator) is not disturbed. Reading
+  // user_metadata.two_factor_enabled from the returned user tells us whether a
+  // second factor is required.
+  const verifyPasswordForLogin = async (email: string, password: string) => {
+    try {
+      const { data, error } = await supabaseVerifier.auth.signInWithPassword({ email, password });
+      if (error) {
+        return { error: error.message, twoFactorEnabled: false, session: null };
+      }
+      const twoFactorEnabled = data.user?.user_metadata?.two_factor_enabled === true;
+      const captured = data.session ?? null;
+      // Drop ONLY the verifier's in-memory session. scope:'local' must be used
+      // here — the default global sign-out would revoke the user's refresh
+      // tokens across ALL their devices and invalidate the tokens we just
+      // captured for the skip ("後で") path.
+      await supabaseVerifier.auth.signOut({ scope: 'local' }).catch(() => {});
+      return { error: null, twoFactorEnabled, session: captured };
+    } catch (e: any) {
+      return { error: e?.message ?? '認証に失敗しました', twoFactorEnabled: false, session: null };
+    }
+  };
+
+  // No 2FA / "後で": promote the already-verified tokens into the main client.
+  const adoptSession = async (sess: Session) => {
+    try {
+      const { error } = await supabase.auth.setSession({
+        access_token: sess.access_token,
+        refresh_token: sess.refresh_token,
+      });
+      if (error) return { error: error.message };
+      await forceSyncSession();
+      return { error: null };
+    } catch (e: any) {
+      return { error: e?.message ?? 'セッションの確立に失敗しました' };
+    }
+  };
+
+  // Email OTP for existing users (no new account created).
+  const sendEmailOtp = async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: false },
+    });
+    if (error) return { error: error.message };
+    return { error: null };
+  };
+
+  // Verify the emailed 6-digit code. On success the main client gets a real
+  // session. When enrolling, persist the two_factor_enabled flag before
+  // syncing React state so the next login already requires the second factor.
+  const completeOtpLogin = async (email: string, token: string, enroll: boolean) => {
+    const { error } = await supabase.auth.verifyOtp({ email, token: token.trim(), type: 'email' });
+    if (error) return { error: error.message };
+    if (enroll) {
+      await supabase.auth.updateUser({ data: { two_factor_enabled: true } }).catch(() => {});
+    }
+    await forceSyncSession();
+    return { error: null };
+  };
+
+  const setTwoFactorEnabled = async (enabled: boolean) => {
+    const { error } = await supabase.auth.updateUser({ data: { two_factor_enabled: enabled } });
     if (error) return { error: error.message };
     await forceSyncSession();
     return { error: null };
@@ -333,6 +428,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         signUp,
         signIn,
+        verifyPasswordForLogin,
+        adoptSession,
+        sendEmailOtp,
+        completeOtpLogin,
+        setTwoFactorEnabled,
         signInWithGoogle,
         signInWithApple,
         signOut,

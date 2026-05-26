@@ -85,3 +85,18 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true,
   },
 });
+
+// Secondary, non-persistent client used ONLY to verify an email/password pair
+// during the 2FA login flow without establishing an app session on the main
+// client. signInWithPassword on the main client would immediately fire
+// onAuthStateChange -> RootNavigator -> /(tabs), bypassing the OTP step. By
+// checking the password here (persistSession:false, no auto-refresh, no URL
+// detection) we can read user_metadata.two_factor_enabled and capture the
+// session tokens without ever touching the main client's auth state.
+export const supabaseVerifier = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+    detectSessionInUrl: false,
+  },
+});

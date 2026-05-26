@@ -235,7 +235,13 @@ export async function getOfferings(): Promise<PriceOption[]> {
 
     const result: PriceOption[] = [];
     for (const pkg of current.availablePackages ?? []) {
-      const productId = pkg.product?.identifier ?? pkg.identifier;
+      // Android (Google Play) の subscription product は RevenueCat SDK が
+      // "subscriptionId:basePlanId" 形式 (例: tosche_basic_monthly:monthly) で
+      // identifier を返す。PLACEHOLDER テーブルは basePlanId 抜きの素の product_id
+      // で持っているため、":" 以降を落としてから突き合わせる。iOS の identifier
+      // (例: ToSche.std.1.2) は ":" を含まないので無変換 = 影響なし。
+      const rawId = pkg.product?.identifier ?? pkg.identifier ?? '';
+      const productId = rawId.split(':')[0];
       // PLACEHOLDER_OFFERINGS_ALL は iOS + Android 両方のIDを含む。SDK が返す
       // productId はプラットフォーム由来なのでどちらでも引けるよう全集合で探す。
       const placeholder = PLACEHOLDER_OFFERINGS_ALL.find((p) => p.identifier === productId);
@@ -263,8 +269,10 @@ export async function purchasePackage(productId: string): Promise<PurchaseResult
   }
   try {
     const offerings = await purchasesModule.getOfferings();
+    // Android は product.identifier が "subscriptionId:basePlanId" 形式のため、
+    // ":" 以降を落として素の product_id 同士で突き合わせる (iOS は ":" 無しなので影響なし)。
     const pkg = offerings?.current?.availablePackages?.find(
-      (p: any) => p.product?.identifier === productId,
+      (p: any) => (p.product?.identifier ?? '').split(':')[0] === productId,
     );
     if (!pkg) {
       return { success: false, error: `Product ${productId} not found in offerings` };

@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -17,63 +18,96 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { BookOpen, Mail, Lock, Eye, EyeOff, Apple } from 'lucide-react-native';
 
 export default function LoginScreen() {
-  const { signIn, signUp, signInWithGoogle, signInWithApple } = useAuth();
+  const {
+    verifyPasswordForLogin,
+    adoptSession,
+    sendEmailOtp,
+    signInWithGoogle,
+    signInWithApple,
+  } = useAuth();
   const { t } = useLanguage();
   const router = useRouter();
-  const [isLogin, setIsLogin] = useState(true);
+  // Unified screen: "Continue with Google/Apple" handles both sign-up and
+  // login. Email/password is a login-only fallback for users who registered
+  // before the social-login consolidation, hidden behind a link by default.
+  const [showEmailLogin, setShowEmailLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const handleSubmit = async () => {
+  const handleEmailLogin = async () => {
     setError(null);
-    setSuccessMessage(null);
 
     if (!email.trim() || !password.trim()) {
       setError(t('auth.errorEmailPasswordRequired'));
       return;
     }
 
-    if (!isLogin && password !== confirmPassword) {
-      setError(t('auth.errorPasswordsMismatch'));
-      return;
-    }
-
-    if (!isLogin && password.length < 6) {
-      setError(t('auth.errorPasswordTooShort'));
-      return;
-    }
-
     setLoading(true);
+    const { error: err, twoFactorEnabled, session } = await verifyPasswordForLogin(
+      email.trim(),
+      password,
+    );
 
-    if (isLogin) {
-      try {
-        const { error: err } = await signIn(email.trim(), password);
-        if (err) {
-          setError(getErrorMessage(err));
-        }
-      } catch (e: any) {
-        setError(e?.message ?? 'unknown error');
-      }
-    } else {
-      const { error: err } = await signUp(email.trim(), password);
-      if (err) {
-        setError(getErrorMessage(err));
-      } else {
-        setSuccessMessage(t('auth.signupSuccess'));
-        setIsLogin(true);
-        setPassword('');
-        setConfirmPassword('');
-      }
+    if (err) {
+      setLoading(false);
+      setError(getErrorMessage(err));
+      return;
     }
 
+    // Account has email 2FA enabled -> send a code and go to the OTP screen.
+    if (twoFactorEnabled) {
+      const { error: otpErr } = await sendEmailOtp(email.trim());
+      setLoading(false);
+      if (otpErr) {
+        setError(getErrorMessage(otpErr));
+        return;
+      }
+      router.push({
+        pathname: '/(auth)/verify-otp',
+        params: { email: email.trim(), mode: 'login' },
+      });
+      return;
+    }
+
+    // 2FA not enabled -> offer enrollment (asked, not forced).
     setLoading(false);
+    Alert.alert(
+      '2段階認証の設定',
+      'セキュリティ向上のため、ログイン時にメールへ届く確認コードでの本人確認（2段階認証）を設定できます。今すぐ設定しますか？',
+      [
+        {
+          text: '後で',
+          style: 'cancel',
+          onPress: () => {
+            if (session) adoptSession(session);
+          },
+        },
+        {
+          text: '設定する',
+          onPress: async () => {
+            setLoading(true);
+            const { error: otpErr } = await sendEmailOtp(email.trim());
+            setLoading(false);
+            if (otpErr) {
+              // Couldn't send the code — log in normally rather than block.
+              setError(getErrorMessage(otpErr));
+              if (session) await adoptSession(session);
+              return;
+            }
+            router.push({
+              pathname: '/(auth)/verify-otp',
+              params: { email: email.trim(), mode: 'enroll' },
+            });
+          },
+        },
+      ],
+      { cancelable: true },
+    );
   };
 
   const getErrorMessage = (err: string): string => {
@@ -83,7 +117,7 @@ export default function LoginScreen() {
     if (err.includes('User already registered')) {
       return t('auth.errorEmailInUse');
     }
-    if (err.includes('Email rate limit')) {
+    if (err.includes('Email rate limit') || err.includes('rate limit')) {
       return t('auth.errorRateLimit');
     }
     return err;
@@ -91,7 +125,6 @@ export default function LoginScreen() {
 
   const handleGoogleSignIn = async () => {
     setError(null);
-    setSuccessMessage(null);
     setGoogleLoading(true);
     const { error: err } = await signInWithGoogle();
     if (err) {
@@ -102,21 +135,12 @@ export default function LoginScreen() {
 
   const handleAppleSignIn = async () => {
     setError(null);
-    setSuccessMessage(null);
     setAppleLoading(true);
     const { error: err } = await signInWithApple();
     if (err) {
       setError(err);
     }
     setAppleLoading(false);
-  };
-
-  const switchMode = () => {
-    setIsLogin(!isLogin);
-    setError(null);
-    setSuccessMessage(null);
-    setPassword('');
-    setConfirmPassword('');
   };
 
   return (
@@ -138,9 +162,7 @@ export default function LoginScreen() {
               <BookOpen size={40} color="#1a1a2e" />
             </View>
             <Text style={styles.appName}>ToSche</Text>
-            <Text style={styles.appTagline}>
-              {isLogin ? t('auth.welcomeBack') : t('auth.getStarted')}
-            </Text>
+            <Text style={styles.appTagline}>目標・ToDo・予定をひとつに</Text>
           </View>
 
           <View style={styles.formSection}>
@@ -150,107 +172,8 @@ export default function LoginScreen() {
               </View>
             )}
 
-            {successMessage && (
-              <View style={styles.successContainer}>
-                <Text style={styles.successText}>{successMessage}</Text>
-              </View>
-            )}
-
-            {/* メール/パスワードはログイン(既存ユーザー救済)のみ。新規登録は
-                Google/Apple に一本化したため、サインアップモードでは非表示。 */}
-            {isLogin && (
-            <>
-            <View style={styles.inputGroup}>
-              <View style={styles.inputWrapper}>
-                <Mail size={18} color="#8a8a9a" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  placeholder={t('auth.email')}
-                  placeholderTextColor="#8a8a9a"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  textContentType="emailAddress"
-                  editable={!loading}
-                />
-              </View>
-
-              <View style={styles.inputWrapper}>
-                <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  placeholder={t('auth.password')}
-                  placeholderTextColor="#8a8a9a"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  textContentType="password"
-                  editable={!loading}
-                />
-                <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <EyeOff size={18} color="#8a8a9a" />
-                  ) : (
-                    <Eye size={18} color="#8a8a9a" />
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {!isLogin && (
-                <View style={styles.inputWrapper}>
-                  <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.input}
-                    placeholder={t('auth.passwordConfirm')}
-                    placeholderTextColor="#8a8a9a"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry={!showPassword}
-                    textContentType="password"
-                    editable={!loading}
-                  />
-                </View>
-              )}
-            </View>
-
-            <TouchableOpacity
-              style={[styles.submitButton, loading && styles.submitButtonDisabled]}
-              onPress={handleSubmit}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.submitButtonText}>
-                  {isLogin ? t('auth.login') : t('auth.createAccount')}
-                </Text>
-              )}
-            </TouchableOpacity>
-            </>
-            )}
-
-            {!isLogin && (
-              <View style={styles.signupNotice}>
-                <Text style={styles.signupNoticeText}>
-                  {Platform.OS === 'android'
-                    ? '新規アカウントは Google で作成します。下のボタンから続けてください。'
-                    : '新規アカウントは Google または Apple で作成します。下のボタンから続けてください。'}
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.dividerContainer}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>{t('auth.or')}</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Apple Sign In is only available on iOS and Web (Safari).
-                Android users see only Email + Google sign-in. */}
+            {/* 主導線: 「続ける」は新規登録とログインを兼ねる。
+                Apple Sign In は iOS / Web (Safari) のみ。Android は Google のみ。 */}
             {Platform.OS !== 'android' && (
               <TouchableOpacity
                 style={[styles.appleButton, appleLoading && styles.submitButtonDisabled]}
@@ -283,32 +206,89 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-
-
-            {isLogin && (
+            {/* 既存ユーザー向け: メール/パスワードでのログイン。新規登録は不可
+                (アカウント作成は Google / Apple に一本化済み)。 */}
+            {!showEmailLogin ? (
               <TouchableOpacity
-                style={styles.forgotButton}
-                onPress={() => router.push('/(auth)/forgot-password')}
-                disabled={loading}
+                style={styles.emailLoginLink}
+                onPress={() => {
+                  setError(null);
+                  setShowEmailLogin(true);
+                }}
+                disabled={loading || googleLoading || appleLoading}
               >
-                <Text style={styles.forgotText}>{t('auth.forgotPasswordPrompt')}</Text>
+                <Text style={styles.emailLoginLinkText}>メールアドレスでログイン</Text>
               </TouchableOpacity>
-            )}
+            ) : (
+              <>
+                <View style={styles.dividerContainer}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>{t('auth.or')}</Text>
+                  <View style={styles.dividerLine} />
+                </View>
 
-            <TouchableOpacity
-              style={styles.switchButton}
-              onPress={switchMode}
-              disabled={loading}
-            >
-              <Text style={styles.switchText}>
-                {isLogin
-                  ? t('auth.noAccount')
-                  : t('auth.haveAccount')}
-              </Text>
-              <Text style={styles.switchAction}>
-                {isLogin ? t('auth.signupAction') : t('auth.loginAction')}
-              </Text>
-            </TouchableOpacity>
+                <View style={styles.inputGroup}>
+                  <View style={styles.inputWrapper}>
+                    <Mail size={18} color="#8a8a9a" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder={t('auth.email')}
+                      placeholderTextColor="#8a8a9a"
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      textContentType="emailAddress"
+                      editable={!loading}
+                    />
+                  </View>
+
+                  <View style={styles.inputWrapper}>
+                    <Lock size={18} color="#8a8a9a" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder={t('auth.password')}
+                      placeholderTextColor="#8a8a9a"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      textContentType="password"
+                      editable={!loading}
+                    />
+                    <TouchableOpacity
+                      style={styles.eyeButton}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? (
+                        <EyeOff size={18} color="#8a8a9a" />
+                      ) : (
+                        <Eye size={18} color="#8a8a9a" />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+                  onPress={handleEmailLogin}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.submitButtonText}>{t('auth.login')}</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.forgotButton}
+                  onPress={() => router.push('/(auth)/forgot-password')}
+                  disabled={loading}
+                >
+                  <Text style={styles.forgotText}>{t('auth.forgotPasswordPrompt')}</Text>
+                </TouchableOpacity>
+              </>
+            )}
 
             <View style={styles.legalFooter}>
               <Text style={styles.legalFooterText}>
@@ -521,6 +501,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1a1a2e',
+  },
+  emailLoginLink: {
+    alignSelf: 'center',
+    marginTop: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  emailLoginLinkText: {
+    fontSize: 14,
+    color: '#6b6b7b',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   forgotButton: {
     alignSelf: 'center',
