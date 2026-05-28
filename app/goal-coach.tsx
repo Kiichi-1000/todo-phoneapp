@@ -496,7 +496,7 @@ export default function GoalCoachScreen() {
 
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           {loadingHistory ? (
@@ -578,9 +578,8 @@ export default function GoalCoachScreen() {
                 editable={!sending}
                 onFocus={() => setInputFocused(true)}
                 onBlur={() => setInputFocused(false)}
-                onSubmitEditing={handleSend}
-                returnKeyType="send"
-                blurOnSubmit
+                returnKeyType="default"
+                submitBehavior="newline"
               />
 
               <TouchableOpacity

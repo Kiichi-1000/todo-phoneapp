@@ -225,8 +225,15 @@ Deno.serve(async (req: Request) => {
   }
 
   // 4. 商品情報の解決
+  // Google Play の subscription は product_id が "subscriptionId:basePlanId"
+  // 形式 (例: tosche_ai_standard_monthly:monthly) で届く。PRODUCT_MAP は
+  // basePlanId 抜きの素の product_id で持つため、":" 以降を落として引く。
+  // iOS (App Store) の product_id は ":" を含まないので無変換 = 影響なし。
+  // ※ これを怠ると plan=null となり monthly-token-grant が "unknown_plan" で
+  //   スキップし、トークンが一切付与されない (= Android 課金後にAI解放されない)。
   const productId = (event.product_id as string | undefined) || null;
-  const mapped = productId ? PRODUCT_MAP[productId] : undefined;
+  const baseProductId = productId ? productId.split(":")[0] : null;
+  const mapped = baseProductId ? PRODUCT_MAP[baseProductId] : undefined;
   // 未知の product_id でも status の更新だけは通す (アクセス解放を優先)。
   // plan / billing_cycle は分からなければ既存値を温存する (下記 upsert で制御)。
   const plan = mapped?.plan ?? null;
@@ -265,7 +272,7 @@ Deno.serve(async (req: Request) => {
     status,
     plan: plan ?? existing?.plan ?? null,
     billing_cycle: billingCycle ?? existing?.billing_cycle ?? null,
-    product_id: productId ?? null,
+    product_id: baseProductId ?? productId ?? null,
     platform,
     revenuecat_user_id: revenuecatUserId,
     updated_at: new Date().toISOString(),

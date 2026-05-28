@@ -12,6 +12,12 @@ interface AuthContextType {
   session: Session | null;
   user: User | null;
   loading: boolean;
+  // True only once a session exists AND the Supabase client has the access
+  // token wired into its request headers. RLS-dependent screens (workspace /
+  // schedule / routine) must gate their first fetch on this — otherwise a
+  // fresh login can fire queries before the token is attached, get an empty
+  // RLS result, and stay blank until the app is restarted.
+  authReady: boolean;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   // 2FA (email OTP) login flow ---------------------------------------------
@@ -50,6 +56,7 @@ const AuthContext = createContext<AuthContextType>({
   session: null,
   user: null,
   loading: true,
+  authReady: false,
   signUp: async () => ({ error: null }),
   signIn: async () => ({ error: null }),
   verifyPasswordForLogin: async () => ({ error: null, twoFactorEnabled: false, session: null }),
@@ -71,6 +78,7 @@ const AuthContext = createContext<AuthContextType>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
   const isPasswordRecoveryRef = useRef(false);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
@@ -114,6 +122,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Gate RLS-dependent screens on a confirmed-wired access token. When a
+  // session appears we briefly poll getSession() — which resolves only once
+  // the client has the token in memory and attached to outgoing requests —
+  // before flipping authReady true. Screens add authReady to their fetch
+  // deps so the FIRST query re-fires the moment the token is ready (instead
+  // of racing it on a fresh login and getting an empty RLS result).
+  useEffect(() => {
+    let cancelled = false;
+    const token = session?.access_token;
+    if (!token) {
+      setAuthReady(false);
+      return;
+    }
+    (async () => {
+      for (let i = 0; i < 20; i++) {
+        try {
+          const { data: { session: s } } = await supabase.auth.getSession();
+          if (s?.access_token) {
+            if (!cancelled) setAuthReady(true);
+            return;
+          }
+        } catch {
+          // ignore and retry
+        }
+        if (cancelled) return;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      // Fail open: never leave the screen permanently blocked.
+      if (!cancelled) setAuthReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.access_token]);
 
   // Analytics: identify the Supabase user to PostHog whenever a session is
   // present; reset identity on sign-out. Email is intentionally NOT sent —
@@ -426,6 +469,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         user: session?.user ?? null,
         loading,
+        authReady,
         signUp,
         signIn,
         verifyPasswordForLogin,

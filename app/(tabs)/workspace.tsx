@@ -33,7 +33,7 @@ interface PageData {
 }
 
 export default function WorkspaceScreen() {
-  const { user } = useAuth();
+  const { user, authReady } = useAuth();
   const { t, lang } = useLanguage();
   const router = useRouter();
   const { width: screenWidth } = useWindowDimensions();
@@ -107,27 +107,15 @@ export default function WorkspaceScreen() {
   const initialScrollDone = useRef(false);
 
   // ログイン直後、React 側の `user` がセットされても Supabase クライアントが
-  // access_token を HTTP ヘッダに付け切る前にここが走ると、user_settings /
+  // access_token を HTTP ヘッダに付け切る前に fetch が走ると、user_settings /
   // workspaces クエリが RLS で空を返し、ワークスペースが空のまま固まる
   // (アプリ再起動の cold start では getSession() 済みで直る、という症状)。
-  // 最初の fetch の前に access_token が乗るまで短くポーリングして待つ。
+  // AuthContext の `authReady` がトークン伝播済みを保証するので、それを待って
+  // から最初の取得を行う。authReady が true に変わった瞬間に再実行される。
   useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    (async () => {
-      for (let i = 0; i < 20; i++) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) break;
-        if (cancelled) return;
-        await new Promise((r) => setTimeout(r, 150));
-      }
-      if (cancelled) return;
-      loadSettings();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
+    if (!user || !authReady) return;
+    loadSettings();
+  }, [user?.id, authReady]);
 
   useEffect(() => {
     if (settings && user) {

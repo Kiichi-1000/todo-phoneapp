@@ -10,7 +10,8 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, ChevronRight, List, ChartPie as PieChart, Calendar } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, List, ChartPie as PieChart, Calendar, CalendarClock } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -50,8 +51,9 @@ function getTodayIndex(dates: string[]): number {
 }
 
 export default function ScheduleScreen() {
-  const { user } = useAuth();
+  const { user, authReady } = useAuth();
   const { t, lang } = useLanguage();
+  const router = useRouter();
   const [allDates] = useState<string[]>(() => generateDates());
   const [currentIndex, setCurrentIndex] = useState(() => getTodayIndex(generateDates()));
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -132,7 +134,7 @@ export default function ScheduleScreen() {
   goToPrevDateRef.current = goToPrevDate;
 
   const loadSchedules = useCallback(async () => {
-    if (!user || !currentDate) return;
+    if (!user || !authReady || !currentDate) return;
     try {
       const { data, error } = await supabase
         .from('schedules')
@@ -146,10 +148,10 @@ export default function ScheduleScreen() {
     } catch (e) {
       console.error('Error loading schedules:', e);
     }
-  }, [user, currentDate]);
+  }, [user, authReady, currentDate]);
 
   const loadSettings = useCallback(async () => {
-    if (!user) return;
+    if (!user || !authReady) return;
     try {
       const { data, error } = await supabase
         .from('user_settings')
@@ -411,6 +413,10 @@ export default function ScheduleScreen() {
               <PieChart size={18} color={viewMode === 'circle' ? '#fff' : '#666'} />
             </TouchableOpacity>
           </View>
+          <TouchableOpacity style={styles.deadlinesBtn} onPress={() => router.push('/deadlines')}>
+            <CalendarClock size={15} color="#6366F1" />
+            <Text style={styles.deadlinesBtnText}>課題一覧</Text>
+          </TouchableOpacity>
         </View>
         <View style={styles.dateNav}>
           <TouchableOpacity onPress={goToPrevDate} style={styles.navBtn}>
@@ -491,6 +497,16 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 8,
   },
+  deadlinesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#eef2ff',
+    borderRadius: 9,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+  },
+  deadlinesBtnText: { fontSize: 13, fontWeight: '700', color: '#6366F1' },
   headerTitle: {
     fontSize: 28,
     fontWeight: '600',

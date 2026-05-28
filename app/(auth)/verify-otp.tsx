@@ -46,8 +46,8 @@ export default function VerifyOtpScreen() {
   const handleVerify = async () => {
     setError(null);
     const token = code.replace(/\s/g, '');
-    if (token.length < 6) {
-      setError('6桁の確認コードを入力してください');
+    if (!token) {
+      setError('確認コードを入力してください');
       return;
     }
     setLoading(true);
@@ -102,8 +102,8 @@ export default function VerifyOtpScreen() {
             <Text style={styles.title}>2段階認証</Text>
             <Text style={styles.subtitle}>
               {email
-                ? `${email} に確認コードを送信しました。メールに記載の6桁コードを入力してください。`
-                : 'メールに記載の6桁コードを入力してください。'}
+                ? `${email} に確認コードを送信しました。メールに記載の確認コードを入力してください。`
+                : 'メールに記載の確認コードを入力してください。'}
             </Text>
           </View>
 
@@ -116,14 +116,14 @@ export default function VerifyOtpScreen() {
 
             <TextInput
               style={styles.codeInput}
-              placeholder="______"
+              placeholder="________"
               placeholderTextColor="#c4c4cc"
               value={code}
-              onChangeText={(v) => setCode(v.replace(/[^0-9]/g, '').slice(0, 6))}
+              onChangeText={(v) => setCode(v.replace(/[^0-9]/g, '').slice(0, 8))}
               keyboardType="number-pad"
               textContentType="oneTimeCode"
               autoComplete="one-time-code"
-              maxLength={6}
+              maxLength={8}
               editable={!loading}
               autoFocus
             />

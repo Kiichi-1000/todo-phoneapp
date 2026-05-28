@@ -597,6 +597,23 @@ export type Database = {
           }
         ];
       };
+      ai_shared_context: {
+        Row: {
+          user_id: string;
+          content: string;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          content?: string;
+          updated_at?: string;
+        };
+        Update: {
+          content?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       user_memory: {
         Row: UserMemory;
         Insert: Omit<UserMemory, 'created_at' | 'updated_at'> & {

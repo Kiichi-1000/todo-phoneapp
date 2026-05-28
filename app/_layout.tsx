@@ -163,6 +163,8 @@ function RootNavigator() {
         />
         <Stack.Screen name="goal-coach" />
         <Stack.Screen name="claude-integration" />
+        <Stack.Screen name="deadlines" />
+        <Stack.Screen name="ai-memo" />
         <Stack.Screen name="+not-found" />
       </Stack>
 

@@ -52,12 +52,18 @@ type PlanTier = "basic" | "standard" | "pro";
 type Cycle = "monthly" | "yearly";
 
 const PRODUCT_MAP: Record<string, { plan: PlanTier; cycle: Cycle }> = {
+  // iOS (App Store)
   "ToSche.AI.Pro.1.2": { plan: "pro", cycle: "monthly" },
   "tosche_ai_pro_yearly": { plan: "pro", cycle: "yearly" },
   "ToSche.AI.std.1.2": { plan: "standard", cycle: "monthly" },
   "tosche_ai_standard_yearly": { plan: "standard", cycle: "yearly" },
   "ToSche.std.1.2": { plan: "basic", cycle: "monthly" },
   "tosche_basic_yearly": { plan: "basic", cycle: "yearly" },
+  // Android (Google Play) — 月額3商品は別ID。年額は上記と共通。
+  // revenuecat-webhook の PRODUCT_MAP と一致させること。
+  "tosche_ai_pro_monthly": { plan: "pro", cycle: "monthly" },
+  "tosche_ai_standard_monthly": { plan: "standard", cycle: "monthly" },
+  "tosche_basic_monthly": { plan: "basic", cycle: "monthly" },
 };
 
 Deno.serve(async (req: Request) => {
@@ -117,14 +123,18 @@ Deno.serve(async (req: Request) => {
   }
 
   const productId = body.productId || null;
-  const mapped = productId ? PRODUCT_MAP[productId] : undefined;
+  // Google Play は product_id が "subscriptionId:basePlanId" 形式のことがある
+  // (例: tosche_ai_standard_monthly:monthly)。":" 以降を落として引く
+  // (iOS は ":" 無しなので無変換)。revenuecat-webhook と同じ正規化。
+  const baseProductId = productId ? productId.split(":")[0] : null;
+  const mapped = baseProductId ? PRODUCT_MAP[baseProductId] : undefined;
 
   const adminClient = createClient(supabaseUrl, serviceKey);
 
   // 既存行を読んで plan/billing_cycle/period を温存判定。
   const { data: existing, error: readErr } = await adminClient
     .from("user_subscriptions")
-    .select("plan, billing_cycle, current_period_start, next_grant_at")
+    .select("plan, billing_cycle, platform, current_period_start, next_grant_at")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -139,8 +149,12 @@ Deno.serve(async (req: Request) => {
     status: "active", // entitlement 有効 & 未失効 → active
     plan: mapped?.plan ?? existing?.plan ?? null,
     billing_cycle: mapped?.cycle ?? existing?.billing_cycle ?? null,
-    product_id: productId ?? undefined,
-    platform: "ios", // クライアントが呼ぶ即時同期。ToSche は現状 iOS のみ。
+    product_id: baseProductId ?? undefined,
+    // platform: 即時同期では確定情報が無い。既存行があれば温存（webhook が
+    // event.store から ios/android/web を確定済みのことが多い）。新規行のみ
+    // 暫定で "ios" を入れ、直後に届く revenuecat-webhook が正値へ上書きする。
+    // (旧実装は無条件 "ios" 固定で、Android の新規行に誤った platform を書いていた)
+    platform: existing?.platform ?? "ios",
     revenuecat_user_id: user.id, // appUserID = Supabase user_id 前提
     current_period_end: expiresAt ?? undefined,
     updated_at: nowISO,

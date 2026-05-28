@@ -702,17 +702,29 @@ function consentPage(opts: ConsentPageOpts): string {
 
   <section id="login-section">
     <h2>ToSche にサインイン</h2>
-    <form id="login-form">
-      <label>メールアドレス<input type="email" id="email" required autocomplete="email"></label>
-      <label>パスワード <span class="muted">(Apple / Google サインインの方は空欄でOK)</span><input type="password" id="password" autocomplete="current-password"></label>
-      <button type="submit" id="login-btn">サインイン</button>
-    </form>
-    <p class="muted" style="margin-top:10px">
-      パスワードが分からない場合は
-      <a href="#" id="magic-link-btn">メールでサインインリンクを送る</a>
+    <p class="muted" style="margin-bottom:2px">ToSche アプリと同じアカウントでログインしてください。</p>
+    <button type="button" id="google-btn" class="social">Google で続ける</button>
+    <button type="button" id="apple-btn" class="social">Apple で続ける</button>
+    <p class="muted" style="margin-top:16px;text-align:center;font-size:12px">
+      <a href="#" id="email-toggle">メールアドレスでログイン</a>
     </p>
+    <div id="email-section" hidden>
+      <form id="login-form">
+        <label>メールアドレス<input type="email" id="email" autocomplete="email"></label>
+        <label>パスワード <span class="muted">(Google / Apple の方は空欄でOK)</span><input type="password" id="password" autocomplete="current-password"></label>
+        <button type="submit" id="login-btn">メールとパスワードでサインイン</button>
+      </form>
+      <p class="muted" style="margin-top:10px;font-size:12px">
+        パスワードが分からない場合は
+        <a href="#" id="otp-send-btn">メールに確認コードを送る</a>
+      </p>
+      <div id="otp-box" hidden style="margin-top:10px">
+        <p class="muted" id="otp-sent-msg">メールに届いた確認コードを入力してください。</p>
+        <label>確認コード<input type="text" id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="12345678"></label>
+        <button type="button" id="otp-verify-btn">コードでサインイン</button>
+      </div>
+    </div>
     <p id="login-err" class="err" hidden></p>
-    <p id="magic-link-ok" class="muted" hidden>メールを送りました。届いたリンクを開くと、新しいタブが立ち上がってこの承認画面が表示されます。そこで「許可」をクリックしてください。</p>
   </section>
 
   <section id="consent-section" hidden>
@@ -758,6 +770,34 @@ function consentPage(opts: ConsentPageOpts): string {
   }
   tryRestoreSession();
 
+  // Google / Apple ログイン後はリダイレクトで戻り、URL に含まれる session を
+  // supabase-js が自動検出する。検出できたら承認画面へ。
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (session && $("consent-section").hidden) showConsent(session);
+  });
+
+  async function socialLogin(provider) {
+    $("login-err").hidden = true;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.href },
+    });
+    if (error) {
+      $("login-err").textContent =
+        (provider === "google" ? "Google" : "Apple") + " サインインに失敗しました: " + error.message;
+      $("login-err").hidden = false;
+    }
+  }
+  $("google-btn").addEventListener("click", () => socialLogin("google"));
+  $("apple-btn").addEventListener("click", () => socialLogin("apple"));
+
+  // メールログインは小さなフォールバック。リンクを押したときだけ展開する。
+  $("email-toggle").addEventListener("click", (e) => {
+    e.preventDefault();
+    $("email-section").hidden = false;
+    e.target.closest("p").style.display = "none";
+  });
+
   $("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("login-err").hidden = true;
@@ -780,37 +820,52 @@ function consentPage(opts: ConsentPageOpts): string {
     await showConsent(data.session);
   });
 
-  $("magic-link-btn").addEventListener("click", async (e) => {
+  // メールに確認コード (6桁) を送る。テンプレートが {{ .Token }} を送る設定の
+  // ため、リンクではなくコード入力で完結させる (2FA と同じ仕組み)。
+  $("otp-send-btn").addEventListener("click", async (e) => {
     e.preventDefault();
     $("login-err").hidden = true;
-    $("magic-link-ok").hidden = true;
     const email = $("email").value.trim();
     if (!email) {
       $("login-err").textContent = "メールアドレスを先に入力してください。";
       $("login-err").hidden = false;
       return;
     }
+    $("otp-send-btn").textContent = "送信中...";
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo: window.location.href,
-        shouldCreateUser: false,
-      },
+      options: { shouldCreateUser: false },
     });
+    $("otp-send-btn").textContent = "メールに確認コードを送る";
     if (error) {
       $("login-err").textContent = "送信に失敗しました: " + error.message;
       $("login-err").hidden = false;
       return;
     }
-    $("magic-link-ok").hidden = false;
+    $("otp-box").hidden = false;
+    $("otp-code").focus();
   });
 
-  // Re-check session every 2 seconds while waiting for magic link
-  setInterval(async () => {
-    if (!$("consent-section").hidden) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) await showConsent(session);
-  }, 2000);
+  // 届いた6桁コードを verifyOtp で検証 → セッション確立 → 承認画面へ。
+  $("otp-verify-btn").addEventListener("click", async () => {
+    $("login-err").hidden = true;
+    const email = $("email").value.trim();
+    const token = $("otp-code").value.trim();
+    if (!token) {
+      $("login-err").textContent = "メールに届いた確認コードを入力してください。";
+      $("login-err").hidden = false;
+      return;
+    }
+    $("otp-verify-btn").disabled = true;
+    const { data, error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    $("otp-verify-btn").disabled = false;
+    if (error || !data?.session) {
+      $("login-err").textContent = "コードが正しくないか期限切れです: " + (error?.message ?? "no session");
+      $("login-err").hidden = false;
+      return;
+    }
+    await showConsent(data.session);
+  });
 
   $("deny-btn").addEventListener("click", () => {
     // Redirect back with error per OAuth spec
@@ -870,6 +925,10 @@ function baseCss(): string {
     .actions button{margin:0;flex:1}
     .perms{margin:12px 0;padding-left:20px;color:#0f172a;font-size:14px;line-height:1.7}
     .err{color:#dc2626;font-size:13px;margin-top:10px}
+    button.social{background:#fff;color:#0f172a;border:1px solid #cbd5e1;margin-top:10px}
+    .divider{display:flex;align-items:center;text-align:center;color:#94a3b8;font-size:12px;margin:18px 0 6px}
+    .divider::before,.divider::after{content:"";flex:1;border-bottom:1px solid #e2e8f0}
+    .divider::before{margin-right:10px}.divider::after{margin-left:10px}
   `;
 }
 

@@ -90,7 +90,7 @@ function isRoutineTableMissingError(error: any): boolean {
 }
 
 export default function RoutineScreen() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, authReady, loading: authLoading } = useAuth();
   const { t, lang } = useLanguage();
   const SLOT_LABELS: Record<RoutineSlot, string> = {
     morning: t('routine.morning'),
@@ -288,8 +288,8 @@ export default function RoutineScreen() {
   }, [user, currentDate, ensureTemplate]);
 
   useEffect(() => {
-    if (user) loadRoutine();
-  }, [user, currentDate, loadRoutine]);
+    if (user && authReady) loadRoutine();
+  }, [user, authReady, currentDate, loadRoutine]);
 
   const activeItemsBySlot = useMemo(() => {
     const map: Record<RoutineSlot, RoutineTemplateItem[]> = {

@@ -224,9 +224,140 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
       required: ["milestone_id"],
     },
   },
+  // ── 課題(todo) / 共有メモ ─────────────────────────────────────
+  {
+    name: "list_tasks",
+    description:
+      "List the user's tasks (todos) that have a due date, sorted by nearest deadline. " +
+      "Use this to see what assignments/tasks are due soon. " +
+      "NOTE: deciding the day-by-day schedule / time-blocking of tasks is ToSche's own in-app AI feature — do not attempt that here.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        include_completed: { type: "boolean", description: "Default false — completed tasks hidden unless true." },
+        within_days: { type: "number", description: "Optional: only tasks due within this many days from today." },
+      },
+    },
+  },
+  {
+    name: "create_task",
+    description:
+      "Create a task (todo) for the user, with an optional due date (deadline). The task is added to the user's board for today. " +
+      "Use this to capture an assignment/task. Do NOT time-block or distribute it across days — that is ToSche's own AI feature.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The task text." },
+        due_date: { type: "string", description: "Optional deadline, YYYY-MM-DD." },
+      },
+      required: ["content"],
+    },
+  },
+  {
+    name: "get_shared_context",
+    description:
+      "Read the user's shared AI memo (the 'AI連携メモ' written in ToSche). It holds the user's prerequisites, preferences and rules. " +
+      "Call this early so your goals/tasks/suggestions align with what the user wants. This memo is shared with ToSche's own AI too.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "update_shared_context",
+    description:
+      "Update the user's shared AI memo. Use mode 'append' (default) to add a line while preserving existing notes, or 'replace' to overwrite. " +
+      "Keep it concise. Never store secrets/passwords. This memo is also read by ToSche's own AI.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "Text to add (append) or the full new content (replace)." },
+        mode: { type: "string", enum: ["append", "replace"], description: "append (default) or replace." },
+      },
+      required: ["content"],
+    },
+  },
 ];
 
 export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
+  list_tasks: async (input, ctx) => {
+    const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
+    const includeCompleted = (input.include_completed as boolean) === true;
+    let q = ctx.adminClient
+      .from("todos")
+      .select("id, content, due_date, is_completed, workspace_id")
+      .eq("user_id", ctx.userId)
+      .not("due_date", "is", null)
+      .order("due_date", { ascending: true });
+    if (!includeCompleted) q = q.eq("is_completed", false);
+    if (typeof input.within_days === "number" && input.within_days >= 0) {
+      const end = new Date(ctx.now.getTime() + input.within_days * 86400000);
+      q = q.lte("due_date", todayStringInTZ(end, "Asia/Tokyo"));
+    }
+    const { data, error } = await q;
+    if (error) return fail(error.message);
+    return ok({ today, tasks: data });
+  },
+
+  create_task: async (input, ctx) => {
+    const content = (input.content as string)?.trim();
+    if (!content) return fail("content is required");
+    const dueDate = (input.due_date as string | undefined) || null;
+    if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+      return fail("due_date must be YYYY-MM-DD");
+    }
+    const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
+    // todo は日付ワークスペースに属する。今日のワークスペースを find-or-create。
+    let ws = (await ctx.adminClient
+      .from("workspaces")
+      .select("id")
+      .eq("user_id", ctx.userId)
+      .eq("date", today)
+      .maybeSingle()).data;
+    if (!ws) {
+      const { data: created, error: wErr } = await ctx.adminClient
+        .from("workspaces")
+        .insert({ user_id: ctx.userId, date: today, title: "", type: "four_grid" })
+        .select("id")
+        .single();
+      if (wErr) return fail(wErr.message);
+      ws = created;
+    }
+    const { data, error } = await ctx.adminClient
+      .from("todos")
+      .insert({ user_id: ctx.userId, workspace_id: ws.id, content, due_date: dueDate, is_completed: false })
+      .select("id, content, due_date, workspace_id")
+      .single();
+    if (error) return fail(error.message);
+    return ok({ task: data });
+  },
+
+  get_shared_context: async (_input, ctx) => {
+    const { data, error } = await ctx.adminClient
+      .from("ai_shared_context")
+      .select("content, updated_at")
+      .eq("user_id", ctx.userId)
+      .maybeSingle();
+    if (error) return fail(error.message);
+    return ok({ content: data?.content ?? "", updated_at: data?.updated_at ?? null });
+  },
+
+  update_shared_context: async (input, ctx) => {
+    const text = ((input.content as string) ?? "").trim();
+    if (!text) return fail("content is required");
+    const mode = (input.mode as string) === "replace" ? "replace" : "append";
+    const existing = (await ctx.adminClient
+      .from("ai_shared_context")
+      .select("content")
+      .eq("user_id", ctx.userId)
+      .maybeSingle()).data;
+    const prev = ((existing?.content as string) ?? "").trim();
+    let next = mode === "replace" ? text : (prev ? `${prev}\n${text}` : text);
+    if (next.length > 4000) next = next.slice(0, 4000);
+    const { error } = await ctx.adminClient
+      .from("ai_shared_context")
+      .upsert({ user_id: ctx.userId, content: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    if (error) return fail(error.message);
+    return ok({ ok: true, content: next });
+  },
+
   list_goals: async (input, ctx) => {
     const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
     const level = input.level as string | undefined;

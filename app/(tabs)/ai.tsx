@@ -538,7 +538,7 @@ export default function AIScreen() {
 
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           {messages.length === 0 ? (
@@ -628,9 +628,8 @@ export default function AIScreen() {
                 editable={!sending}
                 onFocus={() => setInputFocused(true)}
                 onBlur={() => setInputFocused(false)}
-                onSubmitEditing={handleSend}
-                returnKeyType="send"
-                blurOnSubmit
+                returnKeyType="default"
+                submitBehavior="newline"
               />
 
               {/* 音声入力ボタン: 入力欄が空 (or 短い) ときに最も活躍するので

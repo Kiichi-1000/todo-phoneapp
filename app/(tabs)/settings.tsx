@@ -517,8 +517,8 @@ export default function SettingsScreen() {
     const email = user?.email;
     if (!email) return;
     const token = twoFaCode.replace(/\D/g, '');
-    if (token.length < 6) {
-      setTwoFaError('6桁の確認コードを入力してください');
+    if (!token) {
+      setTwoFaError('確認コードを入力してください');
       return;
     }
     setTwoFaError(null);
@@ -692,6 +692,22 @@ export default function SettingsScreen() {
                 <View>
                   <Text style={styles.settingText}>AI 連携 (Claude / ChatGPT)</Text>
                   <Text style={styles.settingSub}>外部のAIで目標を立てて ToSche に流し込む</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="#999" />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => router.push('/ai-memo')}
+          >
+            <View style={styles.settingRowBetween}>
+              <View style={styles.settingLeft}>
+                <MessageSquare size={20} color="#6366F1" />
+                <View>
+                  <Text style={styles.settingText}>AI 連携メモ</Text>
+                  <Text style={styles.settingSub}>AIに共有する前提・指示メモ（Claude/ChatGPT と ToScheAI が参照）</Text>
                 </View>
               </View>
               <ChevronRight size={18} color="#999" />
@@ -1096,17 +1112,17 @@ export default function SettingsScreen() {
               ) : (
                 <>
                   <Text style={styles.twoFaHint}>
-                    メールに記載の6桁コードを入力してください。
+                    メールに記載の確認コードを入力してください。
                   </Text>
                   <TextInput
                     style={styles.passwordInput}
-                    placeholder="確認コード（6桁）"
+                    placeholder="確認コード"
                     placeholderTextColor="#8a8a9a"
                     value={twoFaCode}
-                    onChangeText={(v) => setTwoFaCode(v.replace(/[^0-9]/g, '').slice(0, 6))}
+                    onChangeText={(v) => setTwoFaCode(v.replace(/[^0-9]/g, '').slice(0, 8))}
                     keyboardType="number-pad"
                     textContentType="oneTimeCode"
-                    maxLength={6}
+                    maxLength={8}
                     editable={!twoFaLoading}
                   />
                   <TouchableOpacity

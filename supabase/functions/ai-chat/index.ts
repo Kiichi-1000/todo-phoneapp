@@ -165,16 +165,23 @@ Deno.serve(async (req: Request) => {
   }
 
   // 4. Resolve language + load user memory in parallel
-  const [{ data: settings }, memoryEntries] = await Promise.all([
+  const [{ data: settings }, memoryEntries, { data: sharedCtxRow }] = await Promise.all([
     adminClient
       .from("user_settings")
       .select("preferred_language")
       .eq("user_id", userId)
       .maybeSingle(),
     loadUserMemory(adminClient, userId),
+    // AI連携メモ (ユーザー編集の共有コンテキスト)。MCP 側とも共有する前提メモ。
+    adminClient
+      .from("ai_shared_context")
+      .select("content")
+      .eq("user_id", userId)
+      .maybeSingle(),
   ]);
   const language: "ja" | "en" =
     settings?.preferred_language === "en" ? "en" : "ja";
+  const sharedContextText = ((sharedCtxRow?.content as string) ?? "").trim();
 
   // 4b. Persist the user message + ensure conversation row exists.
   // We do this BEFORE streaming so the user's input is durable even if the
@@ -210,7 +217,14 @@ Deno.serve(async (req: Request) => {
         userTimezone: "Asia/Tokyo",
         nowISO: now.toISOString(),
       });
-      const memoryBlock = formatMemoryForPrompt(memoryEntries, language);
+      const memoryBlock = formatMemoryForPrompt(memoryEntries, language)
+        + (sharedContextText
+            ? `\n\n<shared_context>\n${
+                language === "ja"
+                  ? "（ユーザーが設定した「AI連携メモ」。Claude / ChatGPT とも共有される前提・指示。これを尊重して回答・提案すること。）"
+                  : "(User-set \"AI shared memo\", also shared with Claude/ChatGPT. Honor it when responding and proposing.)"
+              }\n${sharedContextText}\n</shared_context>`
+            : "");
 
       // Anthropic message history starts from the user's input.
       // We mutate this array as we add assistant + tool_result turns.
