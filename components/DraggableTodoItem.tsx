@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, Modal, Pressable,
 } from 'react-native';
@@ -118,6 +118,20 @@ export default function DraggableTodoItem({
     showMenu();
   };
 
+  // On Android, Modal dismiss doesn't properly restore the parent's touch
+  // responder chain, causing onLongPress on TouchableOpacity/Pressable to
+  // stop firing after the first menu interaction.  Deferring the callback
+  // by one frame lets the Modal fully tear down its native Dialog before
+  // the parent processes the action (which may open another Modal).
+  const closeMenuAndRun = useCallback((action: () => void) => {
+    setMenuVisible(false);
+    if (Platform.OS === 'android') {
+      requestAnimationFrame(() => action());
+    } else {
+      action();
+    }
+  }, []);
+
   const handleDragStart = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -216,11 +230,10 @@ export default function DraggableTodoItem({
             {todo.is_completed && <View style={styles.checkboxFilled} />}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.todoTextContainer}
+          <Pressable
+            style={({pressed}) => [styles.todoTextContainer, pressed && {opacity: 0.7}]}
             onLongPress={handleLongPress}
             delayLongPress={400}
-            activeOpacity={0.7}
           >
             <Text
               style={[
@@ -231,7 +244,7 @@ export default function DraggableTodoItem({
             >
               {todo.content}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
 
           {todo.reminder_at && (
             <Bell size={10} color="#e67e22" style={styles.reminderDot} />
@@ -266,15 +279,14 @@ export default function DraggableTodoItem({
         animationType="fade"
         onRequestClose={() => setMenuVisible(false)}
       >
-        <TouchableOpacity
+        <Pressable
           style={styles.menuOverlay}
-          activeOpacity={1}
           onPress={() => setMenuVisible(false)}
         >
           <View style={[styles.menu, { top: menuPosition.y, left: menuPosition.x }]}>
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => { setMenuVisible(false); onStartEdit(todo); }}
+              onPress={() => closeMenuAndRun(() => onStartEdit(todo))}
             >
               <Pencil size={15} color="#3498db" />
               <Text style={[styles.menuItemText, { color: '#3498db' }]}>{t('workspace.editTask')}</Text>
@@ -282,7 +294,7 @@ export default function DraggableTodoItem({
 
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => { setMenuVisible(false); onSchedulePress?.(todo); }}
+              onPress={() => closeMenuAndRun(() => onSchedulePress?.(todo))}
             >
               <CalendarClock size={15} color="#3b82f6" />
               <Text style={[styles.menuItemText, { color: '#3b82f6' }]}>
@@ -294,13 +306,13 @@ export default function DraggableTodoItem({
 
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => { setMenuVisible(false); onDelete(todo.id); }}
+              onPress={() => closeMenuAndRun(() => onDelete(todo.id))}
             >
               <Trash2 size={15} color="#e74c3c" />
               <Text style={[styles.menuItemText, styles.menuItemDanger]}>{t('workspace.deleteTask')}</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </Pressable>
       </Modal>
 
       <Modal
@@ -309,9 +321,8 @@ export default function DraggableTodoItem({
         animationType="fade"
         onRequestClose={() => setAreaPickerVisible(false)}
       >
-        <TouchableOpacity
+        <Pressable
           style={styles.menuOverlay}
-          activeOpacity={1}
           onPress={() => setAreaPickerVisible(false)}
         >
           <View
@@ -334,7 +345,7 @@ export default function DraggableTodoItem({
               </TouchableOpacity>
             ))}
           </View>
-        </TouchableOpacity>
+        </Pressable>
       </Modal>
     </>
   );
