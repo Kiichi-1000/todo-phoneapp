@@ -18,6 +18,7 @@ import {
   addNotificationResponseListener,
 } from '@/lib/notifications';
 import { scheduleGoalReminders } from '@/lib/goalReminders';
+import { scheduleDeadlineNotifications } from '@/lib/deadlineNotifications';
 import { supabase } from '@/lib/supabase';
 import { PostHogProvider } from 'posthog-react-native';
 import { POSTHOG_API_KEY, POSTHOG_HOST, initPostHog } from '@/lib/posthog';
@@ -58,8 +59,13 @@ function RootNavigator() {
     requestNotificationPermissions();
 
     notificationListenerRef.current = addNotificationReceivedListener(() => {});
-    responseListenerRef.current = addNotificationResponseListener(() => {
-      router.push('/(tabs)/workspace');
+    responseListenerRef.current = addNotificationResponseListener((response: any) => {
+      const data = response?.notification?.request?.content?.data;
+      if (data?.type === 'deadline_morning' || data?.type === 'deadline_evening') {
+        router.push('/deadlines');
+      } else {
+        router.push('/(tabs)/workspace');
+      }
     });
 
     return () => {
@@ -91,6 +97,26 @@ function RootNavigator() {
         await scheduleGoalReminders({ enabled, hour });
       } catch {
         // ignore
+      }
+    })();
+  }, [session]);
+
+  // Schedule deadline notifications (朝8時＋夜20時) on session start.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !session) return;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('todos')
+          .select('id, content, due_date, course_name')
+          .eq('user_id', session.user.id)
+          .eq('is_completed', false)
+          .not('due_date', 'is', null);
+        if (data && data.length > 0) {
+          await scheduleDeadlineNotifications(data as any);
+        }
+      } catch {
+        // ignore — deadline notifications are nice-to-have
       }
     })();
   }, [session]);

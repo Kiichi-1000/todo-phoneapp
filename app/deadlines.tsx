@@ -49,6 +49,10 @@ import {
 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  scheduleDeadlineNotifications,
+  cancelDeadlineNotification,
+} from '@/lib/deadlineNotifications';
 
 interface DeadlineTodo {
   id: string;
@@ -155,7 +159,12 @@ export default function DeadlinesScreen() {
       .eq('is_completed', false)
       .not('due_date', 'is', null)
       .order('due_date', { ascending: true });
-    if (!error) setTodos((data ?? []) as unknown as DeadlineTodo[]);
+    if (!error) {
+      const loaded = (data ?? []) as unknown as DeadlineTodo[];
+      setTodos(loaded);
+      // 期限通知をスケジュール（朝8時＋夜20時）
+      scheduleDeadlineNotifications(loaded).catch(() => {});
+    }
     setLoading(false);
     setRefreshing(false);
   }, [user]);
@@ -172,6 +181,8 @@ export default function DeadlinesScreen() {
   // 完了処理（リピート課題は翌週分を自動生成）
   const complete = useCallback(async (todo: DeadlineTodo) => {
     setTodos((prev) => prev.filter((t) => t.id !== todo.id));
+    // 完了した課題の通知をキャンセル
+    cancelDeadlineNotification(todo.id).catch(() => {});
 
     await supabase
       .from('todos')
