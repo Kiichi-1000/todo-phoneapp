@@ -211,66 +211,67 @@ export default function DraggableTodoItem({
           wiggleStyle,
         ]}
       >
-        <View ref={itemRef} style={styles.todoItemInner}>
-          {isReorderMode && (
-            <Pressable
-              style={styles.gripHandle}
-              onPressIn={handleDragStart}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            >
-              <GripVertical size={14} color="#8e44ad" />
-            </Pressable>
-          )}
+        <Pressable
+          onLongPress={handleLongPress}
+          delayLongPress={400}
+        >
+          <View ref={itemRef} style={styles.todoItemInner}>
+            {isReorderMode && (
+              <Pressable
+                style={styles.gripHandle}
+                onPressIn={handleDragStart}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              >
+                <GripVertical size={14} color="#8e44ad" />
+              </Pressable>
+            )}
 
-          <TouchableOpacity
-            style={styles.checkbox}
-            onPress={() => { if (!isReorderMode) onToggle(todo); }}
-            disabled={isReorderMode}
-          >
-            {todo.is_completed && <View style={styles.checkboxFilled} />}
-          </TouchableOpacity>
-
-          <Pressable
-            style={({pressed}) => [styles.todoTextContainer, pressed && {opacity: 0.7}]}
-            onLongPress={handleLongPress}
-            delayLongPress={400}
-          >
-            <Text
-              style={[
-                styles.todoText,
-                { color: theme.todoTextColor },
-                todo.is_completed && [styles.todoTextCompleted, { color: theme.todoTextCompletedColor }],
-              ]}
-            >
-              {todo.content}
-            </Text>
-          </Pressable>
-
-          {todo.reminder_at && (
-            <Bell size={10} color="#e67e22" style={styles.reminderDot} />
-          )}
-
-          {isReorderMode && onMoveToArea && (
             <TouchableOpacity
-              ref={moveButtonRef}
-              style={styles.moveAreaButton}
-              onPress={showAreaPicker}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              style={styles.checkbox}
+              onPress={() => { if (!isReorderMode) onToggle(todo); }}
+              disabled={isReorderMode}
             >
-              <MoveRight size={14} color="#8e44ad" />
+              {todo.is_completed && <View style={styles.checkboxFilled} />}
             </TouchableOpacity>
-          )}
-        </View>
 
-        {todo.schedule_start_minutes != null && (
-          <View style={styles.scheduleBadge}>
-            <CalendarClock size={9} color="#3b82f6" />
-            <Text style={styles.scheduleBadgeText}>
-              {minutesToTimeString(todo.schedule_start_minutes)}
-              {todo.schedule_end_minutes != null ? `〜${minutesToTimeString(todo.schedule_end_minutes)}` : ''}
-            </Text>
+            <View style={styles.todoTextContainer}>
+              <Text
+                style={[
+                  styles.todoText,
+                  { color: theme.todoTextColor },
+                  todo.is_completed && [styles.todoTextCompleted, { color: theme.todoTextCompletedColor }],
+                ]}
+              >
+                {todo.content}
+              </Text>
+            </View>
+
+            {todo.reminder_at && (
+              <Bell size={10} color="#e67e22" style={styles.reminderDot} />
+            )}
+
+            {isReorderMode && onMoveToArea && (
+              <TouchableOpacity
+                ref={moveButtonRef}
+                style={styles.moveAreaButton}
+                onPress={showAreaPicker}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <MoveRight size={14} color="#8e44ad" />
+              </TouchableOpacity>
+            )}
           </View>
-        )}
+
+          {todo.schedule_start_minutes != null && (
+            <View style={styles.scheduleBadge}>
+              <CalendarClock size={9} color="#3b82f6" />
+              <Text style={styles.scheduleBadgeText}>
+                {minutesToTimeString(todo.schedule_start_minutes)}
+                {todo.schedule_end_minutes != null ? `〜${minutesToTimeString(todo.schedule_end_minutes)}` : ''}
+              </Text>
+            </View>
+          )}
+        </Pressable>
       </Animated.View>
 
       <Modal
