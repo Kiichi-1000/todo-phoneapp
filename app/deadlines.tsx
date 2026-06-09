@@ -46,12 +46,15 @@ import {
   BookOpen,
   Repeat,
   Play,
+  Bell,
 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   scheduleDeadlineNotifications,
   cancelDeadlineNotification,
+  OFFSET_PRESETS,
+  type OffsetKey,
 } from '@/lib/deadlineNotifications';
 
 interface DeadlineTodo {
@@ -61,6 +64,7 @@ interface DeadlineTodo {
   workspace_id: string;
   course_name: string | null;
   repeat_rule: 'weekly' | null;
+  notification_offsets: string | null;
   workspaces?: { title: string | null; date: string | null } | null;
 }
 
@@ -148,13 +152,23 @@ export default function DeadlinesScreen() {
   const [newDueDate, setNewDueDate] = useState('');
   const [newCourseName, setNewCourseName] = useState('');
   const [newRepeatWeekly, setNewRepeatWeekly] = useState(false);
+  const [newNotifOffsets, setNewNotifOffsets] = useState<Set<OffsetKey>>(new Set());
   const [adding, setAdding] = useState(false);
+
+  const toggleOffset = useCallback((key: OffsetKey) => {
+    setNewNotifOffsets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async () => {
     if (!user) return;
     const { data, error } = await supabase
       .from('todos')
-      .select('id, content, due_date, workspace_id, course_name, repeat_rule, workspaces(title, date)')
+      .select('id, content, due_date, workspace_id, course_name, repeat_rule, notification_offsets, workspaces(title, date)')
       .eq('user_id', user.id)
       .eq('is_completed', false)
       .not('due_date', 'is', null)
@@ -201,9 +215,10 @@ export default function DeadlinesScreen() {
           due_date: nextDue,
           course_name: todo.course_name,
           repeat_rule: 'weekly' as const,
+          notification_offsets: todo.notification_offsets,
           is_completed: false,
         })
-        .select('id, content, due_date, workspace_id, course_name, repeat_rule, workspaces(title, date)')
+        .select('id, content, due_date, workspace_id, course_name, repeat_rule, notification_offsets, workspaces(title, date)')
         .single();
       if (newTodo) {
         setTodos((prev) => [...prev, newTodo as unknown as DeadlineTodo]
@@ -307,6 +322,10 @@ export default function DeadlinesScreen() {
       ws = newWs;
     }
 
+    const offsetsStr = newNotifOffsets.size > 0
+      ? Array.from(newNotifOffsets).join(',')
+      : null;
+
     const { error } = await supabase
       .from('todos')
       .insert({
@@ -316,6 +335,7 @@ export default function DeadlinesScreen() {
         due_date: newDueDate,
         course_name: newCourseName.trim() || null,
         repeat_rule: newRepeatWeekly ? 'weekly' : null,
+        notification_offsets: offsetsStr,
         is_completed: false,
       });
 
@@ -327,10 +347,11 @@ export default function DeadlinesScreen() {
       setNewDueDate('');
       setNewCourseName('');
       setNewRepeatWeekly(false);
+      setNewNotifOffsets(new Set());
       setShowAddModal(false);
       load();
     }
-  }, [user, newContent, newDueDate, newCourseName, newRepeatWeekly, load]);
+  }, [user, newContent, newDueDate, newCourseName, newRepeatWeekly, newNotifOffsets, load]);
 
   // バケットごとにグルーピング
   const grouped = useMemo(() => {
@@ -427,6 +448,9 @@ export default function DeadlinesScreen() {
                       <View style={styles.rowMeta}>
                         {key === 'overdue' && <CircleAlert size={12} color={meta.accent} />}
                         <Text style={[styles.rowDue, { color: meta.accent }]}>{dueLabel(t.due_date)}</Text>
+                        {t.notification_offsets ? (
+                          <Bell size={11} color="#6366F1" />
+                        ) : null}
                         {t.workspaces?.title ? (
                           <Text style={styles.rowWs} numberOfLines={1}> ・ {t.workspaces.title}</Text>
                         ) : null}
@@ -526,6 +550,31 @@ export default function DeadlinesScreen() {
                 完了すると、翌週の同じ曜日に次の課題が自動で作られます。
               </Text>
             )}
+
+            {/* 通知タイミング */}
+            <Text style={styles.modalLabel}>通知タイミング（任意）</Text>
+            <View style={styles.offsetRow}>
+              <Bell size={18} color="#64748b" />
+              <View style={styles.offsetChips}>
+                {OFFSET_PRESETS.map((p) => {
+                  const selected = newNotifOffsets.has(p.key);
+                  return (
+                    <TouchableOpacity
+                      key={p.key}
+                      style={[styles.offsetChip, selected && styles.offsetChipSelected]}
+                      onPress={() => toggleOffset(p.key)}
+                    >
+                      <Text style={[styles.offsetChipText, selected && styles.offsetChipTextSelected]}>
+                        {p.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+            <Text style={styles.repeatHint}>
+              締切日の朝8時＋夜20時の通知は常に届きます。追加で事前通知が欲しい場合に選択してください。
+            </Text>
 
             {/* 追加ボタン */}
             <TouchableOpacity
@@ -703,4 +752,39 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   addButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  // 通知オフセット
+  offsetRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 4,
+  },
+  offsetChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    flex: 1,
+  },
+  offsetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  offsetChipSelected: {
+    borderColor: '#6366F1',
+    backgroundColor: '#eef2ff',
+  },
+  offsetChipText: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  offsetChipTextSelected: {
+    color: '#4f46e5',
+    fontWeight: '600',
+  },
 });

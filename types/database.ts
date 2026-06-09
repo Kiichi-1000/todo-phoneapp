@@ -83,6 +83,7 @@ export type Todo = {
   goal_id: string | null;
   course_name: string | null;
   repeat_rule: 'weekly' | null;
+  notification_offsets: string | null; // comma-separated: "1d,2d,1h,2h"
 };
 
 export type Reminder = {
@@ -354,6 +355,7 @@ export type Database = {
           notification_id?: string | null;
           course_name?: string | null;
           repeat_rule?: 'weekly' | null;
+          notification_offsets?: string | null;
         };
         Update: Partial<Omit<Todo, 'id'>>;
         Relationships: [

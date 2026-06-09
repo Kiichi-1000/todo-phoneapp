@@ -108,7 +108,7 @@ function RootNavigator() {
       try {
         const { data } = await supabase
           .from('todos')
-          .select('id, content, due_date, course_name')
+          .select('id, content, due_date, course_name, notification_offsets')
           .eq('user_id', session.user.id)
           .eq('is_completed', false)
           .not('due_date', 'is', null);
