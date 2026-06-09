@@ -81,6 +81,8 @@ export type Todo = {
   schedule_notify_before: number | null;
   schedule_color: string | null;
   goal_id: string | null;
+  course_name: string | null;
+  repeat_rule: 'weekly' | null;
 };
 
 export type Reminder = {
@@ -350,6 +352,8 @@ export type Database = {
           completed_at?: string | null;
           reminder_at?: string | null;
           notification_id?: string | null;
+          course_name?: string | null;
+          repeat_rule?: 'weekly' | null;
         };
         Update: Partial<Omit<Todo, 'id'>>;
         Relationships: [

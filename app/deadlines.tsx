@@ -6,6 +6,12 @@
 //   todo だけを集め、締め切りまでの残り日数でグルーピングして表示する。
 //   予定（schedules）とは完全に分離した「やることリスト（締切順）」。
 //
+// v2 (2026-06-09):
+//   + 課題追加（プラスボタン → モーダル）
+//   + 授業名(course_name) 表示
+//   + リピート課題（repeat_rule='weekly' → 完了時に翌週自動生成）
+//   + 「今日やる」→ 今日のワークスペースに送る
+//
 // ToScheAI / MCP 連携:
 //   ここに出るデータ (= todos.due_date) は ai-chat / MCP の list_tasks /
 //   create_task からも読み書きできる。スケジュール分配は端末内 AI 専用。
@@ -21,6 +27,12 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
+  Alert,
+  Switch,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -28,6 +40,12 @@ import {
   ChevronRight,
   CalendarClock,
   CircleAlert,
+  Plus,
+  X,
+  Calendar,
+  BookOpen,
+  Repeat,
+  Play,
 } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,6 +55,8 @@ interface DeadlineTodo {
   content: string;
   due_date: string; // YYYY-MM-DD
   workspace_id: string;
+  course_name: string | null;
+  repeat_rule: 'weekly' | null;
   workspaces?: { title: string | null; date: string | null } | null;
 }
 
@@ -56,6 +76,25 @@ function dayDiffFromToday(due: string): number {
   const todayMs = new Date(ty, tm - 1, td).getTime();
   const dueMs = new Date(dy, dm - 1, dd).getTime();
   return Math.round((dueMs - todayMs) / 86400000);
+}
+
+// 日付を n 日後に進める（リピート課題用）
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  const ny = date.getFullYear();
+  const nm = String(date.getMonth() + 1).padStart(2, '0');
+  const nd = String(date.getDate()).padStart(2, '0');
+  return `${ny}-${nm}-${nd}`;
+}
+
+// YYYY-MM-DD バリデーション
+function isValidDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
 type BucketKey = 'overdue' | 'today' | 'tomorrow' | 'd3' | 'w1' | 'm1' | 'later';
@@ -99,11 +138,19 @@ export default function DeadlinesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // 追加モーダル state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newContent, setNewContent] = useState('');
+  const [newDueDate, setNewDueDate] = useState('');
+  const [newCourseName, setNewCourseName] = useState('');
+  const [newRepeatWeekly, setNewRepeatWeekly] = useState(false);
+  const [adding, setAdding] = useState(false);
+
   const load = useCallback(async () => {
     if (!user) return;
     const { data, error } = await supabase
       .from('todos')
-      .select('id, content, due_date, workspace_id, workspaces(title, date)')
+      .select('id, content, due_date, workspace_id, course_name, repeat_rule, workspaces(title, date)')
       .eq('user_id', user.id)
       .eq('is_completed', false)
       .not('due_date', 'is', null)
@@ -122,15 +169,159 @@ export default function DeadlinesScreen() {
     load();
   }, [load]);
 
-  const complete = useCallback(async (id: string) => {
-    setTodos((prev) => prev.filter((t) => t.id !== id)); // optimistic
+  // 完了処理（リピート課題は翌週分を自動生成）
+  const complete = useCallback(async (todo: DeadlineTodo) => {
+    setTodos((prev) => prev.filter((t) => t.id !== todo.id));
+
     await supabase
       .from('todos')
       .update({ is_completed: true, completed_at: new Date().toISOString() })
-      .eq('id', id);
-  }, []);
+      .eq('id', todo.id);
 
-  // バケットごとにグルーピング（todos は due_date 昇順で取得済み）。
+    // リピート課題: 翌週に新しい課題を自動生成
+    if (todo.repeat_rule === 'weekly' && user) {
+      const nextDue = addDays(todo.due_date, 7);
+      const { data: newTodo } = await supabase
+        .from('todos')
+        .insert({
+          user_id: user.id,
+          workspace_id: todo.workspace_id,
+          content: todo.content,
+          due_date: nextDue,
+          course_name: todo.course_name,
+          repeat_rule: 'weekly' as const,
+          is_completed: false,
+        })
+        .select('id, content, due_date, workspace_id, course_name, repeat_rule, workspaces(title, date)')
+        .single();
+      if (newTodo) {
+        setTodos((prev) => [...prev, newTodo as unknown as DeadlineTodo]
+          .sort((a, b) => a.due_date.localeCompare(b.due_date)));
+      }
+    }
+  }, [user]);
+
+  // 「今日やる」→ 今日のワークスペースに新しいtodoを作成
+  const sendToToday = useCallback(async (todo: DeadlineTodo) => {
+    if (!user) return;
+    const today = todayLocalISO();
+
+    // 今日のワークスペースを検索（なければ作成）
+    let { data: ws } = await supabase
+      .from('workspaces')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('date', today)
+      .maybeSingle();
+
+    if (!ws) {
+      const { data: newWs, error: wsErr } = await supabase
+        .from('workspaces')
+        .insert({
+          user_id: user.id,
+          title: '',
+          type: 'four_grid',
+          date: today,
+        })
+        .select('id')
+        .single();
+      if (wsErr || !newWs) {
+        Alert.alert('エラー', 'ワークスペースの作成に失敗しました');
+        return;
+      }
+      ws = newWs;
+    }
+
+    // 今日のワークスペースにtodoを作成
+    const label = todo.course_name ? `[${todo.course_name}] ${todo.content}` : todo.content;
+    const { error } = await supabase
+      .from('todos')
+      .insert({
+        user_id: user.id,
+        workspace_id: ws.id,
+        content: label,
+        is_completed: false,
+        due_date: today,
+        grid_area: 'top_left',
+        order: 0,
+      });
+
+    if (error) {
+      Alert.alert('エラー', 'タスクの追加に失敗しました');
+    } else {
+      Alert.alert('追加しました', `「${todo.content}」を今日のワークスペースに送りました`);
+    }
+  }, [user]);
+
+  // 課題追加
+  const addTask = useCallback(async () => {
+    if (!user) return;
+    const content = newContent.trim();
+    if (!content) {
+      Alert.alert('入力エラー', '課題名を入力してください');
+      return;
+    }
+    if (!newDueDate || !isValidDate(newDueDate)) {
+      Alert.alert('入力エラー', '期限を YYYY-MM-DD 形式で入力してください');
+      return;
+    }
+
+    setAdding(true);
+    const today = todayLocalISO();
+
+    // 課題はデフォルトで今日のワークスペースに紐づけ（期限管理の起点）
+    let { data: ws } = await supabase
+      .from('workspaces')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('date', today)
+      .maybeSingle();
+
+    if (!ws) {
+      const { data: newWs, error: wsErr } = await supabase
+        .from('workspaces')
+        .insert({
+          user_id: user.id,
+          title: '',
+          type: 'four_grid',
+          date: today,
+        })
+        .select('id')
+        .single();
+      if (wsErr || !newWs) {
+        Alert.alert('エラー', 'ワークスペースの作成に失敗しました');
+        setAdding(false);
+        return;
+      }
+      ws = newWs;
+    }
+
+    const { error } = await supabase
+      .from('todos')
+      .insert({
+        user_id: user.id,
+        workspace_id: ws.id,
+        content,
+        due_date: newDueDate,
+        course_name: newCourseName.trim() || null,
+        repeat_rule: newRepeatWeekly ? 'weekly' : null,
+        is_completed: false,
+      });
+
+    setAdding(false);
+    if (error) {
+      Alert.alert('エラー', `課題の追加に失敗しました: ${error.message}`);
+    } else {
+      setNewContent('');
+      setNewDueDate('');
+      setNewCourseName('');
+      setNewRepeatWeekly(false);
+      setShowAddModal(false);
+      load();
+    }
+  }, [user, newContent, newDueDate, newCourseName, newRepeatWeekly, load]);
+
+  // バケットごとにグルーピング
   const grouped = useMemo(() => {
     const map: Record<BucketKey, DeadlineTodo[]> = {
       overdue: [], today: [], tomorrow: [], d3: [], w1: [], m1: [], later: [],
@@ -146,12 +337,15 @@ export default function DeadlinesScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* ヘッダー */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBack}>
           <ArrowLeft size={22} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>課題（期限）</Text>
-        <View style={{ width: 22 }} />
+        <TouchableOpacity onPress={() => setShowAddModal(true)} style={styles.headerAdd}>
+          <Plus size={22} color="#6366F1" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -161,7 +355,7 @@ export default function DeadlinesScreen() {
         <View style={styles.intro}>
           <CalendarClock size={18} color="#6366F1" />
           <Text style={styles.introText}>
-            締め切りが近い順の課題一覧です。予定（カレンダー）とは分けて、ここでまとめて確認できます。
+            締め切りが近い順の課題一覧です。＋ボタンで課題を追加できます。
           </Text>
         </View>
 
@@ -171,7 +365,11 @@ export default function DeadlinesScreen() {
           <View style={styles.empty}>
             <CalendarClock size={28} color="#cbd5e1" />
             <Text style={styles.emptyText}>期限つきの課題はありません。</Text>
-            <Text style={styles.emptySub}>ワークスペースで todo に期限を設定すると、ここに締切順で並びます。</Text>
+            <Text style={styles.emptySub}>右上の＋ボタンから課題を追加してみましょう。</Text>
+            <TouchableOpacity style={styles.emptyAddBtn} onPress={() => setShowAddModal(true)}>
+              <Plus size={16} color="#fff" />
+              <Text style={styles.emptyAddBtnText}>課題を追加</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           BUCKET_ORDER.map((key) => {
@@ -187,13 +385,31 @@ export default function DeadlinesScreen() {
                 </View>
                 {items.map((t) => (
                   <View key={t.id} style={[styles.row, { backgroundColor: meta.bg }]}>
-                    <TouchableOpacity onPress={() => complete(t.id)} style={styles.checkbox} hitSlop={8}>
+                    {/* 完了チェック */}
+                    <TouchableOpacity onPress={() => complete(t)} style={styles.checkbox} hitSlop={8}>
                       <Check size={15} color={meta.accent} />
                     </TouchableOpacity>
+
                     <TouchableOpacity
                       style={styles.rowBody}
                       onPress={() => router.push(`/workspace/${t.workspace_id}`)}
                     >
+                      {/* 授業名バッジ */}
+                      {t.course_name ? (
+                        <View style={styles.courseBadge}>
+                          <BookOpen size={10} color="#6366F1" />
+                          <Text style={styles.courseBadgeText}>{t.course_name}</Text>
+                          {t.repeat_rule === 'weekly' && (
+                            <Repeat size={10} color="#6366F1" />
+                          )}
+                        </View>
+                      ) : t.repeat_rule === 'weekly' ? (
+                        <View style={styles.courseBadge}>
+                          <Repeat size={10} color="#6366F1" />
+                          <Text style={styles.courseBadgeText}>毎週</Text>
+                        </View>
+                      ) : null}
+
                       <Text style={styles.rowContent} numberOfLines={2}>
                         {t.content || '(無題の課題)'}
                       </Text>
@@ -205,6 +421,16 @@ export default function DeadlinesScreen() {
                         ) : null}
                       </View>
                     </TouchableOpacity>
+
+                    {/* 「今日やる」ボタン */}
+                    <TouchableOpacity
+                      onPress={() => sendToToday(t)}
+                      style={styles.todayBtn}
+                      hitSlop={6}
+                    >
+                      <Play size={12} color="#6366F1" fill="#6366F1" />
+                    </TouchableOpacity>
+
                     <ChevronRight size={16} color="#94a3b8" />
                   </View>
                 ))}
@@ -214,6 +440,97 @@ export default function DeadlinesScreen() {
         )}
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* 課題追加モーダル */}
+      <Modal
+        visible={showAddModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowAddModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalCard}>
+            {/* モーダルヘッダー */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>課題を追加</Text>
+              <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                <X size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* 課題名 */}
+            <Text style={styles.modalLabel}>課題名 *</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={newContent}
+              onChangeText={setNewContent}
+              placeholder="例: 数学レポート第3回"
+              placeholderTextColor="#94a3b8"
+              autoFocus
+            />
+
+            {/* 期限 */}
+            <Text style={styles.modalLabel}>期限 *</Text>
+            <View style={styles.dateRow}>
+              <Calendar size={18} color="#64748b" />
+              <TextInput
+                style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                value={newDueDate}
+                onChangeText={setNewDueDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#94a3b8"
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+
+            {/* 授業名（任意） */}
+            <Text style={styles.modalLabel}>授業名（任意）</Text>
+            <View style={styles.dateRow}>
+              <BookOpen size={18} color="#64748b" />
+              <TextInput
+                style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                value={newCourseName}
+                onChangeText={setNewCourseName}
+                placeholder="例: 線形代数学"
+                placeholderTextColor="#94a3b8"
+              />
+            </View>
+
+            {/* 毎週繰り返し */}
+            <View style={styles.repeatRow}>
+              <Repeat size={18} color="#64748b" />
+              <Text style={styles.repeatLabel}>毎週繰り返す</Text>
+              <Switch
+                value={newRepeatWeekly}
+                onValueChange={setNewRepeatWeekly}
+                trackColor={{ false: '#e2e8f0', true: '#c7d2fe' }}
+                thumbColor={newRepeatWeekly ? '#6366F1' : '#f4f4f5'}
+              />
+            </View>
+            {newRepeatWeekly && (
+              <Text style={styles.repeatHint}>
+                完了すると、翌週の同じ曜日に次の課題が自動で作られます。
+              </Text>
+            )}
+
+            {/* 追加ボタン */}
+            <TouchableOpacity
+              style={[styles.addButton, adding && { opacity: 0.6 }]}
+              onPress={addTask}
+              disabled={adding}
+            >
+              {adding ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.addButtonText}>追加する</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -232,6 +549,11 @@ const styles = StyleSheet.create({
   },
   headerBack: { padding: 4 },
   headerTitle: { fontSize: 17, fontWeight: '700', color: '#0f172a' },
+  headerAdd: {
+    padding: 4,
+    backgroundColor: '#eef2ff',
+    borderRadius: 8,
+  },
   scroll: { padding: 16 },
   intro: {
     flexDirection: 'row',
@@ -246,6 +568,17 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', gap: 8, paddingVertical: 48 },
   emptyText: { fontSize: 14, fontWeight: '600', color: '#64748b' },
   emptySub: { fontSize: 12, color: '#94a3b8', textAlign: 'center', paddingHorizontal: 24, lineHeight: 17 },
+  emptyAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#6366F1',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginTop: 12,
+  },
+  emptyAddBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   section: { marginBottom: 18 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 2 },
   sectionDot: { width: 8, height: 8, borderRadius: 4 },
@@ -273,8 +606,90 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   rowBody: { flex: 1 },
+  courseBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#eef2ff',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginBottom: 3,
+  },
+  courseBadgeText: { fontSize: 10.5, color: '#4f46e5', fontWeight: '600' },
   rowContent: { fontSize: 14, color: '#0f172a', fontWeight: '500', lineHeight: 19 },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 },
   rowDue: { fontSize: 12, fontWeight: '700' },
   rowWs: { flex: 1, fontSize: 11, color: '#94a3b8' },
+  todayBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#eef2ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // モーダル
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: '#0f172a' },
+  modalLabel: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 6, marginTop: 12 },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#0f172a',
+    backgroundColor: '#f8fafc',
+    marginBottom: 4,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  repeatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+    paddingVertical: 4,
+  },
+  repeatLabel: { flex: 1, fontSize: 14, color: '#334155', fontWeight: '500' },
+  repeatHint: {
+    fontSize: 12,
+    color: '#6366F1',
+    marginTop: 4,
+    marginLeft: 28,
+    lineHeight: 17,
+  },
+  addButton: {
+    backgroundColor: '#6366F1',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  addButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
