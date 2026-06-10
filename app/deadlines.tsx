@@ -23,6 +23,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   SafeAreaView,
   ScrollView,
   ActivityIndicator,
@@ -32,6 +33,7 @@ import {
   Alert,
   Switch,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
 } from 'react-native';
 import {
@@ -258,8 +260,22 @@ export default function DeadlinesScreen() {
       ws = newWs;
     }
 
-    // 今日のワークスペースにtodoを作成
+    // 同日の同課題がすでにWSにあるか確認（重複追加防止）
     const label = todo.course_name ? `[${todo.course_name}] ${todo.content}` : todo.content;
+    const { data: existing } = await supabase
+      .from('todos')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('workspace_id', ws.id)
+      .eq('content', label)
+      .maybeSingle();
+
+    if (existing) {
+      Alert.alert('追加済み', `「${todo.content}」は今日のワークスペースに既に追加されています`);
+      return;
+    }
+
+    // 今日のWSにtodoを作成（due_dateを設定しない＝課題一覧に重複表示させない）
     const { error } = await supabase
       .from('todos')
       .insert({
@@ -267,7 +283,6 @@ export default function DeadlinesScreen() {
         workspace_id: ws.id,
         content: label,
         is_completed: false,
-        due_date: today,
         grid_area: 'top_left',
         order: 0,
       });
@@ -487,108 +502,121 @@ export default function DeadlinesScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalOverlay}
         >
-          <View style={styles.modalCard}>
-            {/* モーダルヘッダー */}
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>課題を追加</Text>
-              <TouchableOpacity onPress={() => setShowAddModal(false)}>
-                <X size={22} color="#64748b" />
-              </TouchableOpacity>
+          {/* オーバーレイタップでキーボードdismiss＋モーダル閉じ */}
+          <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setShowAddModal(false); }}>
+            <View style={{ flex: 1 }} />
+          </TouchableWithoutFeedback>
+
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalCard}>
+              <ScrollView
+                bounces={false}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* モーダルヘッダー */}
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>課題を追加</Text>
+                  <TouchableOpacity onPress={() => { Keyboard.dismiss(); setShowAddModal(false); }}>
+                    <X size={22} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* 課題名 */}
+                <Text style={styles.modalLabel}>課題名 *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={newContent}
+                  onChangeText={setNewContent}
+                  placeholder="例: 数学レポート第3回"
+                  placeholderTextColor="#94a3b8"
+                  returnKeyType="next"
+                />
+
+                {/* 期限 */}
+                <Text style={styles.modalLabel}>期限 *</Text>
+                <View style={styles.dateRow}>
+                  <Calendar size={18} color="#64748b" />
+                  <TextInput
+                    style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                    value={newDueDate}
+                    onChangeText={setNewDueDate}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+
+                {/* 授業名（任意） */}
+                <Text style={styles.modalLabel}>授業名（任意）</Text>
+                <View style={styles.dateRow}>
+                  <BookOpen size={18} color="#64748b" />
+                  <TextInput
+                    style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                    value={newCourseName}
+                    onChangeText={setNewCourseName}
+                    placeholder="例: 線形代数学"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+
+                {/* 毎週繰り返し */}
+                <View style={styles.repeatRow}>
+                  <Repeat size={18} color="#64748b" />
+                  <Text style={styles.repeatLabel}>毎週繰り返す</Text>
+                  <Switch
+                    value={newRepeatWeekly}
+                    onValueChange={setNewRepeatWeekly}
+                    trackColor={{ false: '#e2e8f0', true: '#c7d2fe' }}
+                    thumbColor={newRepeatWeekly ? '#6366F1' : '#f4f4f5'}
+                  />
+                </View>
+                {newRepeatWeekly && (
+                  <Text style={styles.repeatHint}>
+                    完了すると、翌週の同じ曜日に次の課題が自動で作られます。
+                  </Text>
+                )}
+
+                {/* 通知タイミング */}
+                <Text style={styles.modalLabel}>通知タイミング（任意）</Text>
+                <View style={styles.offsetRow}>
+                  <Bell size={18} color="#64748b" />
+                  <View style={styles.offsetChips}>
+                    {OFFSET_PRESETS.map((p) => {
+                      const selected = newNotifOffsets.has(p.key);
+                      return (
+                        <TouchableOpacity
+                          key={p.key}
+                          style={[styles.offsetChip, selected && styles.offsetChipSelected]}
+                          onPress={() => toggleOffset(p.key)}
+                        >
+                          <Text style={[styles.offsetChipText, selected && styles.offsetChipTextSelected]}>
+                            {p.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+                <Text style={styles.repeatHint}>
+                  締切日の朝8時＋夜20時の通知は常に届きます。追加で事前通知が欲しい場合に選択してください。
+                </Text>
+
+                {/* 追加ボタン */}
+                <TouchableOpacity
+                  style={[styles.addButton, adding && { opacity: 0.6 }]}
+                  onPress={addTask}
+                  disabled={adding}
+                >
+                  {adding ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.addButtonText}>追加する</Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
             </View>
-
-            {/* 課題名 */}
-            <Text style={styles.modalLabel}>課題名 *</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={newContent}
-              onChangeText={setNewContent}
-              placeholder="例: 数学レポート第3回"
-              placeholderTextColor="#94a3b8"
-              autoFocus
-            />
-
-            {/* 期限 */}
-            <Text style={styles.modalLabel}>期限 *</Text>
-            <View style={styles.dateRow}>
-              <Calendar size={18} color="#64748b" />
-              <TextInput
-                style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
-                value={newDueDate}
-                onChangeText={setNewDueDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#94a3b8"
-                keyboardType="numbers-and-punctuation"
-              />
-            </View>
-
-            {/* 授業名（任意） */}
-            <Text style={styles.modalLabel}>授業名（任意）</Text>
-            <View style={styles.dateRow}>
-              <BookOpen size={18} color="#64748b" />
-              <TextInput
-                style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
-                value={newCourseName}
-                onChangeText={setNewCourseName}
-                placeholder="例: 線形代数学"
-                placeholderTextColor="#94a3b8"
-              />
-            </View>
-
-            {/* 毎週繰り返し */}
-            <View style={styles.repeatRow}>
-              <Repeat size={18} color="#64748b" />
-              <Text style={styles.repeatLabel}>毎週繰り返す</Text>
-              <Switch
-                value={newRepeatWeekly}
-                onValueChange={setNewRepeatWeekly}
-                trackColor={{ false: '#e2e8f0', true: '#c7d2fe' }}
-                thumbColor={newRepeatWeekly ? '#6366F1' : '#f4f4f5'}
-              />
-            </View>
-            {newRepeatWeekly && (
-              <Text style={styles.repeatHint}>
-                完了すると、翌週の同じ曜日に次の課題が自動で作られます。
-              </Text>
-            )}
-
-            {/* 通知タイミング */}
-            <Text style={styles.modalLabel}>通知タイミング（任意）</Text>
-            <View style={styles.offsetRow}>
-              <Bell size={18} color="#64748b" />
-              <View style={styles.offsetChips}>
-                {OFFSET_PRESETS.map((p) => {
-                  const selected = newNotifOffsets.has(p.key);
-                  return (
-                    <TouchableOpacity
-                      key={p.key}
-                      style={[styles.offsetChip, selected && styles.offsetChipSelected]}
-                      onPress={() => toggleOffset(p.key)}
-                    >
-                      <Text style={[styles.offsetChipText, selected && styles.offsetChipTextSelected]}>
-                        {p.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            <Text style={styles.repeatHint}>
-              締切日の朝8時＋夜20時の通知は常に届きます。追加で事前通知が欲しい場合に選択してください。
-            </Text>
-
-            {/* 追加ボタン */}
-            <TouchableOpacity
-              style={[styles.addButton, adding && { opacity: 0.6 }]}
-              onPress={addTask}
-              disabled={adding}
-            >
-              {adding ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.addButtonText}>追加する</Text>
-              )}
-            </TouchableOpacity>
-          </View>
+          </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
