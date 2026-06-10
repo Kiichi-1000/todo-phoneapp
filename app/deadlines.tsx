@@ -12,6 +12,12 @@
 //   + リピート課題（repeat_rule='weekly' → 完了時に翌週自動生成）
 //   + 「今日やる」→ 今日のワークスペースに送る
 //
+// v3 (2026-06-10):
+//   + 長押し編集/削除
+//   + DatePicker（日付選択UI）
+//   + 完了済みセクション（折りたたみ）
+//   + グリッド選択（今日やる → エリア選択）
+//
 // ToScheAI / MCP 連携:
 //   ここに出るデータ (= todos.due_date) は ai-chat / MCP の list_tasks /
 //   create_task からも読み書きできる。スケジュール分配は端末内 AI 専用。
@@ -40,6 +46,7 @@ import {
   ArrowLeft,
   Check,
   ChevronRight,
+  ChevronDown,
   CalendarClock,
   CircleAlert,
   Plus,
@@ -49,7 +56,11 @@ import {
   Repeat,
   Play,
   Bell,
+  Trash2,
+  Edit3,
+  RotateCcw,
 } from 'lucide-react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -58,6 +69,17 @@ import {
   OFFSET_PRESETS,
   type OffsetKey,
 } from '@/lib/deadlineNotifications';
+
+type GridArea = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+
+const DEFAULT_GRID_LABELS: Record<GridArea, string> = {
+  top_left: '左上',
+  top_right: '右上',
+  bottom_left: '左下',
+  bottom_right: '右下',
+};
+
+const GRID_AREAS: GridArea[] = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 
 interface DeadlineTodo {
   id: string;
@@ -105,6 +127,26 @@ function isValidDate(s: string): boolean {
   const [y, m, d] = s.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+}
+
+// YYYY-MM-DD → Date
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+// Date → YYYY-MM-DD
+function toLocalISO(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// YYYY-MM-DD → "YYYY年M月D日"
+function formatDateJP(s: string): string {
+  const [y, m, d] = s.split('-').map(Number);
+  return `${y}年${m}月${d}日`;
 }
 
 type BucketKey = 'overdue' | 'today' | 'tomorrow' | 'd3' | 'w1' | 'm1' | 'later';
@@ -157,6 +199,23 @@ export default function DeadlinesScreen() {
   const [newNotifOffsets, setNewNotifOffsets] = useState<Set<OffsetKey>>(new Set());
   const [adding, setAdding] = useState(false);
 
+  // 編集モーダル state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editTodo, setEditTodo] = useState<DeadlineTodo | null>(null);
+  const [editContent, setEditContent] = useState('');
+  const [editDueDate, setEditDueDate] = useState('');
+  const [editCourseName, setEditCourseName] = useState('');
+  const [editNotifOffsets, setEditNotifOffsets] = useState<Set<OffsetKey>>(new Set());
+  const [saving, setSaving] = useState(false);
+
+  // DatePicker state
+  const [showAddDatePicker, setShowAddDatePicker] = useState(false);
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+
+  // 完了済み state
+  const [completedTodos, setCompletedTodos] = useState<DeadlineTodo[]>([]);
+  const [showCompleted, setShowCompleted] = useState(false);
+
   const toggleOffset = useCallback((key: OffsetKey) => {
     setNewNotifOffsets((prev) => {
       const next = new Set(prev);
@@ -166,8 +225,18 @@ export default function DeadlinesScreen() {
     });
   }, []);
 
+  const toggleEditOffset = useCallback((key: OffsetKey) => {
+    setEditNotifOffsets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const load = useCallback(async () => {
     if (!user) return;
+    // 未完了の課題を取得
     const { data, error } = await supabase
       .from('todos')
       .select('id, content, due_date, workspace_id, course_name, repeat_rule, notification_offsets, workspaces(title, date)')
@@ -181,6 +250,20 @@ export default function DeadlinesScreen() {
       // 期限通知をスケジュール（朝8時＋夜20時）
       scheduleDeadlineNotifications(loaded).catch(() => {});
     }
+
+    // 完了済みの課題を取得
+    const { data: completedData } = await supabase
+      .from('todos')
+      .select('id, content, due_date, workspace_id, course_name, repeat_rule, notification_offsets, workspaces(title, date)')
+      .eq('user_id', user.id)
+      .eq('is_completed', true)
+      .not('due_date', 'is', null)
+      .order('due_date', { ascending: false })
+      .limit(50);
+    if (completedData) {
+      setCompletedTodos(completedData as unknown as DeadlineTodo[]);
+    }
+
     setLoading(false);
     setRefreshing(false);
   }, [user]);
@@ -227,9 +310,21 @@ export default function DeadlinesScreen() {
           .sort((a, b) => a.due_date.localeCompare(b.due_date)));
       }
     }
-  }, [user]);
 
-  // 「今日やる」→ 今日のワークスペースに新しいtodoを作成
+    // 完了済みリストを更新
+    load();
+  }, [user, load]);
+
+  // 未完了に戻す
+  const uncomplete = useCallback(async (todo: DeadlineTodo) => {
+    await supabase
+      .from('todos')
+      .update({ is_completed: false, completed_at: null })
+      .eq('id', todo.id);
+    load();
+  }, [load]);
+
+  // 「今日やる」→ 今日のワークスペースに新しいtodoを作成（グリッド選択付き）
   const sendToToday = useCallback(async (todo: DeadlineTodo) => {
     if (!user) return;
     const today = todayLocalISO();
@@ -237,7 +332,7 @@ export default function DeadlinesScreen() {
     // 今日のワークスペースを検索（なければ作成）
     let { data: ws } = await supabase
       .from('workspaces')
-      .select('id')
+      .select('id, area_titles')
       .eq('user_id', user.id)
       .eq('date', today)
       .maybeSingle();
@@ -251,7 +346,7 @@ export default function DeadlinesScreen() {
           type: 'four_grid',
           date: today,
         })
-        .select('id')
+        .select('id, area_titles')
         .single();
       if (wsErr || !newWs) {
         Alert.alert('エラー', 'ワークスペースの作成に失敗しました');
@@ -275,24 +370,129 @@ export default function DeadlinesScreen() {
       return;
     }
 
-    // 今日のWSにtodoを作成（due_dateを設定しない＝課題一覧に重複表示させない）
+    // area_titles を取得してグリッド名を決定
+    const areaTitles = (ws as { id: string; area_titles?: Record<string, string> | null }).area_titles;
+    const gridLabels: Record<GridArea, string> = {
+      top_left: areaTitles?.top_left || DEFAULT_GRID_LABELS.top_left,
+      top_right: areaTitles?.top_right || DEFAULT_GRID_LABELS.top_right,
+      bottom_left: areaTitles?.bottom_left || DEFAULT_GRID_LABELS.bottom_left,
+      bottom_right: areaTitles?.bottom_right || DEFAULT_GRID_LABELS.bottom_right,
+    };
+
+    // グリッド選択アラートを表示
+    Alert.alert(
+      'エリアを選択',
+      'どのエリアに追加しますか？',
+      [
+        ...GRID_AREAS.map((area) => ({
+          text: gridLabels[area],
+          onPress: async () => {
+            const { error } = await supabase
+              .from('todos')
+              .insert({
+                user_id: user.id,
+                workspace_id: ws!.id,
+                content: label,
+                is_completed: false,
+                grid_area: area,
+                order: 0,
+              });
+            if (error) {
+              Alert.alert('エラー', 'タスクの追加に失敗しました');
+            } else {
+              Alert.alert('追加しました', `「${todo.content}」を今日のワークスペース（${gridLabels[area]}）に送りました`);
+            }
+          },
+        })),
+        { text: 'キャンセル', style: 'cancel' },
+      ],
+    );
+  }, [user]);
+
+  // 長押し → 編集/削除
+  const onLongPressTodo = useCallback((todo: DeadlineTodo) => {
+    Alert.alert(
+      todo.content,
+      undefined,
+      [
+        {
+          text: '編集',
+          onPress: () => {
+            setEditTodo(todo);
+            setEditContent(todo.content);
+            setEditDueDate(todo.due_date);
+            setEditCourseName(todo.course_name ?? '');
+            const offsets = todo.notification_offsets
+              ? new Set(todo.notification_offsets.split(',') as OffsetKey[])
+              : new Set<OffsetKey>();
+            setEditNotifOffsets(offsets);
+            setShowEditModal(true);
+          },
+        },
+        {
+          text: '削除',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'この課題を削除しますか？',
+              `「${todo.content}」を完全に削除します。この操作は取り消せません。`,
+              [
+                { text: 'キャンセル', style: 'cancel' },
+                {
+                  text: '削除',
+                  style: 'destructive',
+                  onPress: async () => {
+                    cancelDeadlineNotification(todo.id).catch(() => {});
+                    await supabase.from('todos').delete().eq('id', todo.id);
+                    setTodos((prev) => prev.filter((t) => t.id !== todo.id));
+                  },
+                },
+              ],
+            );
+          },
+        },
+        { text: 'キャンセル', style: 'cancel' },
+      ],
+    );
+  }, []);
+
+  // 編集保存
+  const saveEdit = useCallback(async () => {
+    if (!editTodo) return;
+    const content = editContent.trim();
+    if (!content) {
+      Alert.alert('入力エラー', '課題名を入力してください');
+      return;
+    }
+    if (!editDueDate || !isValidDate(editDueDate)) {
+      Alert.alert('入力エラー', '期限を正しく設定してください');
+      return;
+    }
+
+    setSaving(true);
+    const offsetsStr = editNotifOffsets.size > 0
+      ? Array.from(editNotifOffsets).join(',')
+      : null;
+
     const { error } = await supabase
       .from('todos')
-      .insert({
-        user_id: user.id,
-        workspace_id: ws.id,
-        content: label,
-        is_completed: false,
-        grid_area: 'top_left',
-        order: 0,
-      });
+      .update({
+        content,
+        due_date: editDueDate,
+        course_name: editCourseName.trim() || null,
+        notification_offsets: offsetsStr,
+      })
+      .eq('id', editTodo.id);
 
+    setSaving(false);
     if (error) {
-      Alert.alert('エラー', 'タスクの追加に失敗しました');
+      Alert.alert('エラー', `更新に失敗しました: ${error.message}`);
     } else {
-      Alert.alert('追加しました', `「${todo.content}」を今日のワークスペースに送りました`);
+      setShowEditModal(false);
+      setEditTodo(null);
+      load();
     }
-  }, [user]);
+  }, [editTodo, editContent, editDueDate, editCourseName, editNotifOffsets, load]);
 
   // 課題追加
   const addTask = useCallback(async () => {
@@ -303,7 +503,7 @@ export default function DeadlinesScreen() {
       return;
     }
     if (!newDueDate || !isValidDate(newDueDate)) {
-      Alert.alert('入力エラー', '期限を YYYY-MM-DD 形式で入力してください');
+      Alert.alert('入力エラー', '期限を設定してください');
       return;
     }
 
@@ -368,6 +568,25 @@ export default function DeadlinesScreen() {
     }
   }, [user, newContent, newDueDate, newCourseName, newRepeatWeekly, newNotifOffsets, load]);
 
+  // DatePicker handlers
+  const onAddDateChange = useCallback((_event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowAddDatePicker(false);
+    }
+    if (selectedDate) {
+      setNewDueDate(toLocalISO(selectedDate));
+    }
+  }, []);
+
+  const onEditDateChange = useCallback((_event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowEditDatePicker(false);
+    }
+    if (selectedDate) {
+      setEditDueDate(toLocalISO(selectedDate));
+    }
+  }, []);
+
   // バケットごとにグルーピング
   const grouped = useMemo(() => {
     const map: Record<BucketKey, DeadlineTodo[]> = {
@@ -381,6 +600,73 @@ export default function DeadlinesScreen() {
   }, [todos]);
 
   const total = todos.length;
+
+  // DatePicker共通レンダラー
+  const renderDatePicker = (
+    mode: 'add' | 'edit',
+    show: boolean,
+    value: string,
+    onShow: () => void,
+    onChange: (event: DateTimePickerEvent, date?: Date) => void,
+    onDismiss: () => void,
+  ) => (
+    <>
+      <TouchableOpacity style={styles.datePickerButton} onPress={onShow}>
+        <Calendar size={18} color="#64748b" />
+        <Text style={[styles.datePickerText, !value && { color: '#94a3b8' }]}>
+          {value ? formatDateJP(value) : '日付を選択'}
+        </Text>
+      </TouchableOpacity>
+      {show && (
+        <View>
+          <DateTimePicker
+            value={value && isValidDate(value) ? parseLocalDate(value) : new Date()}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            onChange={onChange}
+            locale="ja"
+          />
+          {Platform.OS === 'ios' && (
+            <TouchableOpacity style={styles.datePickerDone} onPress={onDismiss}>
+              <Text style={styles.datePickerDoneText}>完了</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+    </>
+  );
+
+  // 通知タイミング選択の共通レンダラー
+  const renderOffsetChips = (
+    selectedOffsets: Set<OffsetKey>,
+    toggle: (key: OffsetKey) => void,
+  ) => (
+    <>
+      <Text style={styles.modalLabel}>通知タイミング（任意）</Text>
+      <View style={styles.offsetRow}>
+        <Bell size={18} color="#64748b" />
+        <View style={styles.offsetChips}>
+          {OFFSET_PRESETS.map((p) => {
+            const selected = selectedOffsets.has(p.key);
+            return (
+              <TouchableOpacity
+                key={p.key}
+                style={[styles.offsetChip, selected && styles.offsetChipSelected]}
+                onPress={() => toggle(p.key)}
+              >
+                <Text style={[styles.offsetChipText, selected && styles.offsetChipTextSelected]}>
+                  {p.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+      <Text style={styles.repeatHint}>
+        締切日の朝8時＋夜20時の通知は常に届きます。追加で事前通知が欲しい場合に選択してください。
+      </Text>
+    </>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -402,13 +688,13 @@ export default function DeadlinesScreen() {
         <View style={styles.intro}>
           <CalendarClock size={18} color="#6366F1" />
           <Text style={styles.introText}>
-            締め切りが近い順の課題一覧です。＋ボタンで課題を追加できます。
+            締め切りが近い順の課題一覧です。＋ボタンで課題を追加できます。長押しで編集・削除。
           </Text>
         </View>
 
         {loading ? (
           <ActivityIndicator style={{ paddingVertical: 40 }} color="#6366F1" />
-        ) : total === 0 ? (
+        ) : total === 0 && completedTodos.length === 0 ? (
           <View style={styles.empty}>
             <CalendarClock size={28} color="#cbd5e1" />
             <Text style={styles.emptyText}>期限つきの課題はありません。</Text>
@@ -419,74 +705,143 @@ export default function DeadlinesScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          BUCKET_ORDER.map((key) => {
-            const items = grouped[key];
-            if (items.length === 0) return null;
-            const meta = BUCKET_META[key];
-            return (
-              <View key={key} style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <View style={[styles.sectionDot, { backgroundColor: meta.accent }]} />
-                  <Text style={[styles.sectionTitle, { color: meta.accent }]}>{meta.label}</Text>
-                  <Text style={styles.sectionCount}>{items.length}</Text>
-                </View>
-                {items.map((t) => (
-                  <View key={t.id} style={[styles.row, { backgroundColor: meta.bg }]}>
-                    {/* 完了チェック */}
-                    <TouchableOpacity onPress={() => complete(t)} style={styles.checkbox} hitSlop={8}>
-                      <Check size={15} color={meta.accent} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.rowBody}
-                      onPress={() => router.push(`/workspace/${t.workspace_id}`)}
-                    >
-                      {/* 授業名バッジ */}
-                      {t.course_name ? (
-                        <View style={styles.courseBadge}>
-                          <BookOpen size={10} color="#6366F1" />
-                          <Text style={styles.courseBadgeText}>{t.course_name}</Text>
-                          {t.repeat_rule === 'weekly' && (
-                            <Repeat size={10} color="#6366F1" />
-                          )}
-                        </View>
-                      ) : t.repeat_rule === 'weekly' ? (
-                        <View style={styles.courseBadge}>
-                          <Repeat size={10} color="#6366F1" />
-                          <Text style={styles.courseBadgeText}>毎週</Text>
-                        </View>
-                      ) : null}
-
-                      <Text style={styles.rowContent} numberOfLines={2}>
-                        {t.content || '(無題の課題)'}
-                      </Text>
-                      <View style={styles.rowMeta}>
-                        {key === 'overdue' && <CircleAlert size={12} color={meta.accent} />}
-                        <Text style={[styles.rowDue, { color: meta.accent }]}>{dueLabel(t.due_date)}</Text>
-                        {t.notification_offsets ? (
-                          <Bell size={11} color="#6366F1" />
-                        ) : null}
-                        {t.workspaces?.title ? (
-                          <Text style={styles.rowWs} numberOfLines={1}> ・ {t.workspaces.title}</Text>
-                        ) : null}
-                      </View>
-                    </TouchableOpacity>
-
-                    {/* 「今日やる」ボタン */}
-                    <TouchableOpacity
-                      onPress={() => sendToToday(t)}
-                      style={styles.todayBtn}
-                      hitSlop={6}
-                    >
-                      <Play size={12} color="#6366F1" fill="#6366F1" />
-                    </TouchableOpacity>
-
-                    <ChevronRight size={16} color="#94a3b8" />
+          <>
+            {BUCKET_ORDER.map((key) => {
+              const items = grouped[key];
+              if (items.length === 0) return null;
+              const meta = BUCKET_META[key];
+              return (
+                <View key={key} style={styles.section}>
+                  <View style={styles.sectionHeader}>
+                    <View style={[styles.sectionDot, { backgroundColor: meta.accent }]} />
+                    <Text style={[styles.sectionTitle, { color: meta.accent }]}>{meta.label}</Text>
+                    <Text style={styles.sectionCount}>{items.length}</Text>
                   </View>
-                ))}
+                  {items.map((t) => (
+                    <View key={t.id} style={[styles.row, { backgroundColor: meta.bg }]}>
+                      {/* 完了チェック */}
+                      <TouchableOpacity onPress={() => complete(t)} style={styles.checkbox} hitSlop={8}>
+                        <Check size={15} color={meta.accent} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.rowBody}
+                        onPress={() => router.push(`/workspace/${t.workspace_id}`)}
+                        onLongPress={() => onLongPressTodo(t)}
+                        delayLongPress={500}
+                      >
+                        {/* 授業名バッジ */}
+                        {t.course_name ? (
+                          <View style={styles.courseBadge}>
+                            <BookOpen size={10} color="#6366F1" />
+                            <Text style={styles.courseBadgeText}>{t.course_name}</Text>
+                            {t.repeat_rule === 'weekly' && (
+                              <Repeat size={10} color="#6366F1" />
+                            )}
+                          </View>
+                        ) : t.repeat_rule === 'weekly' ? (
+                          <View style={styles.courseBadge}>
+                            <Repeat size={10} color="#6366F1" />
+                            <Text style={styles.courseBadgeText}>毎週</Text>
+                          </View>
+                        ) : null}
+
+                        <Text style={styles.rowContent} numberOfLines={2}>
+                          {t.content || '(無題の課題)'}
+                        </Text>
+                        <View style={styles.rowMeta}>
+                          {key === 'overdue' && <CircleAlert size={12} color={meta.accent} />}
+                          <Text style={[styles.rowDue, { color: meta.accent }]}>{dueLabel(t.due_date)}</Text>
+                          {t.notification_offsets ? (
+                            <Bell size={11} color="#6366F1" />
+                          ) : null}
+                          {t.workspaces?.title ? (
+                            <Text style={styles.rowWs} numberOfLines={1}> ・ {t.workspaces.title}</Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 「今日やる」ボタン */}
+                      <TouchableOpacity
+                        onPress={() => sendToToday(t)}
+                        style={styles.todayBtn}
+                        hitSlop={6}
+                      >
+                        <Play size={12} color="#6366F1" fill="#6366F1" />
+                      </TouchableOpacity>
+
+                      <ChevronRight size={16} color="#94a3b8" />
+                    </View>
+                  ))}
+                </View>
+              );
+            })}
+
+            {/* 完了済みセクション */}
+            {completedTodos.length > 0 && (
+              <View style={styles.completedSection}>
+                <TouchableOpacity
+                  style={styles.completedHeader}
+                  onPress={() => setShowCompleted((prev) => !prev)}
+                >
+                  <View style={styles.completedHeaderLeft}>
+                    <Check size={16} color="#94a3b8" />
+                    <Text style={styles.completedHeaderText}>
+                      完了済み ({completedTodos.length})
+                    </Text>
+                  </View>
+                  <View style={[
+                    styles.completedChevron,
+                    showCompleted && styles.completedChevronOpen,
+                  ]}>
+                    <ChevronDown size={18} color="#94a3b8" />
+                  </View>
+                </TouchableOpacity>
+
+                {showCompleted && (
+                  <View style={styles.completedList}>
+                    {completedTodos.map((t) => {
+                      const withinDue = t.due_date && dayDiffFromToday(t.due_date) >= 0;
+                      return (
+                        <View
+                          key={t.id}
+                          style={[
+                            styles.completedRow,
+                            withinDue && styles.completedRowWithinDue,
+                          ]}
+                        >
+                          <View style={styles.completedRowBody}>
+                            {t.course_name ? (
+                              <Text style={styles.completedCourseName}>{t.course_name}</Text>
+                            ) : null}
+                            <Text
+                              style={[
+                                styles.completedContent,
+                                withinDue && styles.completedContentWithinDue,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {t.content}
+                            </Text>
+                            <Text style={styles.completedDue}>
+                              {t.due_date ? formatDateJP(t.due_date) : ''}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.undoBtn}
+                            onPress={() => uncomplete(t)}
+                            hitSlop={8}
+                          >
+                            <RotateCcw size={14} color="#6366F1" />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
-            );
-          })
+            )}
+          </>
         )}
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -533,19 +888,16 @@ export default function DeadlinesScreen() {
                   returnKeyType="next"
                 />
 
-                {/* 期限 */}
+                {/* 期限（DatePicker） */}
                 <Text style={styles.modalLabel}>期限 *</Text>
-                <View style={styles.dateRow}>
-                  <Calendar size={18} color="#64748b" />
-                  <TextInput
-                    style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
-                    value={newDueDate}
-                    onChangeText={setNewDueDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="numbers-and-punctuation"
-                  />
-                </View>
+                {renderDatePicker(
+                  'add',
+                  showAddDatePicker,
+                  newDueDate,
+                  () => setShowAddDatePicker(true),
+                  onAddDateChange,
+                  () => setShowAddDatePicker(false),
+                )}
 
                 {/* 授業名（任意） */}
                 <Text style={styles.modalLabel}>授業名（任意）</Text>
@@ -578,29 +930,7 @@ export default function DeadlinesScreen() {
                 )}
 
                 {/* 通知タイミング */}
-                <Text style={styles.modalLabel}>通知タイミング（任意）</Text>
-                <View style={styles.offsetRow}>
-                  <Bell size={18} color="#64748b" />
-                  <View style={styles.offsetChips}>
-                    {OFFSET_PRESETS.map((p) => {
-                      const selected = newNotifOffsets.has(p.key);
-                      return (
-                        <TouchableOpacity
-                          key={p.key}
-                          style={[styles.offsetChip, selected && styles.offsetChipSelected]}
-                          onPress={() => toggleOffset(p.key)}
-                        >
-                          <Text style={[styles.offsetChipText, selected && styles.offsetChipTextSelected]}>
-                            {p.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-                <Text style={styles.repeatHint}>
-                  締切日の朝8時＋夜20時の通知は常に届きます。追加で事前通知が欲しい場合に選択してください。
-                </Text>
+                {renderOffsetChips(newNotifOffsets, toggleOffset)}
 
                 {/* 追加ボタン */}
                 <TouchableOpacity
@@ -612,6 +942,92 @@ export default function DeadlinesScreen() {
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (
                     <Text style={styles.addButtonText}>追加する</Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* 課題編集モーダル */}
+      <Modal
+        visible={showEditModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowEditModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setShowEditModal(false); }}>
+            <View style={{ flex: 1 }} />
+          </TouchableWithoutFeedback>
+
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.modalCard}>
+              <ScrollView
+                bounces={false}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* モーダルヘッダー */}
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>課題を編集</Text>
+                  <TouchableOpacity onPress={() => { Keyboard.dismiss(); setShowEditModal(false); }}>
+                    <X size={22} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* 課題名 */}
+                <Text style={styles.modalLabel}>課題名 *</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={editContent}
+                  onChangeText={setEditContent}
+                  placeholder="例: 数学レポート第3回"
+                  placeholderTextColor="#94a3b8"
+                  returnKeyType="next"
+                />
+
+                {/* 期限（DatePicker） */}
+                <Text style={styles.modalLabel}>期限 *</Text>
+                {renderDatePicker(
+                  'edit',
+                  showEditDatePicker,
+                  editDueDate,
+                  () => setShowEditDatePicker(true),
+                  onEditDateChange,
+                  () => setShowEditDatePicker(false),
+                )}
+
+                {/* 授業名（任意） */}
+                <Text style={styles.modalLabel}>授業名（任意）</Text>
+                <View style={styles.dateRow}>
+                  <BookOpen size={18} color="#64748b" />
+                  <TextInput
+                    style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                    value={editCourseName}
+                    onChangeText={setEditCourseName}
+                    placeholder="例: 線形代数学"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+
+                {/* 通知タイミング */}
+                {renderOffsetChips(editNotifOffsets, toggleEditOffset)}
+
+                {/* 保存ボタン */}
+                <TouchableOpacity
+                  style={[styles.addButton, saving && { opacity: 0.6 }]}
+                  onPress={saveEdit}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.addButtonText}>保存する</Text>
                   )}
                 </TouchableOpacity>
               </ScrollView>
@@ -731,6 +1147,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 36,
+    maxHeight: '85%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -814,5 +1231,115 @@ const styles = StyleSheet.create({
   offsetChipTextSelected: {
     color: '#4f46e5',
     fontWeight: '600',
+  },
+
+  // DatePicker
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#f8fafc',
+    marginBottom: 4,
+  },
+  datePickerText: {
+    fontSize: 15,
+    color: '#0f172a',
+    fontWeight: '500',
+  },
+  datePickerDone: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  datePickerDoneText: {
+    fontSize: 15,
+    color: '#6366F1',
+    fontWeight: '600',
+  },
+
+  // 完了済みセクション
+  completedSection: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingTop: 12,
+  },
+  completedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  completedHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  completedHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#94a3b8',
+  },
+  completedChevron: {
+    transform: [{ rotate: '0deg' }],
+  },
+  completedChevronOpen: {
+    transform: [{ rotate: '180deg' }],
+  },
+  completedList: {
+    marginTop: 4,
+  },
+  completedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 6,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  completedRowWithinDue: {
+    backgroundColor: '#f8fafc',
+  },
+  completedRowBody: {
+    flex: 1,
+  },
+  completedCourseName: {
+    fontSize: 10.5,
+    color: '#94a3b8',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  completedContent: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontWeight: '500',
+    textDecorationLine: 'line-through',
+  },
+  completedContentWithinDue: {
+    color: '#64748b',
+  },
+  completedDue: {
+    fontSize: 11,
+    color: '#cbd5e1',
+    marginTop: 2,
+  },
+  undoBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#eef2ff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
