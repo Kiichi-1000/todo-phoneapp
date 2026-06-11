@@ -862,79 +862,89 @@ export default function DeadlinesScreen() {
             <View style={{ flex: 1 }} />
           </TouchableWithoutFeedback>
 
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalCard}>
-              <ScrollView
-                bounces={false}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+          <View style={styles.modalCard}>
+            {/* モーダルヘッダー（ScrollView外＝キーボード表示中も常に見える） */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>課題を追加</Text>
+              <TouchableOpacity
+                onPress={() => { Keyboard.dismiss(); setShowAddModal(false); }}
+                hitSlop={12}
               >
-                {/* モーダルヘッダー */}
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>課題を追加</Text>
-                  <TouchableOpacity onPress={() => { Keyboard.dismiss(); setShowAddModal(false); }}>
-                    <X size={22} color="#64748b" />
-                  </TouchableOpacity>
-                </View>
+                <X size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
 
-                {/* 課題名 */}
-                <Text style={styles.modalLabel}>課題名 *</Text>
+            <ScrollView
+              bounces={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* 課題名 */}
+              <Text style={styles.modalLabel}>課題名 *</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={newContent}
+                onChangeText={setNewContent}
+                placeholder="例: 数学レポート第3回"
+                placeholderTextColor="#94a3b8"
+                returnKeyType="next"
+              />
+
+              {/* 期限（DatePicker） */}
+              <Text style={styles.modalLabel}>期限 *</Text>
+              {renderDatePicker(
+                'add',
+                showAddDatePicker,
+                newDueDate,
+                () => setShowAddDatePicker(true),
+                onAddDateChange,
+                () => setShowAddDatePicker(false),
+              )}
+
+              {/* 授業名（任意） */}
+              <Text style={styles.modalLabel}>授業名（任意）</Text>
+              <View style={styles.dateRow}>
+                <BookOpen size={18} color="#64748b" />
                 <TextInput
-                  style={styles.modalInput}
-                  value={newContent}
-                  onChangeText={setNewContent}
-                  placeholder="例: 数学レポート第3回"
+                  style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                  value={newCourseName}
+                  onChangeText={setNewCourseName}
+                  placeholder="例: 線形代数学"
                   placeholderTextColor="#94a3b8"
-                  returnKeyType="next"
                 />
+              </View>
 
-                {/* 期限（DatePicker） */}
-                <Text style={styles.modalLabel}>期限 *</Text>
-                {renderDatePicker(
-                  'add',
-                  showAddDatePicker,
-                  newDueDate,
-                  () => setShowAddDatePicker(true),
-                  onAddDateChange,
-                  () => setShowAddDatePicker(false),
-                )}
+              {/* 毎週繰り返し */}
+              <View style={styles.repeatRow}>
+                <Repeat size={18} color="#64748b" />
+                <Text style={styles.repeatLabel}>毎週繰り返す</Text>
+                <Switch
+                  value={newRepeatWeekly}
+                  onValueChange={setNewRepeatWeekly}
+                  trackColor={{ false: '#e2e8f0', true: '#c7d2fe' }}
+                  thumbColor={newRepeatWeekly ? '#6366F1' : '#f4f4f5'}
+                />
+              </View>
+              {newRepeatWeekly && (
+                <Text style={styles.repeatHint}>
+                  完了すると、翌週の同じ曜日に次の課題が自動で作られます。
+                </Text>
+              )}
 
-                {/* 授業名（任意） */}
-                <Text style={styles.modalLabel}>授業名（任意）</Text>
-                <View style={styles.dateRow}>
-                  <BookOpen size={18} color="#64748b" />
-                  <TextInput
-                    style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
-                    value={newCourseName}
-                    onChangeText={setNewCourseName}
-                    placeholder="例: 線形代数学"
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
+              {/* 通知タイミング */}
+              {renderOffsetChips(newNotifOffsets, toggleOffset)}
 
-                {/* 毎週繰り返し */}
-                <View style={styles.repeatRow}>
-                  <Repeat size={18} color="#64748b" />
-                  <Text style={styles.repeatLabel}>毎週繰り返す</Text>
-                  <Switch
-                    value={newRepeatWeekly}
-                    onValueChange={setNewRepeatWeekly}
-                    trackColor={{ false: '#e2e8f0', true: '#c7d2fe' }}
-                    thumbColor={newRepeatWeekly ? '#6366F1' : '#f4f4f5'}
-                  />
-                </View>
-                {newRepeatWeekly && (
-                  <Text style={styles.repeatHint}>
-                    完了すると、翌週の同じ曜日に次の課題が自動で作られます。
-                  </Text>
-                )}
-
-                {/* 通知タイミング */}
-                {renderOffsetChips(newNotifOffsets, toggleOffset)}
-
-                {/* 追加ボタン */}
+              {/* ボタン行 */}
+              <View style={styles.modalButtonRow}>
                 <TouchableOpacity
-                  style={[styles.addButton, adding && { opacity: 0.6 }]}
+                  style={styles.cancelButton}
+                  onPress={() => { Keyboard.dismiss(); setShowAddModal(false); }}
+                >
+                  <Text style={styles.cancelButtonText}>キャンセル</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addButton, styles.modalSubmitButton, adding && { opacity: 0.6 }]}
                   onPress={addTask}
                   disabled={adding}
                 >
@@ -944,9 +954,9 @@ export default function DeadlinesScreen() {
                     <Text style={styles.addButtonText}>追加する</Text>
                   )}
                 </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </TouchableWithoutFeedback>
+              </View>
+            </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -965,62 +975,72 @@ export default function DeadlinesScreen() {
             <View style={{ flex: 1 }} />
           </TouchableWithoutFeedback>
 
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalCard}>
-              <ScrollView
-                bounces={false}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+          <View style={styles.modalCard}>
+            {/* モーダルヘッダー（ScrollView外＝キーボード表示中も常に見える） */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>課題を編集</Text>
+              <TouchableOpacity
+                onPress={() => { Keyboard.dismiss(); setShowEditModal(false); }}
+                hitSlop={12}
               >
-                {/* モーダルヘッダー */}
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>課題を編集</Text>
-                  <TouchableOpacity onPress={() => { Keyboard.dismiss(); setShowEditModal(false); }}>
-                    <X size={22} color="#64748b" />
-                  </TouchableOpacity>
-                </View>
+                <X size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
 
-                {/* 課題名 */}
-                <Text style={styles.modalLabel}>課題名 *</Text>
+            <ScrollView
+              bounces={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* 課題名 */}
+              <Text style={styles.modalLabel}>課題名 *</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editContent}
+                onChangeText={setEditContent}
+                placeholder="例: 数学レポート第3回"
+                placeholderTextColor="#94a3b8"
+                returnKeyType="next"
+              />
+
+              {/* 期限（DatePicker） */}
+              <Text style={styles.modalLabel}>期限 *</Text>
+              {renderDatePicker(
+                'edit',
+                showEditDatePicker,
+                editDueDate,
+                () => setShowEditDatePicker(true),
+                onEditDateChange,
+                () => setShowEditDatePicker(false),
+              )}
+
+              {/* 授業名（任意） */}
+              <Text style={styles.modalLabel}>授業名（任意）</Text>
+              <View style={styles.dateRow}>
+                <BookOpen size={18} color="#64748b" />
                 <TextInput
-                  style={styles.modalInput}
-                  value={editContent}
-                  onChangeText={setEditContent}
-                  placeholder="例: 数学レポート第3回"
+                  style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
+                  value={editCourseName}
+                  onChangeText={setEditCourseName}
+                  placeholder="例: 線形代数学"
                   placeholderTextColor="#94a3b8"
-                  returnKeyType="next"
                 />
+              </View>
 
-                {/* 期限（DatePicker） */}
-                <Text style={styles.modalLabel}>期限 *</Text>
-                {renderDatePicker(
-                  'edit',
-                  showEditDatePicker,
-                  editDueDate,
-                  () => setShowEditDatePicker(true),
-                  onEditDateChange,
-                  () => setShowEditDatePicker(false),
-                )}
+              {/* 通知タイミング */}
+              {renderOffsetChips(editNotifOffsets, toggleEditOffset)}
 
-                {/* 授業名（任意） */}
-                <Text style={styles.modalLabel}>授業名（任意）</Text>
-                <View style={styles.dateRow}>
-                  <BookOpen size={18} color="#64748b" />
-                  <TextInput
-                    style={[styles.modalInput, { flex: 1, marginBottom: 0 }]}
-                    value={editCourseName}
-                    onChangeText={setEditCourseName}
-                    placeholder="例: 線形代数学"
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
-
-                {/* 通知タイミング */}
-                {renderOffsetChips(editNotifOffsets, toggleEditOffset)}
-
-                {/* 保存ボタン */}
+              {/* ボタン行 */}
+              <View style={styles.modalButtonRow}>
                 <TouchableOpacity
-                  style={[styles.addButton, saving && { opacity: 0.6 }]}
+                  style={styles.cancelButton}
+                  onPress={() => { Keyboard.dismiss(); setShowEditModal(false); }}
+                >
+                  <Text style={styles.cancelButtonText}>キャンセル</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addButton, styles.modalSubmitButton, saving && { opacity: 0.6 }]}
                   onPress={saveEdit}
                   disabled={saving}
                 >
@@ -1030,9 +1050,9 @@ export default function DeadlinesScreen() {
                     <Text style={styles.addButtonText}>保存する</Text>
                   )}
                 </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </TouchableWithoutFeedback>
+              </View>
+            </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
@@ -1197,6 +1217,23 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   addButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  modalButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 20,
+  },
+  modalSubmitButton: {
+    flex: 1,
+    marginTop: 0,
+  },
+  cancelButton: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+  },
+  cancelButtonText: { color: '#64748b', fontSize: 16, fontWeight: '600' },
 
   // 通知オフセット
   offsetRow: {
