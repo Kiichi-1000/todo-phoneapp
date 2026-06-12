@@ -39,7 +39,7 @@ import {
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SERVER_NAME = "tosche-mcp";
-const SERVER_VERSION = "1.4.0";
+const SERVER_VERSION = "1.5.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -182,7 +182,8 @@ function handleInitialize(id: unknown): Response {
       "ToSche MCP server. Read first (list_goals / list_milestones). " +
       "Add with create_goal / create_milestones_batch. " +
       "Mark progress with update_milestone. " +
-      "DESTRUCTIVE TOOLS (delete_goal / delete_milestone) follow a two-phase " +
+      "Tasks/deadlines: list_tasks, create_task, update_task, complete_task, delete_task. " +
+      "DESTRUCTIVE TOOLS (delete_goal / delete_milestone / delete_task) follow a two-phase " +
       "protocol: first call with confirm omitted returns a deletion preview; " +
       "only after the user explicitly approves in chat, call again with " +
       "confirm: true. Never pre-confirm deletions on the user's behalf.",

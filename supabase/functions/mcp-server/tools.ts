@@ -6,9 +6,10 @@
 // explicitly. For now they are 1:1.
 //
 // Exposed tools:
-//   Read-only:        list_goals, list_milestones
-//   Safe writes:      create_goal, create_milestones_batch, update_milestone
-//   Destructive:      delete_goal, delete_milestone
+//   Read-only:        list_goals, list_milestones, list_tasks, get_shared_context
+//   Safe writes:      create_goal, create_milestones_batch, update_milestone,
+//                     create_task, update_task, complete_task, update_shared_context
+//   Destructive:      delete_goal, delete_milestone, delete_task
 //
 // Destructive tools follow a two-phase confirmation protocol — see the
 // `confirm` parameter on each. Phase 1 (confirm omitted or false) returns
@@ -45,6 +46,11 @@ export type ToolExecutor = (
 
 function ok(data: unknown): ToolResult { return { ok: true, data }; }
 function fail(error: string): ToolResult { return { ok: false, error }; }
+
+// YYYY-MM-DD or YYYY-MM-DDTHH:MM (time-aware deadlines)
+const DUE_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/;
+
+const VALID_NOTIFICATION_OFFSETS = new Set(["2d", "1d", "2h", "1h"]);
 
 function todayStringInTZ(now: Date, tz: string): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -229,6 +235,7 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
     name: "list_tasks",
     description:
       "List the user's tasks (todos) that have a due date, sorted by nearest deadline. " +
+      "Returns full task details including course_name, repeat_rule, and notification_offsets. " +
       "Use this to see what assignments/tasks are due soon. " +
       "NOTE: deciding the day-by-day schedule / time-blocking of tasks is ToSche's own in-app AI feature — do not attempt that here.",
     inputSchema: {
@@ -236,6 +243,7 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
       properties: {
         include_completed: { type: "boolean", description: "Default false — completed tasks hidden unless true." },
         within_days: { type: "number", description: "Optional: only tasks due within this many days from today." },
+        course_name: { type: "string", description: "Optional: filter by course/subject name (exact match)." },
       },
     },
   },
@@ -248,9 +256,72 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
       type: "object",
       properties: {
         content: { type: "string", description: "The task text." },
-        due_date: { type: "string", description: "Optional deadline, YYYY-MM-DD." },
+        due_date: { type: "string", description: "Optional deadline. YYYY-MM-DD for date-only, or YYYY-MM-DDTHH:MM for date+time." },
+        course_name: { type: "string", description: "Optional course/subject name (e.g. '数学', 'English 101')." },
+        repeat_rule: { type: "string", enum: ["weekly"], description: "Optional: set to 'weekly' to auto-generate next week's instance on completion." },
+        notification_offsets: { type: "string", description: "Optional: comma-separated reminder offsets. Valid values: 2d, 1d, 2h, 1h. Example: '1d,2h'." },
       },
       required: ["content"],
+    },
+  },
+  {
+    name: "update_task",
+    description:
+      "Edit an existing task. Pass any subset of fields to update. " +
+      "Use this to change a task's content, due date, course name, or notification settings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID of the task to update." },
+        content: { type: "string", description: "New task text." },
+        due_date: { type: "string", description: "New deadline. YYYY-MM-DD or YYYY-MM-DDTHH:MM. Empty string to clear." },
+        course_name: { type: "string", description: "Course/subject name. Empty string to clear." },
+        repeat_rule: { type: "string", enum: ["weekly", ""], description: "'weekly' to enable, empty string to clear." },
+        notification_offsets: { type: "string", description: "Comma-separated offsets (2d,1d,2h,1h). Empty string to clear." },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "complete_task",
+    description:
+      "Mark a task as completed (or uncomplete it). " +
+      "If the task has repeat_rule='weekly' and is being completed, a new task for next week is automatically created. " +
+      "Use is_completed=false to undo a completion.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID of the task." },
+        is_completed: { type: "boolean", description: "True to complete, false to uncomplete. Default: true." },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "delete_task",
+    description:
+      "DESTRUCTIVE. Permanently delete a task. " +
+      "USE A TWO-PHASE PROTOCOL: " +
+      "(1) FIRST call with confirm omitted or false — this returns a preview " +
+      "of the task that would be deleted. Show it to the user and ask " +
+      "whether to proceed. " +
+      "(2) ONLY after the user has unambiguously approved, call again with " +
+      "confirm: true to actually delete. " +
+      "NEVER pass confirm: true on the first invocation. The user must have " +
+      "explicitly said yes to deleting THIS specific task in the chat.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "ID of the task to delete." },
+        confirm: {
+          type: "boolean",
+          description:
+            "Omit or pass false to get the deletion preview (default). Pass true " +
+            "ONLY after the user has explicitly approved deletion of this exact " +
+            "task in the chat. Default: false.",
+        },
+      },
+      required: ["task_id"],
     },
   },
   {
@@ -282,7 +353,7 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const includeCompleted = (input.include_completed as boolean) === true;
     let q = ctx.adminClient
       .from("todos")
-      .select("id, content, due_date, is_completed, workspace_id")
+      .select("id, content, due_date, is_completed, completed_at, workspace_id, course_name, repeat_rule, notification_offsets, goal_id")
       .eq("user_id", ctx.userId)
       .not("due_date", "is", null)
       .order("due_date", { ascending: true });
@@ -290,6 +361,9 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     if (typeof input.within_days === "number" && input.within_days >= 0) {
       const end = new Date(ctx.now.getTime() + input.within_days * 86400000);
       q = q.lte("due_date", todayStringInTZ(end, "Asia/Tokyo"));
+    }
+    if (typeof input.course_name === "string" && input.course_name) {
+      q = q.eq("course_name", input.course_name);
     }
     const { data, error } = await q;
     if (error) return fail(error.message);
@@ -300,11 +374,22 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const content = (input.content as string)?.trim();
     if (!content) return fail("content is required");
     const dueDate = (input.due_date as string | undefined) || null;
-    if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
-      return fail("due_date must be YYYY-MM-DD");
+    if (dueDate && !DUE_DATE_RE.test(dueDate)) {
+      return fail("due_date must be YYYY-MM-DD or YYYY-MM-DDTHH:MM");
+    }
+    const courseName = (input.course_name as string | undefined)?.trim() || null;
+    const repeatRule = (input.repeat_rule as string | undefined) || null;
+    if (repeatRule && repeatRule !== "weekly") {
+      return fail("repeat_rule must be 'weekly' or omitted");
+    }
+    const rawOffsets = (input.notification_offsets as string | undefined)?.trim() || null;
+    if (rawOffsets) {
+      const parts = rawOffsets.split(",").map((s) => s.trim());
+      if (parts.some((p) => !VALID_NOTIFICATION_OFFSETS.has(p))) {
+        return fail("notification_offsets values must be from: 2d, 1d, 2h, 1h");
+      }
     }
     const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
-    // todo は日付ワークスペースに属する。今日のワークスペースを find-or-create。
     let ws = (await ctx.adminClient
       .from("workspaces")
       .select("id")
@@ -320,13 +405,200 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       if (wErr) return fail(wErr.message);
       ws = created;
     }
+    const row: Record<string, unknown> = {
+      user_id: ctx.userId,
+      workspace_id: ws.id,
+      content,
+      due_date: dueDate,
+      is_completed: false,
+      course_name: courseName,
+      repeat_rule: repeatRule,
+      notification_offsets: rawOffsets,
+    };
     const { data, error } = await ctx.adminClient
       .from("todos")
-      .insert({ user_id: ctx.userId, workspace_id: ws.id, content, due_date: dueDate, is_completed: false })
-      .select("id, content, due_date, workspace_id")
+      .insert(row)
+      .select("id, content, due_date, workspace_id, course_name, repeat_rule, notification_offsets")
       .single();
     if (error) return fail(error.message);
     return ok({ task: data });
+  },
+
+  update_task: async (input, ctx) => {
+    const taskId = input.task_id as string;
+    if (!taskId) return fail("task_id is required");
+
+    const patch: Record<string, unknown> = {};
+    if (typeof input.content === "string") {
+      const c = (input.content as string).trim();
+      if (!c) return fail("content cannot be empty");
+      patch.content = c;
+    }
+    if (typeof input.due_date === "string") {
+      if (input.due_date === "") {
+        patch.due_date = null;
+      } else {
+        if (!DUE_DATE_RE.test(input.due_date as string)) {
+          return fail("due_date must be YYYY-MM-DD or YYYY-MM-DDTHH:MM");
+        }
+        patch.due_date = input.due_date;
+      }
+    }
+    if (typeof input.course_name === "string") {
+      patch.course_name = (input.course_name as string).trim() === "" ? null : (input.course_name as string).trim();
+    }
+    if (typeof input.repeat_rule === "string") {
+      if (input.repeat_rule === "") {
+        patch.repeat_rule = null;
+      } else if (input.repeat_rule === "weekly") {
+        patch.repeat_rule = "weekly";
+      } else {
+        return fail("repeat_rule must be 'weekly' or empty string to clear");
+      }
+    }
+    if (typeof input.notification_offsets === "string") {
+      if ((input.notification_offsets as string).trim() === "") {
+        patch.notification_offsets = null;
+      } else {
+        const parts = (input.notification_offsets as string).split(",").map((s) => s.trim());
+        if (parts.some((p) => !VALID_NOTIFICATION_OFFSETS.has(p))) {
+          return fail("notification_offsets values must be from: 2d, 1d, 2h, 1h");
+        }
+        patch.notification_offsets = parts.join(",");
+      }
+    }
+    if (Object.keys(patch).length === 0) return fail("Nothing to update");
+
+    const { data, error } = await ctx.adminClient
+      .from("todos")
+      .update(patch)
+      .eq("id", taskId)
+      .eq("user_id", ctx.userId)
+      .select("id, content, due_date, is_completed, course_name, repeat_rule, notification_offsets")
+      .maybeSingle();
+    if (error) return fail(error.message);
+    if (!data) return fail("Task not found or not owned by you");
+    return ok({ task: data });
+  },
+
+  complete_task: async (input, ctx) => {
+    const taskId = input.task_id as string;
+    if (!taskId) return fail("task_id is required");
+    const shouldComplete = (input.is_completed as boolean) !== false;
+
+    const { data: task, error: fetchErr } = await ctx.adminClient
+      .from("todos")
+      .select("id, content, due_date, is_completed, workspace_id, course_name, repeat_rule, notification_offsets")
+      .eq("id", taskId)
+      .eq("user_id", ctx.userId)
+      .maybeSingle();
+    if (fetchErr) return fail(fetchErr.message);
+    if (!task) return fail("Task not found or not owned by you");
+
+    const updatePatch: Record<string, unknown> = {
+      is_completed: shouldComplete,
+      completed_at: shouldComplete ? new Date().toISOString() : null,
+    };
+    const { error: updateErr } = await ctx.adminClient
+      .from("todos")
+      .update(updatePatch)
+      .eq("id", taskId)
+      .eq("user_id", ctx.userId);
+    if (updateErr) return fail(updateErr.message);
+
+    let nextTask = null;
+    if (shouldComplete && task.repeat_rule === "weekly" && task.due_date) {
+      const dateOnly = String(task.due_date).slice(0, 10);
+      const timePart = String(task.due_date).length > 10 ? String(task.due_date).slice(10) : "";
+      const d = new Date(dateOnly + "T00:00:00");
+      d.setDate(d.getDate() + 7);
+      const nextDate = d.toISOString().slice(0, 10) + timePart;
+
+      const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
+      let ws = (await ctx.adminClient
+        .from("workspaces")
+        .select("id")
+        .eq("user_id", ctx.userId)
+        .eq("date", today)
+        .maybeSingle()).data;
+      if (!ws) {
+        const { data: created, error: wErr } = await ctx.adminClient
+          .from("workspaces")
+          .insert({ user_id: ctx.userId, date: today, title: "", type: "four_grid" })
+          .select("id")
+          .single();
+        if (wErr) return fail(wErr.message);
+        ws = created;
+      }
+      const { data: newTask, error: createErr } = await ctx.adminClient
+        .from("todos")
+        .insert({
+          user_id: ctx.userId,
+          workspace_id: ws.id,
+          content: task.content,
+          due_date: nextDate,
+          is_completed: false,
+          course_name: task.course_name,
+          repeat_rule: task.repeat_rule,
+          notification_offsets: task.notification_offsets,
+        })
+        .select("id, content, due_date, course_name, repeat_rule")
+        .single();
+      if (!createErr && newTask) nextTask = newTask;
+    }
+
+    return ok({
+      task: { id: task.id, content: task.content, is_completed: shouldComplete },
+      ...(nextTask ? { next_weekly_task: nextTask } : {}),
+    });
+  },
+
+  delete_task: async (input, ctx) => {
+    const taskId = input.task_id as string;
+    if (!taskId) return fail("task_id is required");
+    const confirmed = input.confirm === true;
+
+    const { data: task, error: fetchErr } = await ctx.adminClient
+      .from("todos")
+      .select("id, content, due_date, is_completed, course_name, repeat_rule, notification_offsets, workspace_id")
+      .eq("id", taskId)
+      .eq("user_id", ctx.userId)
+      .maybeSingle();
+    if (fetchErr) return fail(fetchErr.message);
+    if (!task) return fail("Task not found or not owned by you");
+
+    const preview = {
+      task: {
+        id: task.id,
+        content: task.content,
+        due_date: task.due_date,
+        is_completed: task.is_completed,
+        course_name: task.course_name,
+        repeat_rule: task.repeat_rule,
+      },
+    };
+
+    if (!confirmed) {
+      return ok({
+        phase: "preview",
+        preview,
+        next_step:
+          "Show this task to the user and ask whether to delete it. " +
+          "Only call delete_task again with confirm: true after they approve.",
+      });
+    }
+
+    const { error: delErr } = await ctx.adminClient
+      .from("todos")
+      .delete()
+      .eq("id", taskId)
+      .eq("user_id", ctx.userId);
+    if (delErr) return fail(delErr.message);
+
+    return ok({
+      phase: "deleted",
+      deleted_task: preview.task,
+    });
   },
 
   get_shared_context: async (_input, ctx) => {
