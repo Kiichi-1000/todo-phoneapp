@@ -59,7 +59,7 @@ async function getNotifications(): Promise<typeof import('expo-notifications') |
 export interface DeadlineTask {
   id: string;
   content: string;
-  due_date: string; // YYYY-MM-DD
+  due_date: string; // YYYY-MM-DD or YYYY-MM-DDTHH:MM
   course_name?: string | null;
   notification_offsets?: string | null; // comma-separated: "1d,2d,1h,2h"
 }
@@ -69,6 +69,12 @@ function notifId(todoId: string, suffix: string): string {
 }
 
 function parseDateLocal(dateStr: string): Date {
+  if (dateStr.includes('T')) {
+    const [datePart, timePart] = dateStr.split('T');
+    const [y, m, d] = datePart.split('-').map(Number);
+    const [h, min] = timePart.split(':').map(Number);
+    return new Date(y, m - 1, d, h, min);
+  }
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d);
 }
@@ -234,16 +240,18 @@ export async function scheduleDeadlineNotifications(
     // --- Custom offset notifications ---
     if (task.notification_offsets) {
       const offsets = task.notification_offsets.split(',').map((s) => s.trim()).filter(Boolean);
-      // Due time reference: due_date at 23:59 (end of day)
-      const dueEndOfDay = new Date(
-        dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate(),
-        23, 59, 0, 0,
-      );
+      // Due time reference: actual time if specified, else 23:59 (end of day)
+      const dueRef = task.due_date.includes('T')
+        ? dueDate // parseDateLocal already extracted hours/minutes
+        : new Date(
+            dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate(),
+            23, 59, 0, 0,
+          );
 
       for (const offset of offsets) {
         const ms = offsetToMs(offset);
         if (ms === null) continue;
-        const fireDate = new Date(dueEndOfDay.getTime() - ms);
+        const fireDate = new Date(dueRef.getTime() - ms);
         if (await scheduleOne(
           notifId(task.id, offset),
           `🔔 ${offsetLabel(offset)}に締切の課題があります`,

@@ -59,6 +59,7 @@ import {
   Trash2,
   Edit3,
   RotateCcw,
+  Clock,
 } from 'lucide-react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { supabase } from '@/lib/supabase';
@@ -104,7 +105,8 @@ function todayLocalISO(): string {
 // due_date(YYYY-MM-DD) と今日との日数差（今日=0, 明日=1, 昨日=-1）。
 function dayDiffFromToday(due: string): number {
   const [ty, tm, td] = todayLocalISO().split('-').map(Number);
-  const [dy, dm, dd] = due.split('-').map(Number);
+  const datePart = due.split('T')[0];
+  const [dy, dm, dd] = datePart.split('-').map(Number);
   const todayMs = new Date(ty, tm - 1, td).getTime();
   const dueMs = new Date(dy, dm - 1, dd).getTime();
   return Math.round((dueMs - todayMs) / 86400000);
@@ -121,18 +123,38 @@ function addDays(dateStr: string, days: number): string {
   return `${ny}-${nm}-${nd}`;
 }
 
-// YYYY-MM-DD バリデーション
+// YYYY-MM-DD or YYYY-MM-DDTHH:MM バリデーション
 function isValidDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const [y, m, d] = s.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+    const [datePart, timePart] = s.split('T');
+    const [y, m, d] = datePart.split('-').map(Number);
+    const [h, min] = timePart.split(':').map(Number);
+    const date = new Date(y, m - 1, d, h, min);
+    return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+      && date.getHours() === h && date.getMinutes() === min;
+  }
+  return false;
 }
 
-// YYYY-MM-DD → Date
+// YYYY-MM-DD or YYYY-MM-DDTHH:MM → Date
 function parseLocalDate(s: string): Date {
+  if (s.includes('T')) {
+    const [datePart, timePart] = s.split('T');
+    const [y, m, d] = datePart.split('-').map(Number);
+    const [h, min] = timePart.split(':').map(Number);
+    return new Date(y, m - 1, d, h, min);
+  }
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, m - 1, d);
+}
+
+function hasTime(s: string): boolean {
+  return s.includes('T');
 }
 
 // Date → YYYY-MM-DD
@@ -143,8 +165,21 @@ function toLocalISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-// YYYY-MM-DD → "YYYY年M月D日"
+// Date → YYYY-MM-DDTHH:MM
+function toLocalISOWithTime(d: Date): string {
+  const base = toLocalISO(d);
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${base}T${h}:${min}`;
+}
+
+// YYYY-MM-DD or YYYY-MM-DDTHH:MM → "YYYY年M月D日" or "YYYY年M月D日 HH:MM"
 function formatDateJP(s: string): string {
+  if (s.includes('T')) {
+    const [datePart, timePart] = s.split('T');
+    const [y, m, d] = datePart.split('-').map(Number);
+    return `${y}年${m}月${d}日 ${timePart}`;
+  }
   const [y, m, d] = s.split('-').map(Number);
   return `${y}年${m}月${d}日`;
 }
@@ -175,12 +210,14 @@ function bucketFor(diff: number): BucketKey {
 
 function dueLabel(due: string): string {
   const diff = dayDiffFromToday(due);
-  const [, m, d] = due.split('-');
+  const datePart = due.split('T')[0];
+  const [, m, d] = datePart.split('-');
   const md = `${Number(m)}/${Number(d)}`;
-  if (diff < 0) return `${md}（${Math.abs(diff)}日超過）`;
-  if (diff === 0) return `${md}（今日）`;
-  if (diff === 1) return `${md}（明日）`;
-  return `${md}（あと${diff}日）`;
+  const timeSuffix = due.includes('T') ? ` ${due.split('T')[1]}` : '';
+  if (diff < 0) return `${md}${timeSuffix}（${Math.abs(diff)}日超過）`;
+  if (diff === 0) return `${md}${timeSuffix}（今日）`;
+  if (diff === 1) return `${md}${timeSuffix}（明日）`;
+  return `${md}${timeSuffix}（あと${diff}日）`;
 }
 
 export default function DeadlinesScreen() {
@@ -211,6 +248,13 @@ export default function DeadlinesScreen() {
   // DatePicker state
   const [showAddDatePicker, setShowAddDatePicker] = useState(false);
   const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+  // TimePicker state
+  const [addTimeEnabled, setAddTimeEnabled] = useState(false);
+  const [addTime, setAddTime] = useState(new Date(2026, 0, 1, 23, 59));
+  const [showAddTimePicker, setShowAddTimePicker] = useState(false);
+  const [editTimeEnabled, setEditTimeEnabled] = useState(false);
+  const [editTime, setEditTime] = useState(new Date(2026, 0, 1, 23, 59));
+  const [showEditTimePicker, setShowEditTimePicker] = useState(false);
 
   // 完了済み state
   const [completedTodos, setCompletedTodos] = useState<DeadlineTodo[]>([]);
@@ -420,7 +464,17 @@ export default function DeadlinesScreen() {
           onPress: () => {
             setEditTodo(todo);
             setEditContent(todo.content);
-            setEditDueDate(todo.due_date);
+            // 時刻付き(YYYY-MM-DDTHH:MM)なら日付と時刻を分離
+            if (hasTime(todo.due_date)) {
+              const d = parseLocalDate(todo.due_date);
+              setEditDueDate(toLocalISO(d));
+              setEditTimeEnabled(true);
+              setEditTime(new Date(2026, 0, 1, d.getHours(), d.getMinutes()));
+            } else {
+              setEditDueDate(todo.due_date);
+              setEditTimeEnabled(false);
+              setEditTime(new Date(2026, 0, 1, 23, 59));
+            }
             setEditCourseName(todo.course_name ?? '');
             const offsets = todo.notification_offsets
               ? new Set(todo.notification_offsets.split(',') as OffsetKey[])
@@ -474,11 +528,19 @@ export default function DeadlinesScreen() {
       ? Array.from(editNotifOffsets).join(',')
       : null;
 
+    const finalDueDate = editTimeEnabled
+      ? (() => {
+          const d = parseLocalDate(editDueDate);
+          d.setHours(editTime.getHours(), editTime.getMinutes());
+          return toLocalISOWithTime(d);
+        })()
+      : editDueDate;
+
     const { error } = await supabase
       .from('todos')
       .update({
         content,
-        due_date: editDueDate,
+        due_date: finalDueDate,
         course_name: editCourseName.trim() || null,
         notification_offsets: offsetsStr,
       })
@@ -492,7 +554,7 @@ export default function DeadlinesScreen() {
       setEditTodo(null);
       load();
     }
-  }, [editTodo, editContent, editDueDate, editCourseName, editNotifOffsets, load]);
+  }, [editTodo, editContent, editDueDate, editCourseName, editNotifOffsets, editTimeEnabled, editTime, load]);
 
   // 課題追加
   const addTask = useCallback(async () => {
@@ -541,13 +603,22 @@ export default function DeadlinesScreen() {
       ? Array.from(newNotifOffsets).join(',')
       : null;
 
+    // 時刻指定がONなら日付＋時刻を結合
+    const finalDueDate = addTimeEnabled
+      ? (() => {
+          const d = parseLocalDate(newDueDate);
+          d.setHours(addTime.getHours(), addTime.getMinutes());
+          return toLocalISOWithTime(d);
+        })()
+      : newDueDate;
+
     const { error } = await supabase
       .from('todos')
       .insert({
         user_id: user.id,
         workspace_id: ws.id,
         content,
-        due_date: newDueDate,
+        due_date: finalDueDate,
         course_name: newCourseName.trim() || null,
         repeat_rule: newRepeatWeekly ? 'weekly' : null,
         notification_offsets: offsetsStr,
@@ -563,10 +634,12 @@ export default function DeadlinesScreen() {
       setNewCourseName('');
       setNewRepeatWeekly(false);
       setNewNotifOffsets(new Set());
+      setAddTimeEnabled(false);
+      setAddTime(new Date(2026, 0, 1, 23, 59));
       setShowAddModal(false);
       load();
     }
-  }, [user, newContent, newDueDate, newCourseName, newRepeatWeekly, newNotifOffsets, load]);
+  }, [user, newContent, newDueDate, newCourseName, newRepeatWeekly, newNotifOffsets, addTimeEnabled, addTime, load]);
 
   // DatePicker handlers
   const onAddDateChange = useCallback((_event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -587,6 +660,16 @@ export default function DeadlinesScreen() {
     }
   }, []);
 
+  const onAddTimeChange = useCallback((_event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') setShowAddTimePicker(false);
+    if (selectedDate) setAddTime(selectedDate);
+  }, []);
+
+  const onEditTimeChange = useCallback((_event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (Platform.OS === 'android') setShowEditTimePicker(false);
+    if (selectedDate) setEditTime(selectedDate);
+  }, []);
+
   // バケットごとにグルーピング
   const grouped = useMemo(() => {
     const map: Record<BucketKey, DeadlineTodo[]> = {
@@ -601,40 +684,92 @@ export default function DeadlinesScreen() {
 
   const total = todos.length;
 
-  // DatePicker共通レンダラー
+  // DatePicker＋TimePicker共通レンダラー（カレンダーUI＋時刻指定）
   const renderDatePicker = (
     mode: 'add' | 'edit',
-    show: boolean,
+    showDate: boolean,
     value: string,
-    onShow: () => void,
-    onChange: (event: DateTimePickerEvent, date?: Date) => void,
-    onDismiss: () => void,
-  ) => (
-    <>
-      <TouchableOpacity style={styles.datePickerButton} onPress={onShow}>
-        <Calendar size={18} color="#64748b" />
-        <Text style={[styles.datePickerText, !value && { color: '#94a3b8' }]}>
-          {value ? formatDateJP(value) : '日付を選択'}
-        </Text>
-      </TouchableOpacity>
-      {show && (
-        <View>
-          <DateTimePicker
-            value={value && isValidDate(value) ? parseLocalDate(value) : new Date()}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={onChange}
-            locale="ja"
+    onShowDate: () => void,
+    onDateChange: (event: DateTimePickerEvent, date?: Date) => void,
+    onDismissDate: () => void,
+  ) => {
+    const timeEnabled = mode === 'add' ? addTimeEnabled : editTimeEnabled;
+    const setTimeEnabled = mode === 'add' ? setAddTimeEnabled : setEditTimeEnabled;
+    const time = mode === 'add' ? addTime : editTime;
+    const showTime = mode === 'add' ? showAddTimePicker : showEditTimePicker;
+    const setShowTime = mode === 'add' ? setShowAddTimePicker : setShowEditTimePicker;
+    const onTimeChange = mode === 'add' ? onAddTimeChange : onEditTimeChange;
+
+    const dateDisplay = value ? formatDateJP(value.split('T')[0]) : '日付を選択';
+    const timeDisplay = `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`;
+
+    return (
+      <>
+        <TouchableOpacity style={styles.datePickerButton} onPress={onShowDate}>
+          <Calendar size={18} color="#64748b" />
+          <Text style={[styles.datePickerText, !value && { color: '#94a3b8' }]}>
+            {dateDisplay}{timeEnabled ? ` ${timeDisplay}` : ''}
+          </Text>
+        </TouchableOpacity>
+        {showDate && (
+          <View style={styles.calendarContainer}>
+            <DateTimePicker
+              value={value && isValidDate(value.split('T')[0] || value) ? parseLocalDate(value) : new Date()}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              onChange={onDateChange}
+              locale="ja"
+              style={Platform.OS === 'ios' ? { height: 340 } : undefined}
+            />
+            {Platform.OS === 'ios' && (
+              <TouchableOpacity style={styles.datePickerDone} onPress={onDismissDate}>
+                <Text style={styles.datePickerDoneText}>完了</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* 時刻指定トグル */}
+        <View style={styles.timeToggleRow}>
+          <Clock size={18} color="#64748b" />
+          <Text style={styles.timeToggleLabel}>時刻を指定</Text>
+          <Switch
+            value={timeEnabled}
+            onValueChange={setTimeEnabled}
+            trackColor={{ false: '#e2e8f0', true: '#c7d2fe' }}
+            thumbColor={timeEnabled ? '#6366F1' : '#f4f4f5'}
           />
-          {Platform.OS === 'ios' && (
-            <TouchableOpacity style={styles.datePickerDone} onPress={onDismiss}>
-              <Text style={styles.datePickerDoneText}>完了</Text>
-            </TouchableOpacity>
-          )}
         </View>
-      )}
-    </>
-  );
+        {timeEnabled && (
+          <>
+            <TouchableOpacity
+              style={styles.timePickerButton}
+              onPress={() => setShowTime(!showTime)}
+            >
+              <Text style={styles.timePickerText}>{timeDisplay}</Text>
+            </TouchableOpacity>
+            {showTime && (
+              <View>
+                <DateTimePicker
+                  value={time}
+                  mode="time"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={onTimeChange}
+                  locale="ja"
+                  minuteInterval={5}
+                />
+                {Platform.OS === 'ios' && (
+                  <TouchableOpacity style={styles.datePickerDone} onPress={() => setShowTime(false)}>
+                    <Text style={styles.datePickerDoneText}>完了</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </>
+        )}
+      </>
+    );
+  };
 
   // 通知タイミング選択の共通レンダラー
   const renderOffsetChips = (
@@ -1297,7 +1432,35 @@ const styles = StyleSheet.create({
   datePickerDoneText: {
     fontSize: 15,
     color: '#6366F1',
+  },
+  calendarContainer: {
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  timeToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  timeToggleLabel: {
+    flex: 1,
+    fontSize: 14,
+    color: '#475569',
+    fontWeight: '500',
+  },
+  timePickerButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  timePickerText: {
+    fontSize: 18,
     fontWeight: '600',
+    color: '#0f172a',
   },
 
   // 完了済みセクション
