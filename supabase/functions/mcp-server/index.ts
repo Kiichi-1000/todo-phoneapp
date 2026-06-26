@@ -39,7 +39,7 @@ import {
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SERVER_NAME = "tosche-mcp";
-const SERVER_VERSION = "1.5.0";
+const SERVER_VERSION = "1.6.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -179,14 +179,21 @@ function handleInitialize(id: unknown): Response {
       _meta: { iconUrl: ICON_URL },
     },
     instructions:
-      "ToSche MCP server. Read first (list_goals / list_milestones). " +
-      "Add with create_goal / create_milestones_batch. " +
-      "Mark progress with update_milestone. " +
-      "Tasks/deadlines: list_tasks, create_task, update_task, complete_task, delete_task. " +
-      "DESTRUCTIVE TOOLS (delete_goal / delete_milestone / delete_task) follow a two-phase " +
-      "protocol: first call with confirm omitted returns a deletion preview; " +
-      "only after the user explicitly approves in chat, call again with " +
-      "confirm: true. Never pre-confirm deletions on the user's behalf.",
+      "ToSche MCP server — operate the user's ToSche app as fully as its in-app AI. " +
+      "Call get_app_guide once if you're unsure how a feature works, and whoami to see the account/grids.\n\n" +
+      "PICK THE RIGHT PLACE (this is the #1 source of mistakes):\n" +
+      "• 締切/期日のある『課題』 → create_task (due_date REQUIRED). Shows in the 課題一覧 (deadlines) screen. Read with list_tasks.\n" +
+      "• 締切なしの『今日やること』 → create_workspace_task. Shows on the WORKSPACE grid. Read with list_workspace_tasks. " +
+      "Name an area via area_name (e.g. '仕事'); the server maps it to the right grid position.\n" +
+      "• 開始/終了時刻が明示された予定 → create_schedule (minutes from midnight; OMIT color to auto-pick a high-contrast pie-chart color). Read with list_schedules.\n" +
+      "• 毎日/朝昼夜の習慣 → add_routine_item (slot morning/daytime/evening; today_only_date for one-offs). Read with list_routine_for_date.\n" +
+      "• 目標/ロードマップ → list_goals / create_goal / create_milestones_batch / update_milestone.\n\n" +
+      "ASK, DON'T GUESS: if it's unclear whether the user means a TODAY task (workspace) or a deadline 課題, ASK which before creating. " +
+      "When adding to the workspace and the target area is ambiguous, confirm the area (or omit it to auto-place).\n\n" +
+      "PERSONALIZE: use remember/forget (shared with the in-app AI) for durable preferences like color choices; " +
+      "read/update the user's shared memo with get_shared_context / update_shared_context.\n\n" +
+      "DESTRUCTIVE TOOLS (every delete_*) follow a two-phase protocol: first call with confirm omitted returns a preview; " +
+      "only after the user explicitly approves in chat, call again with confirm: true. Never pre-confirm deletions on the user's behalf.",
   }, { "Mcp-Session-Id": generateMcpSessionId() });
 }
 
