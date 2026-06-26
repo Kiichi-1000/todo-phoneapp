@@ -39,6 +39,82 @@ export interface ToolResult {
   error?: string;
 }
 
+type WorkspaceType = "four_grid" | "individual" | "note";
+
+/**
+ * Resolve the correct workspace for today, matching the user's
+ * `default_workspace_type` setting so MCP-created tasks land in
+ * the same workspace the app shows.
+ *
+ * Bug fix (2026-06-21 筑井さん指摘):
+ *   Previously this query did NOT filter by type, so it could:
+ *     - return another type's workspace (rendering tasks invisible
+ *       to the user's selected grid), OR
+ *     - silently create a 'four_grid' workspace even when the user
+ *       prefers 'individual' or 'note'.
+ *   We now respect default_workspace_type. If the caller passes an
+ *   explicit target_workspace_id we honor that instead (no implicit
+ *   new-workspace creation).
+ */
+async function resolveTodayWorkspace(
+  adminClient: any,
+  userId: string,
+  today: string,
+  override?: { targetWorkspaceId?: string | null; targetType?: WorkspaceType | null },
+): Promise<{ ok: true; workspaceId: string } | { ok: false; error: string }> {
+  // 1. Explicit target wins.
+  if (override?.targetWorkspaceId) {
+    const { data: ws, error } = await adminClient
+      .from("workspaces")
+      .select("id")
+      .eq("id", override.targetWorkspaceId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message };
+    if (!ws) {
+      return {
+        ok: false,
+        error: `target_workspace_id ${override.targetWorkspaceId} not found or not owned by user`,
+      };
+    }
+    return { ok: true, workspaceId: ws.id };
+  }
+
+  // 2. Resolve type from user_settings or override.
+  let type: WorkspaceType = override?.targetType ?? "four_grid";
+  if (!override?.targetType) {
+    const { data: settings } = await adminClient
+      .from("user_settings")
+      .select("default_workspace_type")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (settings?.default_workspace_type) {
+      type = settings.default_workspace_type as WorkspaceType;
+    }
+  }
+
+  // 3. Find existing workspace for (user, today, type). Unique constraint
+  //    is on (date, type), so at most one row per user/date/type.
+  const { data: existing, error: selErr } = await adminClient
+    .from("workspaces")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("date", today)
+    .eq("type", type)
+    .maybeSingle();
+  if (selErr) return { ok: false, error: selErr.message };
+  if (existing?.id) return { ok: true, workspaceId: existing.id };
+
+  // 4. Create the missing workspace with the correct type.
+  const { data: created, error: insErr } = await adminClient
+    .from("workspaces")
+    .insert({ user_id: userId, date: today, title: "", type })
+    .select("id")
+    .single();
+  if (insErr) return { ok: false, error: insErr.message };
+  return { ok: true, workspaceId: created.id };
+}
+
 export type ToolExecutor = (
   input: Record<string, unknown>,
   ctx: ToolContext,
@@ -250,8 +326,9 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
   {
     name: "create_task",
     description:
-      "Create a task (todo) for the user, with an optional due date (deadline). The task is added to the user's board for today. " +
-      "Use this to capture an assignment/task. Do NOT time-block or distribute it across days — that is ToSche's own AI feature.",
+      "Create a task (todo) for the user, with an optional due date (deadline). The task is added to today's workspace matching the user's default_workspace_type, so it appears in the same grid the user sees in the app. " +
+      "Use this to capture an assignment/task. Do NOT time-block or distribute it across days — that is ToSche's own AI feature. " +
+      "If the user has multiple workspace types (four_grid/individual/note) and wants to target a specific one, pass target_workspace_id (preferred) or target_workspace_type.",
     inputSchema: {
       type: "object",
       properties: {
@@ -260,8 +337,22 @@ export const MCP_TOOL_DEFS: ToolDefinition[] = [
         course_name: { type: "string", description: "Optional course/subject name (e.g. '数学', 'English 101')." },
         repeat_rule: { type: "string", enum: ["weekly"], description: "Optional: set to 'weekly' to auto-generate next week's instance on completion." },
         notification_offsets: { type: "string", description: "Optional: comma-separated reminder offsets. Valid values: 2d, 1d, 2h, 1h. Example: '1d,2h'." },
+        target_workspace_id: { type: "string", description: "Optional: place the task in this specific workspace id (must belong to the user). Overrides default. Use list_workspaces to discover ids." },
+        target_workspace_type: { type: "string", enum: ["four_grid", "individual", "note"], description: "Optional: pick today's workspace by type. Ignored if target_workspace_id is set. Defaults to user_settings.default_workspace_type." },
       },
       required: ["content"],
+    },
+  },
+  {
+    name: "list_workspaces",
+    description:
+      "List the user's workspaces (grids) for a given date range (default: today only). Use this to discover workspace ids and types before calling create_task with an explicit target_workspace_id. Also returns the user's default_workspace_type so the AI knows which grid the app is currently showing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from_date: { type: "string", description: "Optional ISO date (YYYY-MM-DD). Default today." },
+        to_date: { type: "string", description: "Optional ISO date (YYYY-MM-DD). Default = from_date (today only)." },
+      },
     },
   },
   {
@@ -370,6 +461,38 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     return ok({ today, tasks: data });
   },
 
+  list_workspaces: async (input, ctx) => {
+    const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
+    const fromDate = (input.from_date as string | undefined) || today;
+    const toDate = (input.to_date as string | undefined) || fromDate;
+    if (!DUE_DATE_RE.test(fromDate)) return fail("from_date must be YYYY-MM-DD");
+    if (!DUE_DATE_RE.test(toDate)) return fail("to_date must be YYYY-MM-DD");
+    const { data: wsList, error: wErr } = await ctx.adminClient
+      .from("workspaces")
+      .select("id, date, type, title")
+      .eq("user_id", ctx.userId)
+      .gte("date", fromDate)
+      .lte("date", toDate)
+      .order("date", { ascending: true });
+    if (wErr) return fail(wErr.message);
+    const { data: settings } = await ctx.adminClient
+      .from("user_settings")
+      .select("default_workspace_type")
+      .eq("user_id", ctx.userId)
+      .maybeSingle();
+    const defaultType = settings?.default_workspace_type ?? "four_grid";
+    // Mark which workspace is the "active" one for today.
+    const active = (wsList ?? []).find(
+      (w: any) => w.date === today && w.type === defaultType,
+    );
+    return ok({
+      today,
+      default_workspace_type: defaultType,
+      active_workspace_id: active?.id ?? null,
+      workspaces: wsList ?? [],
+    });
+  },
+
   create_task: async (input, ctx) => {
     const content = (input.content as string)?.trim();
     if (!content) return fail("content is required");
@@ -390,24 +513,22 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       }
     }
     const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
-    let ws = (await ctx.adminClient
-      .from("workspaces")
-      .select("id")
-      .eq("user_id", ctx.userId)
-      .eq("date", today)
-      .maybeSingle()).data;
-    if (!ws) {
-      const { data: created, error: wErr } = await ctx.adminClient
-        .from("workspaces")
-        .insert({ user_id: ctx.userId, date: today, title: "", type: "four_grid" })
-        .select("id")
-        .single();
-      if (wErr) return fail(wErr.message);
-      ws = created;
-    }
+    // Fix (2026-06-21): resolve workspace by user's default_workspace_type
+    // so MCP-created tasks appear in the same grid the app is showing.
+    const targetWorkspaceId =
+      (input.target_workspace_id as string | undefined) || null;
+    const targetType =
+      (input.target_workspace_type as WorkspaceType | undefined) || null;
+    const wsResult = await resolveTodayWorkspace(
+      ctx.adminClient,
+      ctx.userId,
+      today,
+      { targetWorkspaceId, targetType },
+    );
+    if (wsResult.ok === false) return fail(wsResult.error);
     const row: Record<string, unknown> = {
       user_id: ctx.userId,
-      workspace_id: ws.id,
+      workspace_id: wsResult.workspaceId,
       content,
       due_date: dueDate,
       is_completed: false,
@@ -515,26 +636,19 @@ export const MCP_TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       const nextDate = d.toISOString().slice(0, 10) + timePart;
 
       const today = todayStringInTZ(ctx.now, "Asia/Tokyo");
-      let ws = (await ctx.adminClient
-        .from("workspaces")
-        .select("id")
-        .eq("user_id", ctx.userId)
-        .eq("date", today)
-        .maybeSingle()).data;
-      if (!ws) {
-        const { data: created, error: wErr } = await ctx.adminClient
-          .from("workspaces")
-          .insert({ user_id: ctx.userId, date: today, title: "", type: "four_grid" })
-          .select("id")
-          .single();
-        if (wErr) return fail(wErr.message);
-        ws = created;
-      }
+      // Use shared helper so the weekly-recurring task lands in the same
+      // grid the user sees (Fix 2026-06-21).
+      const wsResult = await resolveTodayWorkspace(
+        ctx.adminClient,
+        ctx.userId,
+        today,
+      );
+      if (wsResult.ok === false) return fail(wsResult.error);
       const { data: newTask, error: createErr } = await ctx.adminClient
         .from("todos")
         .insert({
           user_id: ctx.userId,
-          workspace_id: ws.id,
+          workspace_id: wsResult.workspaceId,
           content: task.content,
           due_date: nextDate,
           is_completed: false,

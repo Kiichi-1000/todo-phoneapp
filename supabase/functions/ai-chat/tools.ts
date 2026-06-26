@@ -129,11 +129,29 @@ async function ensureWorkspaceForDate(
   userId: string,
   dateStr: string,
 ): Promise<{ id: string } | null> {
+  // Fix (2026-06-23): resolve workspace by the user's default_workspace_type
+  // so AI-chat- and MCP-created tasks land in the same grid the app shows.
+  // Previously this query ignored `type`, so a hardcoded 'four_grid' fallback
+  // could be inserted even when the user had `individual` or `note` selected,
+  // making the tasks invisible to the workspace view.
+  const { data: settings } = await client
+    .from("user_settings")
+    .select("default_workspace_type")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const wsType =
+    (settings?.default_workspace_type as
+      | "four_grid"
+      | "individual"
+      | "note"
+      | undefined) ?? "four_grid";
+
   const { data: existing } = await client
     .from("workspaces")
     .select("id")
     .eq("user_id", userId)
     .eq("date", dateStr)
+    .eq("type", wsType)
     .maybeSingle();
 
   if (existing) return existing;
@@ -142,7 +160,7 @@ async function ensureWorkspaceForDate(
     .from("workspaces")
     .select("area_titles, type")
     .eq("user_id", userId)
-    .eq("type", "four_grid")
+    .eq("type", wsType)
     .not("area_titles", "is", null)
     .order("date", { ascending: false })
     .limit(1)
@@ -160,9 +178,9 @@ async function ensureWorkspaceForDate(
     .insert({
       user_id: userId,
       title: dateStr,
-      type: "four_grid",
+      type: wsType,
       date: dateStr,
-      area_titles: inheritedTitles,
+      area_titles: wsType === "four_grid" ? inheritedTitles : null,
     })
     .select("id")
     .single();
