@@ -11,7 +11,7 @@ import Animated, {
   cancelAnimation,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { Bell, Trash2, Pencil, GripVertical, MoveRight, CalendarClock } from 'lucide-react-native';
+import { Bell, Trash2, Pencil, GripVertical, MoveRight, CalendarClock, FileText } from 'lucide-react-native';
 import { minutesToTimeString } from '@/lib/scheduleUtils';
 import { formatReminderDisplay } from './ReminderPicker';
 import { Todo, GridArea } from '@/types/database';
@@ -35,6 +35,7 @@ interface DraggableTodoItemProps {
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
   onSchedulePress?: (todo: Todo) => void;
+  onShowDetail?: (todo: Todo) => void;
   isReorderMode?: boolean;
   isDragging?: boolean;
   onDragHandle?: () => void;
@@ -57,6 +58,7 @@ export default function DraggableTodoItem({
   onReminderPress,
   onClearReminder,
   onSchedulePress,
+  onShowDetail,
   isReorderMode = false,
   isDragging = false,
   onDragHandle,
@@ -291,6 +293,14 @@ export default function DraggableTodoItem({
             >
               <Pencil size={15} color="#3498db" />
               <Text style={[styles.menuItemText, { color: '#3498db' }]}>{t('workspace.editTask')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => closeMenuAndRun(() => onShowDetail?.(todo))}
+            >
+              <FileText size={15} color="#16a085" />
+              <Text style={[styles.menuItemText, { color: '#16a085' }]}>{t('workspace.showTaskDetail')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity

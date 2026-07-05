@@ -23,6 +23,7 @@ import { Workspace, Todo, GridArea, UserSettings, DEFAULT_FOUR_GRID_TODO_BORDER_
 import GridAreaDropTarget from '@/components/GridAreaDropTarget';
 import ReminderPicker from '@/components/ReminderPicker';
 import PostitMenu from '@/components/PostitMenu';
+import TodoDetailModal from '@/components/TodoDetailModal';
 import TodoSchedulePicker from '@/components/TodoSchedulePicker';
 import { getThemeForSkin, useFourGridSkin } from '@/lib/fourGridSkin';
 import { scheduleTaskNotification, scheduleReminderNotification, cancelReminderNotification } from '@/lib/notifications';
@@ -71,6 +72,7 @@ export default function WorkspacePage({
   const [editingTodoText, setEditingTodoText] = useState('');
   const [reminderTodo, setReminderTodo] = useState<Todo | null>(null);
   const [schedulingTodo, setSchedulingTodo] = useState<Todo | null>(null);
+  const [detailTodo, setDetailTodo] = useState<Todo | null>(null);
   const [longPressedTodo, setLongPressedTodo] = useState<string | null>(null);
   const [postitMenuTodo, setPostitMenuTodo] = useState<Todo | null>(null);
   const [postitMenuPosition, setPostitMenuPosition] = useState({ x: 0, y: 0 });
@@ -440,6 +442,27 @@ export default function WorkspacePage({
     setSchedulingTodo(todo);
   };
 
+  const openTodoDetail = (todo: Todo) => {
+    setIsReorderMode(false);
+    setDetailTodo(todo);
+  };
+
+  const handleSaveTodoDescription = async (todo: Todo, description: string | null) => {
+    try {
+      const { error } = await supabase
+        .from('todos')
+        .update({ description })
+        .eq('id', todo.id);
+      if (error) throw error;
+      const updated = todos.map(t => t.id === todo.id ? { ...t, description } : t);
+      onTodosChange(workspace.id, updated);
+      setDetailTodo(null);
+    } catch (error) {
+      console.error('Error saving todo description:', error);
+      Alert.alert(tr('common.error'), tr('workspace.taskDetailSaveError'));
+    }
+  };
+
   const handleSaveTodoSchedule = async (startMin: number, endMin: number, notifyBefore: number | null, color: string) => {
     if (!schedulingTodo) return;
     if (schedulingTodo.notification_id) {
@@ -638,6 +661,7 @@ export default function WorkspacePage({
         onReminderPress={openReminderPicker}
         onClearReminder={clearReminder}
         onSchedulePress={openSchedulePicker}
+        onShowDetail={openTodoDetail}
         isReorderMode={isReorderMode}
         onReorderEnd={persistAreaOrder}
         onMoveToArea={moveTodoToArea}
@@ -887,10 +911,18 @@ export default function WorkspacePage({
         position={postitMenuPosition}
         todos={todos}
         onClose={() => { setPostitMenuTodo(null); setLongPressedTodo(null); }}
+        onShowDetail={t => { setPostitMenuTodo(null); setLongPressedTodo(null); openTodoDetail(t); }}
         onSchedulePress={t => { setPostitMenuTodo(null); setLongPressedTodo(null); openSchedulePicker(t); }}
         onMoveUp={(t) => { setPostitMenuTodo(null); setLongPressedTodo(null); movePostit(t, 'up'); }}
         onMoveDown={(t) => { setPostitMenuTodo(null); setLongPressedTodo(null); movePostit(t, 'down'); }}
         onDelete={(id) => { setPostitMenuTodo(null); setLongPressedTodo(null); deleteTodo(id); }}
+      />
+
+      <TodoDetailModal
+        visible={detailTodo !== null}
+        todo={detailTodo}
+        onSave={handleSaveTodoDescription}
+        onClose={() => setDetailTodo(null)}
       />
 
       <TodoSchedulePicker

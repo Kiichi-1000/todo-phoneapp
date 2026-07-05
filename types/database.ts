@@ -66,6 +66,7 @@ export type Todo = {
   user_id: string;
   workspace_id: string;
   content: string;
+  description: string | null;
   is_completed: boolean;
   due_date: string | null;
   grid_area: GridArea | null;
@@ -343,6 +344,7 @@ export type Database = {
           user_id: string;
           workspace_id: string;
           content: string;
+          description?: string | null;
           is_completed?: boolean;
           due_date?: string | null;
           grid_area?: GridArea | null;

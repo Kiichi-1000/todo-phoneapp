@@ -36,6 +36,7 @@ interface GridAreaDropTargetProps {
   onReminderPress: (todo: Todo) => void;
   onClearReminder: (todo: Todo) => void;
   onSchedulePress?: (todo: Todo) => void;
+  onShowDetail?: (todo: Todo) => void;
   isReorderMode?: boolean;
   onReorderEnd?: (area: GridArea, reorderedAreaTodos: Todo[]) => void;
   onMoveToArea?: (todo: Todo, targetArea: GridArea) => void;
@@ -105,6 +106,7 @@ export default function GridAreaDropTarget({
   onReminderPress,
   onClearReminder,
   onSchedulePress,
+  onShowDetail,
   isReorderMode = false,
   onReorderEnd,
   onMoveToArea,
@@ -149,6 +151,7 @@ export default function GridAreaDropTarget({
             onReminderPress={onReminderPress}
             onClearReminder={onClearReminder}
             onSchedulePress={onSchedulePress}
+            onShowDetail={onShowDetail}
             isReorderMode={isReorderMode}
             isDragging={isActive}
             onDragHandle={drag}
@@ -173,6 +176,7 @@ export default function GridAreaDropTarget({
       onReminderPress,
       onClearReminder,
       onSchedulePress,
+      onShowDetail,
       isReorderMode,
       gridTitles,
       onMoveToArea,

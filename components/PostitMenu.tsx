@@ -5,7 +5,7 @@ import {
   TouchableOpacity,
   Modal,
 } from 'react-native';
-import { CalendarClock, ChevronUp, ChevronDown, Trash2 } from 'lucide-react-native';
+import { CalendarClock, ChevronUp, ChevronDown, Trash2, FileText } from 'lucide-react-native';
 import { Todo } from '@/types/database';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -15,6 +15,7 @@ interface PostitMenuProps {
   position: { x: number; y: number };
   todos: Todo[];
   onClose: () => void;
+  onShowDetail: (todo: Todo) => void;
   onSchedulePress: (todo: Todo) => void;
   onMoveUp: (todo: Todo) => void;
   onMoveDown: (todo: Todo) => void;
@@ -27,6 +28,7 @@ export default function PostitMenu({
   position,
   todos,
   onClose,
+  onShowDetail,
   onSchedulePress,
   onMoveUp,
   onMoveDown,
@@ -44,6 +46,13 @@ export default function PostitMenu({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         <View style={[styles.menu, { top: position.y, left: position.x }]}>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => { onClose(); onShowDetail(todo); }}
+          >
+            <FileText size={15} color="#16a085" />
+            <Text style={[styles.menuItemText, { color: '#16a085' }]}>{t('workspace.showTaskDetail')}</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() => { onClose(); onSchedulePress(todo); }}
