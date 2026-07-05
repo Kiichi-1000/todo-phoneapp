@@ -24,6 +24,7 @@ interface Props {
   currentDate: string;
   onSave: (data: {
     title: string;
+    description: string | null;
     start_minutes: number;
     end_minutes: number;
     color: string;
@@ -65,6 +66,7 @@ export default function ScheduleItemEditor({ visible, schedule, currentDate, onS
   const { user } = useAuth();
   const { t } = useLanguage();
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [startHour, setStartHour] = useState(0);
   const [startMin, setStartMin] = useState(0);
   const [endHour, setEndHour] = useState(1);
@@ -82,6 +84,7 @@ export default function ScheduleItemEditor({ visible, schedule, currentDate, onS
   useEffect(() => {
     if (schedule) {
       setTitle(schedule.title || '');
+      setDescription(schedule.description || '');
       const sm = schedule.start_minutes || 0;
       const em = schedule.end_minutes || 60;
       setStartHour(Math.floor(sm / 60));
@@ -243,8 +246,10 @@ export default function ScheduleItemEditor({ visible, schedule, currentDate, onS
     let end = endHour * 60 + endMin;
     if (end <= start) end = start + 30;
     if (end > 1440) end = 1440;
+    const trimmedDescription = description.trim();
     onSave({
       title: title || '(\u7121\u984C)',
+      description: trimmedDescription.length > 0 ? trimmedDescription : null,
       start_minutes: start,
       end_minutes: end,
       color,
@@ -312,6 +317,17 @@ export default function ScheduleItemEditor({ visible, schedule, currentDate, onS
                 </View>
               )}
             </View>
+
+            <TextInput
+              style={styles.descriptionInput}
+              value={description}
+              onChangeText={setDescription}
+              placeholder={t('scheduleEditor.descriptionPlaceholder')}
+              placeholderTextColor="#c0c0c0"
+              multiline
+              textAlignVertical="top"
+              maxLength={500}
+            />
 
             <View style={styles.timeSection}>
               <View style={styles.timeBlock}>
@@ -465,6 +481,7 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: 24, paddingBottom: 8 },
   titleWrapper: { position: 'relative', zIndex: 100 },
   titleInput: { fontSize: 18, color: '#111', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: '#f8f8f8', borderRadius: 14, borderWidth: 1, borderColor: '#eee', fontWeight: '500' },
+  descriptionInput: { fontSize: 14, color: '#111', paddingVertical: 10, paddingHorizontal: 16, backgroundColor: '#f8f8f8', borderRadius: 14, borderWidth: 1, borderColor: '#eee', minHeight: 64, maxHeight: 120, lineHeight: 20, marginTop: 10 },
   suggestionsContainer: {
     position: 'absolute',
     top: '100%',

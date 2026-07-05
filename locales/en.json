@@ -236,6 +236,7 @@
     "durationMinutes": "{{n}}m"
   },
   "scheduleEditor": {
+    "descriptionPlaceholder": "Details (optional)",
     "addFromHistory": "Add from history",
     "addFromHistoryHint": "Apply a past schedule's title and color in one tap.",
     "addFromTasks": "Add from tasks",

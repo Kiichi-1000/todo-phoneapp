@@ -298,6 +298,7 @@ export default function ScheduleScreen() {
 
   const handleSave = async (data: {
     title: string;
+    description: string | null;
     start_minutes: number;
     end_minutes: number;
     color: string;
@@ -316,6 +317,7 @@ export default function ScheduleScreen() {
           start_minutes: data.start_minutes,
           end_minutes: data.end_minutes,
           title: data.title,
+          description: data.description,
           color: data.color,
           is_from_todo: !!linkedTodoIdFromEditor,
           source_todo_id: linkedTodoIdFromEditor,
@@ -328,6 +330,7 @@ export default function ScheduleScreen() {
             start_minutes: data.start_minutes,
             end_minutes: data.end_minutes,
             title: data.title,
+            description: data.description,
             color: data.color,
           })
           .eq('id', editingSchedule.id);

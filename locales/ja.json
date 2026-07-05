@@ -236,6 +236,7 @@
     "durationMinutes": "{{n}}分"
   },
   "scheduleEditor": {
+    "descriptionPlaceholder": "詳細（任意）",
     "addFromHistory": "履歴から追加",
     "addFromHistoryHint": "過去の予定名と色をワンタップで適用できます。",
     "addFromTasks": "タスクから追加",

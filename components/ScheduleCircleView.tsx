@@ -58,6 +58,8 @@ type SegmentLayout =
       radiusFrac: number;
       lines: string[];
       fontSize: number;
+      descLines: string[];
+      descFontSize: number;
     }
   | {
       mode: 'radial';
@@ -67,11 +69,152 @@ type SegmentLayout =
       flipped: boolean;
     };
 
+// ---- 文字幅の実測ベース計算（全角/半角判別）----
+// 従来の一律 charWFactor=0.95 は日本語（全角）で実測より狭く、はみ出しの主因だった。
+const FULL_WIDTH_RE = /[^\x01-\x7E]/;
+const FULL_CHAR_W = 1.0;
+const HALF_CHAR_W = 0.55;
+
+function charWidth(ch: string, fontSize: number): number {
+  return (FULL_WIDTH_RE.test(ch) ? FULL_CHAR_W : HALF_CHAR_W) * fontSize;
+}
+
+function textWidth(text: string, fontSize: number): number {
+  let w = 0;
+  for (const ch of text) w += charWidth(ch, fontSize);
+  return w;
+}
+
+// 折り返し位置として自然な区切り文字。
+// BREAK_AFTER はその文字の直後で、BREAK_BEFORE はその文字の直前で折る。
+const BREAK_AFTER = new Set(['・', '、', '。', '，', ',', ' ', '　', '/', '／', '-', 'ー', '−', ')', '）', '】', '」', '·', '•']);
+const BREAK_BEFORE = new Set(['(', '（', '【', '「']);
+
+function preferSeparator(text: string, cut: number, maxFit: number): number {
+  const isBreak = (k: number) =>
+    k > 0 && k < text.length &&
+    (BREAK_AFTER.has(text[k - 1]) || BREAK_BEFORE.has(text[k]));
+  for (let d = 0; d <= 2; d++) {
+    if (cut + d <= maxFit && isBreak(cut + d)) return cut + d;
+    if (cut - d >= 1 && isBreak(cut - d)) return cut - d;
+  }
+  return cut;
+}
+
+// 行ごとの利用可能幅に合わせて折り返す。行間の文字数は均等配分を狙い、
+// 区切り文字が近くにあればそこで折る。全行に収まらなければ null。
+function wrapToLines(text: string, fontSize: number, widths: number[]): string[] | null {
+  const lines: string[] = [];
+  let rem = text;
+  for (let i = 0; i < widths.length; i++) {
+    if (rem.length === 0) break;
+    const isLast = i === widths.length - 1;
+    if (isLast) {
+      if (textWidth(rem, fontSize) <= widths[i]) {
+        lines.push(rem);
+        rem = '';
+      }
+      break;
+    }
+    let maxFit = 0;
+    let w = 0;
+    for (let j = 0; j < rem.length; j++) {
+      w += charWidth(rem[j], fontSize);
+      if (w > widths[i]) break;
+      maxFit = j + 1;
+    }
+    if (maxFit === 0) return null;
+    if (maxFit >= rem.length) {
+      lines.push(rem);
+      rem = '';
+      break;
+    }
+    const remainingLines = widths.length - i;
+    const targetW = textWidth(rem, fontSize) / remainingLines;
+    let cut = maxFit;
+    w = 0;
+    for (let j = 0; j < maxFit; j++) {
+      w += charWidth(rem[j], fontSize);
+      if (w >= targetW) { cut = j + 1; break; }
+    }
+    cut = preferSeparator(rem, cut, maxFit);
+    lines.push(rem.slice(0, cut));
+    rem = rem.slice(cut);
+  }
+  return rem.length === 0 ? lines : null;
+}
+
+// description 用: 収まらない分は末尾を「…」で切り詰める（入り切らなければ []）。
+function wrapDescLines(desc: string, fontSize: number, widths: number[]): string[] {
+  const lines: string[] = [];
+  let rem = desc.replace(/\s*\n\s*/g, ' ').trim();
+  for (let i = 0; i < widths.length && rem.length > 0; i++) {
+    const isLast = i === widths.length - 1;
+    let maxFit = 0;
+    let w = 0;
+    for (let j = 0; j < rem.length; j++) {
+      w += charWidth(rem[j], fontSize);
+      if (w > widths[i]) break;
+      maxFit = j + 1;
+    }
+    if (maxFit < 2) return [];
+    if (isLast && rem.length > maxFit) {
+      const ellipsisW = charWidth('…', fontSize);
+      let cut = 0;
+      let cutW = 0;
+      for (let j = 0; j < rem.length; j++) {
+        const cw = charWidth(rem[j], fontSize);
+        if (cutW + cw + ellipsisW > widths[i]) break;
+        cutW += cw;
+        cut = j + 1;
+      }
+      if (cut === 0) return [];
+      lines.push(rem.slice(0, cut) + '…');
+      rem = '';
+    } else {
+      const cut = maxFit >= rem.length ? rem.length : preferSeparator(rem, maxFit, maxFit);
+      lines.push(rem.slice(0, cut));
+      rem = rem.slice(cut);
+    }
+  }
+  return lines;
+}
+
+const LINE_HEIGHT_FACTOR = 1.2;
+const H_SAFETY_MARGIN = 16;
+const H_EDGE_MARGIN = 6;
+const H_MIN_R_FRAC = 0.26;
+const CHORD_SAFETY = 0.96;
+
+// 横配置ブロック内の各行の利用可能幅。
+// 従来はブロック中心半径の弦のみで判定していたが、実際は行の位置（外周側/内周側）
+// で弦の長さが変わるため、行ごとに wedge 制約（弦）と外周円制約の両方で判定する。
+function computeLineWidths(
+  outerRadius: number,
+  midAngle: number,
+  halfSin: number,
+  targetCenterRadius: number,
+  lineOffsets: number[]
+): number[] {
+  const rMax = outerRadius - H_EDGE_MARGIN;
+  const c = polarToCartesian(0, 0, targetCenterRadius, midAngle);
+  return lineOffsets.map(off => {
+    const y = c.y + off;
+    const r = Math.sqrt(c.x * c.x + y * y);
+    const wWedge = 2 * r * halfSin * CHORD_SAFETY;
+    const lim = rMax * rMax - y * y;
+    const wCircle = lim <= 0 ? 0 : 2 * (Math.sqrt(lim) - Math.abs(c.x));
+    return Math.max(0, Math.min(wWedge, wCircle));
+  });
+}
+
 function computeHorizontalLayout(
   title: string,
+  description: string | null,
   durationMin: number,
-  outerRadius: number
-): { radiusFrac: number; lines: string[]; fontSize: number } {
+  outerRadius: number,
+  midAngle: number
+): { radiusFrac: number; lines: string[]; fontSize: number; descLines: string[]; descFontSize: number } {
   const displayTitle = title || '—';
   const sweepRad = (durationMin / 1440) * 2 * Math.PI;
   const halfSin = Math.max(Math.sin(sweepRad / 2), 0.001);
@@ -79,65 +222,84 @@ function computeHorizontalLayout(
   const fontCandidates = [12, 11, 10, 9, 8, 7, 6];
   const maxLines = durationMin >= 120 ? 3 : durationMin >= 45 ? 2 : 1;
   const showDuration = durationMin >= 60;
-  const safetyMargin = 16;
-  const charWFactor = 0.95;
-  const lineHeightFactor = 1.15;
-  const minRFrac = 0.26;
-  const chordSafety = 0.96;
 
-  const wrap = (n: number, charsPerLine: number): string[] => {
-    const out: string[] = [];
-    let rem = displayTitle;
-    for (let i = 0; i < n; i++) {
-      const take = Math.min(charsPerLine, rem.length);
-      out.push(rem.slice(0, take));
-      rem = rem.slice(take);
-      if (rem.length === 0) break;
+  const tryLayout = (
+    nLines: number,
+    fs: number,
+    descCount: number
+  ): { radiusFrac: number; lines: string[]; fontSize: number; descLines: string[]; descFontSize: number } | null => {
+    const lineHeight = fs * LINE_HEIGHT_FACTOR;
+    const durFs = Math.max(8, fs - 2);
+    const durLineHeight = showDuration ? durFs * LINE_HEIGHT_FACTOR : 0;
+    const descFs = Math.max(6, fs - 2);
+    const descLineHeight = descFs * LINE_HEIGHT_FACTOR;
+    const totalHeight = nLines * lineHeight + durLineHeight + descCount * descLineHeight;
+    const targetCenterRadius = outerRadius - H_SAFETY_MARGIN - totalHeight / 2;
+    const radiusFrac = targetCenterRadius / outerRadius;
+    if (radiusFrac < H_MIN_R_FRAC) return null;
+
+    const blockTop = -totalHeight / 2;
+    const titleOffsets: number[] = [];
+    for (let i = 0; i < nLines; i++) {
+      titleOffsets.push(blockTop + i * lineHeight + lineHeight / 2);
     }
-    return out;
+    const titleWidths = computeLineWidths(outerRadius, midAngle, halfSin, targetCenterRadius, titleOffsets);
+    const lines = wrapToLines(displayTitle, fs, titleWidths);
+    if (!lines) return null;
+
+    let descLines: string[] = [];
+    if (descCount > 0) {
+      if (!description) return null;
+      const descOffsets: number[] = [];
+      const descTop = blockTop + nLines * lineHeight + durLineHeight;
+      for (let i = 0; i < descCount; i++) {
+        descOffsets.push(descTop + i * descLineHeight + descLineHeight / 2);
+      }
+      const descWidths = computeLineWidths(outerRadius, midAngle, halfSin, targetCenterRadius, descOffsets);
+      descLines = wrapDescLines(description, descFs, descWidths);
+      if (descLines.length === 0) return null;
+    }
+
+    return { radiusFrac, lines, fontSize: fs, descLines, descFontSize: descFs };
   };
 
   for (let nLines = 1; nLines <= maxLines; nLines++) {
     for (const fs of fontCandidates) {
-      const charW = fs * charWFactor;
-      const lineHeight = fs * lineHeightFactor;
-      const durFs = Math.max(8, fs - 2);
-      const durLineHeight = showDuration ? durFs * lineHeightFactor : 0;
-      const totalHeight = nLines * lineHeight + durLineHeight;
-      const targetCenterRadius = outerRadius - safetyMargin - totalHeight / 2;
-      const radiusFrac = targetCenterRadius / outerRadius;
-      if (radiusFrac < minRFrac) continue;
-      const chordAtTarget = 2 * targetCenterRadius * halfSin * chordSafety;
-      const charsPerLine = Math.ceil(displayTitle.length / nLines);
-      if (charsPerLine * charW <= chordAtTarget) {
-        return { radiusFrac, lines: wrap(nLines, charsPerLine), fontSize: fs };
+      const base = tryLayout(nLines, fs, 0);
+      if (!base) continue;
+      // スペースが余っている場合のみ description を追加表示（2行→1行の順で試す）
+      if (description && description.trim().length > 0 && durationMin >= 60) {
+        for (const descCount of [2, 1]) {
+          const withDesc = tryLayout(nLines, fs, descCount);
+          if (withDesc) return withDesc;
+        }
       }
+      return base;
     }
   }
 
+  // フォールバック: 最小フォントでも収まらないタイトルは幅ベースで「…」切り詰め
   const fs = fontCandidates[fontCandidates.length - 1];
-  const charW = fs * charWFactor;
-  const lineHeight = fs * lineHeightFactor;
+  const lineHeight = fs * LINE_HEIGHT_FACTOR;
   const durFs = Math.max(8, fs - 2);
-  const durLineHeight = showDuration ? durFs * lineHeightFactor : 0;
+  const durLineHeight = showDuration ? durFs * LINE_HEIGHT_FACTOR : 0;
   const totalHeight = maxLines * lineHeight + durLineHeight;
-  const targetCenterRadius = Math.max(outerRadius * minRFrac, outerRadius - safetyMargin - totalHeight / 2);
+  const targetCenterRadius = Math.max(outerRadius * H_MIN_R_FRAC, outerRadius - H_SAFETY_MARGIN - totalHeight / 2);
   const radiusFrac = targetCenterRadius / outerRadius;
-  const cpl = Math.max(1, Math.floor(2 * targetCenterRadius * halfSin * chordSafety / charW));
-  const lines: string[] = [];
-  let rem = displayTitle;
+  const blockTop = -totalHeight / 2;
+  const offsets: number[] = [];
   for (let i = 0; i < maxLines; i++) {
-    const isLast = i === maxLines - 1;
-    if (isLast && rem.length > cpl) {
-      lines.push(rem.slice(0, Math.max(1, cpl - 1)) + '…');
-      break;
-    }
-    const take = Math.min(cpl, rem.length);
-    lines.push(rem.slice(0, take));
-    rem = rem.slice(take);
-    if (rem.length === 0) break;
+    offsets.push(blockTop + i * lineHeight + lineHeight / 2);
   }
-  return { radiusFrac, lines, fontSize: fs };
+  const widths = computeLineWidths(outerRadius, midAngle, halfSin, targetCenterRadius, offsets);
+  const lines = wrapDescLines(displayTitle, fs, widths);
+  return {
+    radiusFrac,
+    lines: lines.length > 0 ? lines : [displayTitle.slice(0, 2) + '…'],
+    fontSize: fs,
+    descLines: [],
+    descFontSize: Math.max(6, fs - 2),
+  };
 }
 
 function computeRadialLayout(
@@ -152,18 +314,17 @@ function computeRadialLayout(
 
   const innerMargin = 26;
   const outerMargin = 18;
-  const charWFactor = 0.95;
+  const outerEdgeMargin = 4; // 縁ギリギリの描画を防ぐ
   const heightFactor = 0.55;
   const fontCandidates = [13, 12, 11, 10, 9, 8, 7, 6];
 
   const flipped = midAngle > 180;
   const innerR = innerMargin;
-  const outerR = outerRadius - outerMargin;
+  const outerR = outerRadius - outerMargin - outerEdgeMargin;
 
   for (const fs of fontCandidates) {
     const halfH = fs * heightFactor;
-    const charW = fs * charWFactor;
-    const textW = displayTitle.length * charW;
+    const textW = textWidth(displayTitle, fs);
     const minR = halfH / halfSin;
     const textInnerEdge = Math.max(innerR, minR);
     const textOuterEdge = textInnerEdge + textW;
@@ -175,15 +336,23 @@ function computeRadialLayout(
 
   const fs = fontCandidates[fontCandidates.length - 1];
   const halfH = fs * heightFactor;
-  const charW = fs * charWFactor;
   const minR = halfH / halfSin;
   const textInnerEdge = Math.max(innerR, minR);
-  const availableLen = Math.max(charW * 2, outerR - textInnerEdge);
-  const maxChars = Math.max(2, Math.floor(availableLen / charW));
-  const truncated = displayTitle.length > maxChars
-    ? displayTitle.slice(0, Math.max(1, maxChars - 1)) + '…'
-    : displayTitle;
-  const textW = truncated.length * charW;
+  const availableLen = Math.max(charWidth('…', fs) + fs, outerR - textInnerEdge);
+  const ellipsisW = charWidth('…', fs);
+  let truncated = displayTitle;
+  if (textWidth(displayTitle, fs) > availableLen) {
+    let cut = 0;
+    let w = 0;
+    for (let j = 0; j < displayTitle.length; j++) {
+      const cw = charWidth(displayTitle[j], fs);
+      if (w + cw + ellipsisW > availableLen) break;
+      w += cw;
+      cut = j + 1;
+    }
+    truncated = displayTitle.slice(0, Math.max(1, cut)) + '…';
+  }
+  const textW = textWidth(truncated, fs);
   return {
     fontSize: fs,
     titleText: truncated,
@@ -194,6 +363,7 @@ function computeRadialLayout(
 
 function computeSegmentLayout(
   title: string,
+  description: string | null,
   durationMin: number,
   outerRadius: number,
   midAngle: number
@@ -201,9 +371,10 @@ function computeSegmentLayout(
   const RADIAL_THRESHOLD_DEG = 45;
   const sweepDeg = (durationMin / 1440) * 360;
   if (sweepDeg < RADIAL_THRESHOLD_DEG) {
+    // 細いセグメント（放射配置）では description は表示しない
     return { mode: 'radial', ...computeRadialLayout(title, durationMin, outerRadius, midAngle) };
   }
-  return { mode: 'horizontal', ...computeHorizontalLayout(title, durationMin, outerRadius) };
+  return { mode: 'horizontal', ...computeHorizontalLayout(title, description, durationMin, outerRadius, midAngle) };
 }
 
 export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedulePress, isToday = false }: Props) {
@@ -256,7 +427,7 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
       const durationMin = s.end_minutes - s.start_minutes;
       const midMin = s.start_minutes + durationMin / 2;
       const midAngle = minutesToAngle(midMin);
-      const layout = computeSegmentLayout(s.title || t('schedule.untitled'), durationMin, OUTER_RADIUS, midAngle);
+      const layout = computeSegmentLayout(s.title || t('schedule.untitled'), s.description ?? null, durationMin, OUTER_RADIUS, midAngle);
       const dH = Math.floor(durationMin / 60);
       const dM = durationMin % 60;
       const durationLabel = dH > 0 && dM > 0 ? `${dH}h${dM}m` : dH > 0 ? `${dH}h` : `${dM}m`;
@@ -341,13 +512,17 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
               const titleFontSize = seg.layout.fontSize;
               const durationFontSize = Math.max(8, titleFontSize - 2);
               const titleLines = seg.layout.lines;
+              const descLines = seg.layout.descLines;
+              const descFontSize = seg.layout.descFontSize;
               const labelPos = polarToCartesian(CENTER, CENTER, OUTER_RADIUS * seg.layout.radiusFrac, seg.midAngle);
               const cx = labelPos.x;
               const cy = labelPos.y;
               const titleLineHeight = titleFontSize * 1.2;
               const durLineHeight = durationFontSize * 1.2;
+              const descLineHeight = descFontSize * 1.2;
               const titleBlockHeight = titleLines.length * titleLineHeight;
-              const totalHeight = titleBlockHeight + (showDuration ? durLineHeight : 0);
+              const durBlockHeight = showDuration ? durLineHeight : 0;
+              const totalHeight = titleBlockHeight + durBlockHeight + descLines.length * descLineHeight;
               const blockTop = cy - totalHeight / 2;
 
               labelContent = (
@@ -413,6 +588,38 @@ export default function ScheduleCircleView({ schedules, onEmptyPress, onSchedule
                       </SvgText>
                     </G>
                   )}
+                  {descLines.map((line, i) => {
+                    const yPos = blockTop + titleBlockHeight + durBlockHeight + i * descLineHeight + descLineHeight / 2;
+                    return (
+                      <G key={`d-${seg.id}-${i}`}>
+                        <SvgText
+                          x={cx}
+                          y={yPos}
+                          fill="none"
+                          stroke="rgba(0,0,0,0.5)"
+                          strokeWidth={2}
+                          strokeLinejoin="round"
+                          fontSize={descFontSize}
+                          fontWeight="500"
+                          textAnchor="middle"
+                          alignmentBaseline="central"
+                        >
+                          {line}
+                        </SvgText>
+                        <SvgText
+                          x={cx}
+                          y={yPos}
+                          fill="rgba(255,255,255,0.88)"
+                          fontSize={descFontSize}
+                          fontWeight="500"
+                          textAnchor="middle"
+                          alignmentBaseline="central"
+                        >
+                          {line}
+                        </SvgText>
+                      </G>
+                    );
+                  })}
                 </>
               );
             } else if (durationMin >= 15 && seg.layout.mode === 'radial' && seg.layout.titleText.length > 0) {

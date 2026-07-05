@@ -54,6 +54,7 @@ export type Schedule = {
   start_minutes: number;
   end_minutes: number;
   title: string;
+  description: string | null;
   color: string;
   is_from_todo: boolean;
   source_todo_id: string | null;
@@ -386,8 +387,9 @@ export type Database = {
       };
       schedules: {
         Row: Schedule;
-        Insert: Omit<Schedule, 'id' | 'created_at' | 'updated_at'> & {
+        Insert: Omit<Schedule, 'id' | 'created_at' | 'updated_at' | 'description'> & {
           id?: string;
+          description?: string | null;
           created_at?: string;
           updated_at?: string;
         };
